@@ -1,0 +1,19 @@
+session id: 9f1c2d3e-0000-4444-8888-abcdefabcdef
+user
+Review pull request owner/repo#42.
+thinking
+Read the diff, then check it against the linked issue.
+exec
+gh pr diff 42
+ succeeded in 500ms:
+diff --git a/main.go b/main.go
++ added a line
+exec
+Read {"file_path":"/tmp/wd/notes.md"}
+ failed in 500ms:
+no such file
+claude
+{"decision":"COMMENTED","summary":"Left two inline notes about error handling."}
+tokens used
+42,800
+~ $0.6231 at API rates

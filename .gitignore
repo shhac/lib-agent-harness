@@ -1,0 +1,9 @@
+*.exe
+*.test
+*.out
+/demo
+go.work
+go.work.sum
+.DS_Store
+*.swp
+.cache/
