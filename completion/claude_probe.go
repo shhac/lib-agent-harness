@@ -27,12 +27,28 @@ func probeClaude(ctx context.Context, cfg Config, bin string, args []string, dir
 	}
 	var mu sync.Mutex
 	requests := 0
-	valid := true
+	preflights := 0
+	mismatch := ""
 	server := &http.Server{ReadHeaderTimeout: time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Claude Code performs a bodyless endpoint discovery check before
+		// inference. It is not a model request and cannot establish capability.
+		if r.Method == http.MethodHead && r.URL.Path == "/api/hello" {
+			mu.Lock()
+			preflights++
+			mu.Unlock()
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		data, readErr := io.ReadAll(io.LimitReader(r.Body, 2*1024*1024+1))
 		mu.Lock()
 		requests++
-		valid = valid && readErr == nil && len(data) <= 2*1024*1024 && validClaudeProbe(data, schema, cfg.Effort)
+		if mismatch == "" {
+			if readErr != nil || len(data) > 2*1024*1024 {
+				mismatch = "invalid or oversized request"
+			} else {
+				mismatch = claudeProbeMismatch(data, schema, cfg.Effort)
+			}
+		}
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
@@ -52,13 +68,29 @@ func probeClaude(ctx context.Context, cfg Config, bin string, args []string, dir
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if requests != 1 || !valid {
-		return errors.New("Claude CLI capability check failed; update Claude Code before using constrained completion")
+	if probeCtx.Err() != nil {
+		return errors.New("Claude CLI capability check timed out against the local test provider; no account inference was attempted")
+	}
+	if requests == 0 {
+		return errors.New("Claude CLI capability check made no request to the local test provider; check CLI startup and supported flags (no account inference attempted)")
+	}
+	// Claude may retry a rejected request using a compatibility fallback, even
+	// with MAX_RETRIES=0. Every request must still prove the same restricted
+	// tool, schema, system instruction and effort surface. Bound local retries.
+	if requests > 4 || preflights > 4 {
+		return errors.New("Claude CLI capability check exceeded its local request limit; no account inference was attempted")
+	}
+	if mismatch != "" {
+		return errors.New("Claude CLI capability check rejected " + mismatch + "; constrained completion remains disabled (not an account login check)")
 	}
 	return nil
 }
 
 func validClaudeProbe(data, schema []byte, effort string) bool {
+	return claudeProbeMismatch(data, schema, effort) == ""
+}
+
+func claudeProbeMismatch(data, schema []byte, effort string) string {
 	var request struct {
 		Tools []struct {
 			Name   string          `json:"name"`
@@ -73,21 +105,24 @@ func validClaudeProbe(data, schema []byte, effort string) bool {
 		} `json:"output_config"`
 	}
 	if json.Unmarshal(data, &request) != nil || len(request.Tools) != 1 || request.Tools[0].Name != "StructuredOutput" {
-		return false
+		return "unexpected tools"
 	}
 	var expected, actual any
 	if json.Unmarshal(schema, &expected) != nil || json.Unmarshal(request.Tools[0].Schema, &actual) != nil {
-		return false
+		return "invalid output schema"
 	}
 	left, _ := json.Marshal(expected)
 	right, _ := json.Marshal(actual)
-	if !bytes.Equal(left, right) || (effort != "" && request.Output.Effort != effort) {
-		return false
+	if !bytes.Equal(left, right) {
+		return "changed output schema"
+	}
+	if effort != "" && request.Output.Effort != effort {
+		return "changed reasoning effort"
 	}
 	found := false
 	for _, part := range request.System {
 		if part.Type != "text" {
-			return false
+			return "unexpected system instruction type"
 		}
 		switch {
 		case part.Text == codexInstructions:
@@ -95,8 +130,11 @@ func validClaudeProbe(data, schema []byte, effort string) bool {
 		case part.Text == "You are a Claude agent, built on Anthropic's Claude Agent SDK.":
 		case strings.HasPrefix(part.Text, "x-anthropic-billing-header:"):
 		default:
-			return false
+			return "unexpected system instructions"
 		}
 	}
-	return found
+	if !found {
+		return "missing application instructions"
+	}
+	return ""
 }
