@@ -215,34 +215,7 @@ func (s *Session) startTurn(ctx context.Context, in Input) (*Turn, error) {
 	s.mu.Unlock()
 	var err error
 	if s.options.Engine == Codex {
-		p := map[string]any{"threadId": ref.ID, "input": []any{map[string]any{"type": "text", "text": in.Text}}}
-		if s.options.Effort != "" {
-			p["effort"] = s.options.Effort
-		}
-		var body json.RawMessage
-		body, err = s.transport.request(ctx, "turn/start", p)
-		if err == nil {
-			var r struct {
-				Turn struct{ ID string } `json:"turn"`
-			}
-			if json.Unmarshal(body, &r) != nil || r.Turn.ID == "" {
-				err = ErrProtocol
-			} else {
-				s.eventMu.Lock()
-				t.mu.Lock()
-				t.id = r.Turn.ID
-				t.result.TurnID = r.Turn.ID
-				t.starting = false
-				pending := t.pending
-				t.pending = nil
-				t.pendingBytes = 0
-				t.mu.Unlock()
-				for _, event := range pending {
-					s.notificationLocked(event)
-				}
-				s.eventMu.Unlock()
-			}
-		}
+		err = s.startCodexTurn(ctx, t, ref, in)
 	} else {
 		err = s.transport.send(ctx, map[string]any{"type": "user", "session_id": ref.ID, "parent_tool_use_id": nil, "message": map[string]any{"role": "user", "content": in.Text}})
 	}
@@ -264,6 +237,41 @@ func (s *Session) startTurn(ctx context.Context, in Input) (*Turn, error) {
 	}()
 
 	return t, nil
+}
+// startCodexTurn asks the server to open the turn and adopts the id it assigns.
+// Notifications that arrived while the turn was still starting were buffered
+// against the local id, so they are replayed here, under eventMu for the whole
+// replay so no live notification interleaves with it, and with t.pending
+// cleared under t.mu before the replay begins.
+func (s *Session) startCodexTurn(ctx context.Context, t *Turn, ref Ref, in Input) error {
+	p := map[string]any{"threadId": ref.ID, "input": []any{map[string]any{"type": "text", "text": in.Text}}}
+	if s.options.Effort != "" {
+		p["effort"] = s.options.Effort
+	}
+	body, err := s.transport.request(ctx, "turn/start", p)
+	if err != nil {
+		return err
+	}
+	var r struct {
+		Turn struct{ ID string } `json:"turn"`
+	}
+	if json.Unmarshal(body, &r) != nil || r.Turn.ID == "" {
+		return ErrProtocol
+	}
+	s.eventMu.Lock()
+	t.mu.Lock()
+	t.id = r.Turn.ID
+	t.result.TurnID = r.Turn.ID
+	t.starting = false
+	pending := t.pending
+	t.pending = nil
+	t.pendingBytes = 0
+	t.mu.Unlock()
+	for _, event := range pending {
+		s.notificationLocked(event)
+	}
+	s.eventMu.Unlock()
+	return nil
 }
 func (s *Session) activeTurn(expected string) (*Turn, error) {
 	s.mu.Lock()
