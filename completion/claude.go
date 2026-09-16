@@ -88,7 +88,7 @@ func claudeComplete(ctx context.Context, cfg Config, messages []Message, tools [
 	}
 	payload, err := json.Marshal(map[string]any{"messages": messages, "available_tools": tools})
 	if err != nil || len(payload) > cfg.MaxContextBytes {
-		return empty, usage, errors.New("model context limit reached")
+		return empty, usage, &RequestError{Kind: ErrorContextLimit}
 	}
 	args := append(claudeBaseArgs(), "-p", "--output-format", "stream-json", "--verbose", "--model", cfg.Model, "--system-prompt", codexInstructions, "--json-schema", string(schema))
 	if cfg.Effort != "" {
@@ -110,12 +110,21 @@ func claudeComplete(ctx context.Context, cfg Config, messages []Message, tools [
 		if ctx.Err() != nil {
 			return empty, usage, ctx.Err()
 		}
-		return empty, usage, errors.New("Claude request failed or timed out; check Claude login and model access (usage may be unknown; request was not retried)")
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() > 0 {
+			if failure := claudeRequestFailure(output); failure != nil {
+				return empty, usage, failure
+			}
+		}
+		return empty, usage, &RequestError{Kind: ErrorUnknown}
 	}
 	return parseClaude(output, tools)
 }
 
 func parseClaude(data []byte, tools []Tool) (Message, Usage, error) {
+	if failure := claudeRequestFailure(data); failure != nil {
+		return Message{}, Usage{}, failure
+	}
 	var usage Usage
 	var result Message
 	completed := false
@@ -163,7 +172,7 @@ func parseClaude(data []byte, tools []Tool) (Message, Usage, error) {
 			continue
 		}
 		if event.IsError || event.Subtype != "success" || completed {
-			return Message{}, usage, errors.New("Claude did not complete a single structured response")
+			return Message{}, usage, &RequestError{Kind: ErrorUnknown}
 		}
 		completed = true
 		if event.Usage != nil {

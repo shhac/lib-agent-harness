@@ -227,3 +227,19 @@ Windows. Consumers depend on published module tags, not sibling-directory
 
 Licensed under [PolyForm Perimeter 1.0.0](LICENSE), matching the sibling
 `lib-agent-*` libraries.
+
+## Manual native compaction
+
+`session.Compact(ctx)` requests compaction only while the session is idle and
+returns a `*Turn`. Drain its events and await `Wait` before starting another
+turn. Codex acknowledges `thread/compact/start` before doing the work; the turn
+ID is empty until `turn/started`, and successful completion requires the native
+terminal event. Compaction emits `compaction_started`/`compaction_completed`
+item events and invalidates stale context measurements until a fresh observation.
+Cancellation closes the session, as with `StartTurn`.
+
+`Capabilities.Compact` starts unknown for Codex and becomes native on a successful
+request, or unsupported on an explicit method rejection. Claude reports
+unsupported: its interactive `/compact` command is not a verified stream-json
+control operation. The library never substitutes a summarization prompt.
+The protocol reference is the [Codex App Server manual compaction section](https://learn.chatgpt.com/docs/app-server).

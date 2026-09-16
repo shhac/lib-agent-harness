@@ -96,7 +96,7 @@ func codexComplete(ctx context.Context, cfg Config, messages []Message, tools []
 	}
 	payload, err := json.Marshal(map[string]any{"messages": messages, "available_tools": tools})
 	if err != nil || len(payload) > cfg.MaxContextBytes {
-		return empty, usage, errors.New("model context limit reached")
+		return empty, usage, &RequestError{Kind: ErrorContextLimit}
 	}
 	if err := ctx.Err(); err != nil {
 		return empty, usage, err
@@ -111,7 +111,13 @@ func codexComplete(ctx context.Context, cfg Config, messages []Message, tools []
 		if ctx.Err() != nil {
 			return empty, usage, ctx.Err()
 		}
-		return empty, usage, errors.New("Codex request failed or timed out; inspect codex login and model access (usage may be unknown; request was not retried)")
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() > 0 {
+			if failure := codexRequestFailure(output); failure != nil {
+				return empty, usage, failure
+			}
+		}
+		return empty, usage, &RequestError{Kind: ErrorUnknown}
 	}
 	return parseCodex(output, tools)
 }
@@ -293,8 +299,10 @@ func codexCatalogEnvironment(dir string) []string {
 	return append(isolatedOperatingEnvironment(nativeOperatingEnvironment(), runtime.GOOS, dir), "CODEX_HOME="+dir)
 }
 
-
 func parseCodex(data []byte, tools []Tool) (Message, Usage, error) {
+	if failure := codexRequestFailure(data); failure != nil {
+		return Message{}, Usage{}, failure
+	}
 	var result Message
 	var usage Usage
 	completed := false
@@ -318,7 +326,7 @@ func parseCodex(data []byte, tools []Tool) (Message, Usage, error) {
 		}
 		switch event.Type {
 		case "turn.failed", "error":
-			return result, usage, errors.New("Codex inference failed; no action executed")
+			return result, usage, &RequestError{Kind: ErrorUnknown}
 		case "item.started", "item.completed":
 			if event.Item.Type != "agent_message" && event.Item.Type != "reasoning" && event.Item.Type != "error" {
 				return result, usage, errors.New("Codex emitted an unexpected native tool event")

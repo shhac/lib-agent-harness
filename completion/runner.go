@@ -59,5 +59,8 @@ func runCLI(ctx context.Context, cfg Config, bin string, args []string, dir stri
 	// of tool results, audit logs and model history.
 	cmd.Stderr = io.Discard
 	err = child.Run()
+	if ctx.Err() != nil {
+		return output.buffer.Bytes(), ctx.Err()
+	}
 	return output.buffer.Bytes(), err
 }

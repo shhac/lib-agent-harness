@@ -404,6 +404,8 @@ func (s *Session) operationError(operation string, err error) error {
 	c := Capability{Unsupported, "method unavailable in installed harness"}
 	s.mu.Lock()
 	switch operation {
+	case "compact":
+		s.caps.Compact = c
 	case "steer":
 		s.caps.Steer = c
 	case "interrupt":

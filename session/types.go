@@ -38,7 +38,7 @@ type Capabilities struct {
 	Start, Resume, Interrupt, Steer, ReplaceInstructions, AppendInstructions Capability
 	// Telemetry capabilities become Native only after a successful response or
 	// event. Older CLI versions may reject optional inspection methods.
-	Account, Quota, Context Capability
+	Account, Quota, Context, Compact Capability
 }
 
 // CapabilitiesFor describes availability before contacting an installed CLI.
@@ -48,7 +48,11 @@ func CapabilitiesFor(e Engine) Capabilities {
 	if e != Codex && e != Claude {
 		u = Capability{Unsupported, "unrecognized harness"}
 	}
-	return Capabilities{Start: u, Resume: u, Interrupt: u, Steer: u, ReplaceInstructions: u, AppendInstructions: u, Account: u, Quota: u, Context: u}
+	compact := u
+	if e == Claude {
+		compact = Capability{Unsupported, "Claude exposes no verified manual compaction control protocol"}
+	}
+	return Capabilities{Compact: compact, Start: u, Resume: u, Interrupt: u, Steer: u, ReplaceInstructions: u, AppendInstructions: u, Account: u, Quota: u, Context: u}
 }
 
 var (
@@ -170,6 +174,8 @@ type Turn struct {
 	lastCodexTotal     codexUsage
 	interruptRequested bool
 	starting           bool
+	compacting         bool
+	awaitingCompactID  bool
 	pending            []map[string]json.RawMessage
 	pendingBytes       int
 }

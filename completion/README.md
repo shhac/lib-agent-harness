@@ -52,3 +52,25 @@ home, config/cache, and temporary directories and remove native user identity.
 The Codex capability probe retains only its explicitly selected `CODEX_HOME` to
 verify that home's instruction boundary; its provider authentication remains a
 dummy local key. The bundled model catalog uses a disposable Codex home too.
+
+## Failure classification
+
+Use `errors.As(err, &requestError)` with `*completion.RequestError` to inspect
+`Kind`, `RetryAfter` and `Retryable()`. Only explicit overload, rate-limit, and
+service-unavailable failures without partial response output are retryable.
+Authentication, context limits, unknown failures, timeouts, transport loss,
+malformed output and capability probes never authorize a retry. The caller owns
+retry budgets and scheduling; no request is retried here. Classification does
+not establish that the failed request consumed no quota. `RetryAfter` is zero
+when the CLI supplies no trustworthy delay (currently both completion adapters).
+
+Claude classification requires a typed assistant error and terminal failed
+result. Codex exec exposes only a message in its terminal error envelope, so the
+adapter recognizes a narrow set of canonical native error formats: exact
+capacity/context failures and anchored HTTP 429/503/529/401 status formats. Any
+item output, successful completion, malformed/unknown event or unrecognized
+format prevents transient classification. Provider prose is never searched for
+keywords or retained in public errors. Sources:
+[Codex error formatting](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/error.rs),
+[Codex exec envelope](https://github.com/openai/codex/blob/main/codex-rs/exec/src/exec_events.rs),
+[Claude native message types](https://github.com/anthropics/claude-agent-sdk-python/blob/main/src/claude_agent_sdk/types.py).

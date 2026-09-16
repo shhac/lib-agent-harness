@@ -16,6 +16,13 @@ func (s *Session) codexEvent(t *Turn, ref Ref, m map[string]json.RawMessage) {
 	}
 	method := str(m, "method")
 	if method == "turn/started" {
+		s.compactTurnStarted(t, p)
+		return
+	}
+	t.mu.Lock()
+	waitingID := t.awaitingCompactID
+	t.mu.Unlock()
+	if waitingID {
 		return
 	}
 	if id := str(p, "turnId"); id != "" && id != t.ID() {
@@ -32,6 +39,11 @@ func (s *Session) codexEvent(t *Turn, ref Ref, m map[string]json.RawMessage) {
 		typ := str(item, "type")
 		if typ == "contextCompaction" {
 			s.invalidateContext(t, "context compacting; awaiting a fresh observation")
+			kind := "compaction_started"
+			if method == "item/completed" {
+				kind = "compaction_completed"
+			}
+			s.emit(t, Event{Kind: kind, ItemID: str(item, "id")})
 			return
 		}
 		id := str(item, "id")
