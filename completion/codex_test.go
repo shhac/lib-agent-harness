@@ -62,7 +62,7 @@ func TestCodexTransportProposesOnlyCallerTools(t *testing.T) {
 	calls := 0
 	reservations := 0
 	cfg := Config{Engine: "codex", Model: "test-model", Effort: "high", CodexBin: "sh", BeforeRequest: func(context.Context) error { reservations++; return nil }}
-	cfg.codexRun = func(ctx context.Context, bin string, args []string, dir string, env []string, input string) ([]byte, error) {
+	cfg.run = func(ctx context.Context, bin string, args []string, dir string, env []string, input string) ([]byte, error) {
 		calls++
 		if args[0] == "debug" {
 			return []byte(testCatalog), nil
@@ -93,6 +93,15 @@ func TestCodexTransportProposesOnlyCallerTools(t *testing.T) {
 	}
 }
 
+func postProbe(t *testing.T, url, body string) {
+	t.Helper()
+	response, err := http.Post(url, "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+}
+
 func findProbeURL(args []string) string {
 	for _, arg := range args {
 		if strings.HasPrefix(arg, "model_providers.harness_probe=") {
@@ -109,7 +118,7 @@ func TestCodexProbeFailsBeforeBillableCall(t *testing.T) {
 	for _, request := range []string{`{"model":"test-model","reasoning":{"effort":"high"},"tools":[{"name":"shell"}]}`, `{"model":"substitute","reasoning":{"effort":"high"}}`, `{"model":"test-model","reasoning":{"effort":"low"}}`} {
 		t.Run(request, func(t *testing.T) {
 			cfg := Config{Engine: "codex", Model: "test-model", Effort: "high", CodexBin: "sh", BeforeRequest: func(context.Context) error { t.Fatal("reserved a live call after unsafe probe"); return nil }}
-			cfg.codexRun = func(ctx context.Context, bin string, args []string, dir string, env []string, input string) ([]byte, error) {
+			cfg.run = func(ctx context.Context, bin string, args []string, dir string, env []string, input string) ([]byte, error) {
 				if args[0] == "debug" {
 					return []byte(testCatalog), nil
 				}
@@ -153,7 +162,7 @@ func TestInstalledCodexCapabilityProbe(t *testing.T) {
 	}
 	dir := t.TempDir()
 	cfg := Config{Engine: "codex", CodexBin: bin, Model: "gpt-6-astra", Effort: "high", Timeout: 20 * time.Second}
-	catalog, err := runCodex(context.Background(), cfg, bin, []string{"debug", "models", "--bundled"}, dir, codexCatalogEnvironment(dir), "")
+	catalog, err := runCLI(context.Background(), cfg, bin, []string{"debug", "models", "--bundled"}, dir, codexCatalogEnvironment(dir), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +189,7 @@ func TestInstalledCodexStructuredResponse(t *testing.T) {
 	}
 	dir := t.TempDir()
 	cfg := Config{Engine: "codex", Model: "gpt-6-astra", Effort: "high", Timeout: 20 * time.Second}
-	catalog, err := runCodex(context.Background(), cfg, bin, []string{"debug", "models", "--bundled"}, dir, codexCatalogEnvironment(dir), "")
+	catalog, err := runCLI(context.Background(), cfg, bin, []string{"debug", "models", "--bundled"}, dir, codexCatalogEnvironment(dir), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +247,7 @@ func TestInstalledCodexStructuredResponse(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "auth.json"), []byte(`{"OPENAI_API_KEY":"fake-local-key"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	output, err := runCodex(context.Background(), cfg, bin, args, dir, codexCatalogEnvironment(dir), `{"messages":[{"role":"user","content":"Hello"}],"available_tools":[]}`)
+	output, err := runCLI(context.Background(), cfg, bin, args, dir, codexCatalogEnvironment(dir), `{"messages":[{"role":"user","content":"Hello"}],"available_tools":[]}`)
 	if err != nil {
 		t.Fatalf("Codex fake protocol: %v; %s", err, output)
 	}
@@ -271,7 +280,7 @@ func TestCodexProcessIsBounded(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			start := time.Now()
-			_, err := runCodex(context.Background(), Config{Timeout: tc.timeout}, "/bin/sh", []string{"-c", tc.script}, t.TempDir(), []string{"PATH=/usr/bin:/bin"}, "")
+			_, err := runCLI(context.Background(), Config{Timeout: tc.timeout}, "/bin/sh", []string{"-c", tc.script}, t.TempDir(), []string{"PATH=/usr/bin:/bin"}, "")
 			if err == nil {
 				t.Fatal("unbounded child succeeded")
 			}
@@ -290,7 +299,7 @@ func TestCodexGlobalInstructionsFailBeforeProcessOrInference(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(home, name), []byte("unrelated owner coding instructions"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			cfg := Config{Engine: "codex", Model: "test-model", Effort: "high", codexRun: func(context.Context, string, []string, string, []string, string) ([]byte, error) {
+			cfg := Config{Engine: "codex", Model: "test-model", Effort: "high", run: func(context.Context, string, []string, string, []string, string) ([]byte, error) {
 				t.Fatal("started subprocess with global instructions")
 				return nil, nil
 			}, BeforeRequest: func(context.Context) error { t.Fatal("reserved model with global instructions"); return nil }}
@@ -351,7 +360,7 @@ func TestConfiguredCodexHomeGuardChecksSelectedDirectory(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(selected, filename), []byte("Selected-home coding instructions"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			cfg := Config{Engine: "codex", CodexHome: selected, Model: "test-model", Effort: "high", codexRun: func(context.Context, string, []string, string, []string, string) ([]byte, error) {
+			cfg := Config{Engine: "codex", CodexHome: selected, Model: "test-model", Effort: "high", run: func(context.Context, string, []string, string, []string, string) ([]byte, error) {
 				t.Error("ran subprocess before checking configured home")
 				return nil, errors.New("unexpected process")
 			}, BeforeRequest: func(context.Context) error {
@@ -383,7 +392,7 @@ func TestConcurrentCodexRequestsKeepTheirSelectedHomes(t *testing.T) {
 		go func(selected string) {
 			calls := 0
 			cfg := Config{Engine: "codex", CodexHome: selected, CodexBin: "sh", Model: "test-model", Effort: "high"}
-			cfg.codexRun = func(ctx context.Context, _ string, args []string, dir string, env []string, _ string) ([]byte, error) {
+			cfg.run = func(ctx context.Context, _ string, args []string, dir string, env []string, _ string) ([]byte, error) {
 				calls++
 				if args[0] == "debug" {
 					if environmentValue(env, "CODEX_HOME") != dir {

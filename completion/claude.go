@@ -61,10 +61,10 @@ func claudeComplete(ctx context.Context, cfg Config, messages []Message, tools [
 		bin = "claude"
 	}
 	bin, err = exec.LookPath(bin)
-	if err != nil && cfg.claudeRun == nil {
+	if err != nil && cfg.run == nil {
 		return empty, usage, errors.New("Claude executable not found; install Claude Code and sign in")
 	}
-	if cfg.claudeRun != nil && bin == "" {
+	if cfg.run != nil && bin == "" {
 		bin = cfg.ClaudeBin
 	}
 	if bin != "" {
@@ -105,7 +105,7 @@ func claudeComplete(ctx context.Context, cfg Config, messages []Message, tools [
 			return empty, usage, err
 		}
 	}
-	output, err := runClaude(ctx, cfg, bin, args, dir, env, string(payload))
+	output, err := runCLI(ctx, cfg, bin, args, dir, env, string(payload))
 	if err != nil {
 		if ctx.Err() != nil {
 			return empty, usage, ctx.Err()
@@ -113,16 +113,6 @@ func claudeComplete(ctx context.Context, cfg Config, messages []Message, tools [
 		return empty, usage, errors.New("Claude request failed or timed out; check Claude login and model access (usage may be unknown; request was not retried)")
 	}
 	return parseClaude(output, tools)
-}
-
-func runClaude(ctx context.Context, cfg Config, bin string, args []string, dir string, env []string, input string) ([]byte, error) {
-	if cfg.claudeRun != nil {
-		return cfg.claudeRun(ctx, bin, args, dir, env, input)
-	}
-	// The process containment and bounded output implementation is shared by both
-	// CLIs; only command construction and stream interpretation differ.
-	cfg.codexRun = nil
-	return runCodex(ctx, cfg, bin, args, dir, env, input)
 }
 
 func parseClaude(data []byte, tools []Tool) (Message, Usage, error) {

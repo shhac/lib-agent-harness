@@ -40,7 +40,7 @@ func TestClaudeTransportIsCoordinationOnlyAndUsesState(t *testing.T) {
 	calls := 0
 	reserved := false
 	cfg := Config{Engine: "claude", ClaudeHome: filepath.Join(root, "login"), ClaudeBin: "test-claude", Model: "test-model", Effort: "high", WorkDirRoot: root, MaxContextBytes: 100000, Timeout: time.Second, BeforeRequest: func(context.Context) error { reserved = true; return nil }}
-	cfg.claudeRun = func(_ context.Context, _ string, args []string, dir string, env []string, input string) ([]byte, error) {
+	cfg.run = func(_ context.Context, _ string, args []string, dir string, env []string, input string) ([]byte, error) {
 		calls++
 		for _, entry := range env {
 			if strings.HasPrefix(entry, "ANTHROPIC_BASE_URL=") {
@@ -99,7 +99,7 @@ func TestClaudeRejectsNativeToolsAndMalformedResult(t *testing.T) {
 
 func TestClaudeDoesNotRetryFailure(t *testing.T) {
 	calls := 0
-	cfg := Config{Engine: "claude", ClaudeBin: "test", Model: "test", MaxContextBytes: 10000, claudeRun: func(context.Context, string, []string, string, []string, string) ([]byte, error) {
+	cfg := Config{Engine: "claude", ClaudeBin: "test", Model: "test", MaxContextBytes: 10000, run: func(context.Context, string, []string, string, []string, string) ([]byte, error) {
 		calls++
 		return nil, errors.New("secret")
 	}}

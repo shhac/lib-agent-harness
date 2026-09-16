@@ -26,8 +26,8 @@ type Config struct {
 	Timeout         time.Duration
 	// BeforeRequest runs after non-billable probes and before inference.
 	BeforeRequest func(context.Context) error
-	codexRun      func(context.Context, string, []string, string, []string, string) ([]byte, error)
-	claudeRun     func(context.Context, string, []string, string, []string, string) ([]byte, error)
+	// run replaces CLI execution for synthetic tests, for either engine.
+	run func(context.Context, string, []string, string, []string, string) ([]byte, error)
 }
 type Message struct {
 	Role       string     `json:"role"`

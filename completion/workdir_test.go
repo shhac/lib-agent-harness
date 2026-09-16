@@ -16,7 +16,7 @@ func TestCodexScratchUsesSelectedStateAndIsRemoved(t *testing.T) {
 	}
 	var observed string
 	cfg := Config{Engine: "codex", Model: "test-model", CodexBin: "sh", CodexHome: t.TempDir(), WorkDirRoot: root}
-	cfg.codexRun = func(_ context.Context, _ string, _ []string, dir string, _ []string, _ string) ([]byte, error) {
+	cfg.run = func(_ context.Context, _ string, _ []string, dir string, _ []string, _ string) ([]byte, error) {
 		observed = dir
 		if filepath.Dir(dir) != filepath.Join(root, "model-runs") {
 			t.Errorf("scratch=%q", dir)
@@ -51,7 +51,7 @@ func TestCodexRejectsScratchParentSymlinkBeforeSubprocess(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := Config{Engine: "codex", Model: "test-model", CodexBin: "sh", CodexHome: t.TempDir(), WorkDirRoot: root}
-	cfg.codexRun = func(context.Context, string, []string, string, []string, string) ([]byte, error) {
+	cfg.run = func(context.Context, string, []string, string, []string, string) ([]byte, error) {
 		t.Fatal("subprocess ran through unsafe scratch path")
 		return nil, nil
 	}

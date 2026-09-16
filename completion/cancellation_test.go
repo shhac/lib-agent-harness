@@ -67,7 +67,7 @@ func TestCompletionCancellationAcrossSubprocessBoundaries(t *testing.T) {
 					cancel()
 					return nil, errors.New("synthetic inference failure")
 				}
-				cfg.codexRun, cfg.claudeRun = run, run
+				cfg.run = run
 				_, _, err := Complete(ctx, cfg, nil, Tools())
 				if !errors.Is(err, context.Canceled) {
 					t.Fatalf("lost cancellation: %v", err)

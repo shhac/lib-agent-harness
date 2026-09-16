@@ -10,18 +10,11 @@ import (
 	"fmt"
 
 	"io"
-	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
-	"strings"
-	"sync"
-	"time"
-
-	"github.com/shhac/lib-agent-harness/process"
 )
 
 // Codex is used only as an authenticated inference transport. Every invocation
@@ -71,7 +64,7 @@ func codexComplete(ctx context.Context, cfg Config, messages []Message, tools []
 	// Snapshot the selected login environment once for both probe and inference.
 	// Process-local environment mutation would mix independently configured callers.
 	authEnv = withTemporaryDirectory(authEnv, runtime.GOOS, dir)
-	catalog, err := runCodex(ctx, cfg, bin, []string{"debug", "models", "--bundled"}, dir, cleanEnv, "")
+	catalog, err := runCLI(ctx, cfg, bin, []string{"debug", "models", "--bundled"}, dir, cleanEnv, "")
 	if err != nil {
 		if ctx.Err() != nil {
 			return empty, usage, ctx.Err()
@@ -113,7 +106,7 @@ func codexComplete(ctx context.Context, cfg Config, messages []Message, tools []
 			return empty, usage, err
 		}
 	}
-	output, err := runCodex(ctx, cfg, bin, args, dir, authEnv, string(payload))
+	output, err := runCLI(ctx, cfg, bin, args, dir, authEnv, string(payload))
 	if err != nil {
 		if ctx.Err() != nil {
 			return empty, usage, ctx.Err()
@@ -300,106 +293,6 @@ func codexCatalogEnvironment(dir string) []string {
 	return append(isolatedOperatingEnvironment(nativeOperatingEnvironment(), runtime.GOOS, dir), "CODEX_HOME="+dir)
 }
 
-// probeCodex makes no inference call. A dummy provider rejects the first request
-// after checking the CLI actually removed all native tools and honored identity.
-func probeCodex(ctx context.Context, cfg Config, bin string, args []string, dir string, env []string) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return errors.New("cannot start local Codex capability check")
-	}
-	var mu sync.Mutex
-	verified := true
-	requests := 0
-	server := &http.Server{ReadHeaderTimeout: 5 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Model     string            `json:"model"`
-			Tools     []json.RawMessage `json:"tools"`
-			Reasoning struct {
-				Effort string `json:"effort"`
-			} `json:"reasoning"`
-		}
-		data, readErr := io.ReadAll(io.LimitReader(r.Body, 2*1024*1024+1))
-		mu.Lock()
-		requests++
-		verified = verified && readErr == nil && len(data) <= 2*1024*1024 && json.Unmarshal(data, &req) == nil && req.Model == cfg.Model && req.Reasoning.Effort == cfg.Effort && len(req.Tools) == 0 && !bytes.Contains(data, []byte("# AGENTS.md instructions"))
-		mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		io.WriteString(w, `{"error":{"message":"local capability check; no inference performed"}}`)
-	})}
-	done := make(chan struct{})
-	go func() { defer close(done); _ = server.Serve(listener) }()
-	defer func() { server.Close(); <-done }()
-	probeArgs := append([]string{}, args...)
-	provider := `model_providers.harness_probe={name="Harness capability check",base_url="http://` + listener.Addr().String() + `/v1",wire_api="responses",request_max_retries=0,stream_max_retries=0,env_key="HARNESS_PROBE_KEY"}`
-	probeArgs = append(probeArgs, "-c", `model_provider="harness_probe"`, "-c", provider)
-	probeCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	// Preserve the explicitly selected Codex home so the probe verifies the
-	// same global-instruction boundary. OS account discovery is disposable;
-	// provider auth is the explicit dummy key, never the native login.
-	probeEnv := isolatedOperatingEnvironment(env, runtime.GOOS, dir)
-	for _, entry := range env {
-		if strings.HasPrefix(entry, "CODEX_HOME=") {
-			probeEnv = append(probeEnv, entry)
-		}
-	}
-	_, _ = runCodex(probeCtx, cfg, bin, probeArgs, dir, append(probeEnv, "HARNESS_PROBE_KEY=local-dummy-value"), `{"messages":[{"role":"user","content":"Return an empty response."}],"available_tools":[]}`)
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	mu.Lock()
-	ok := verified && requests == 1
-	mu.Unlock()
-	if !ok {
-		return errors.New("Codex capability check failed: this CLI did not prove tool-free inference with the requested model and effort; no live model call was made")
-	}
-	return nil
-}
-
-type limitedOutput struct {
-	buffer bytes.Buffer
-	max    int
-	stop   func()
-}
-
-func (w *limitedOutput) Write(p []byte) (int, error) {
-	if len(p) > w.max-w.buffer.Len() {
-		w.stop()
-		return 0, errors.New("Codex output limit exceeded")
-	}
-	return w.buffer.Write(p)
-}
-
-func runCodex(ctx context.Context, cfg Config, bin string, args []string, dir string, env []string, input string) ([]byte, error) {
-	if cfg.codexRun != nil {
-		return cfg.codexRun(ctx, bin, args, dir, env, input)
-	}
-	ctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, args...)
-	cmd.Dir = dir
-	cmd.Env = env
-	cmd.Stdin = strings.NewReader(input)
-	child, err := process.New(cmd)
-	if err != nil {
-		return nil, err
-	}
-	defer child.Close()
-	stop := child.Stop
-	cmd.Cancel = func() error { stop(); return nil }
-	cmd.WaitDelay = 2 * time.Second
-	output := &limitedOutput{max: 2 * 1024 * 1024, stop: stop}
-	cmd.Stdout = output
-	// Diagnostics may contain credentials or remote record content. Keep them out
-	// of tool results, audit logs and model history.
-	cmd.Stderr = io.Discard
-	err = child.Run()
-	return output.buffer.Bytes(), err
-}
 
 func parseCodex(data []byte, tools []Tool) (Message, Usage, error) {
 	var result Message

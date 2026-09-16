@@ -46,7 +46,7 @@ func TestWindowsCodexJobResumesContainedProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := append(os.Environ(), "AGENT_ASSISTANT_PROCESS_TEST=1")
-	output, err := runCodex(context.Background(), Config{Timeout: 5 * time.Second}, binary, []string{"-test.run=^TestWindowsCodexProcessHelper$", "--", "answer"}, t.TempDir(), env, "")
+	output, err := runCLI(context.Background(), Config{Timeout: 5 * time.Second}, binary, []string{"-test.run=^TestWindowsCodexProcessHelper$", "--", "answer"}, t.TempDir(), env, "")
 	if err != nil || strings.TrimSpace(string(output)) != "ready" {
 		t.Fatalf("contained process did not resume: %s, %v", output, err)
 	}
@@ -58,7 +58,7 @@ func TestWindowsCodexCancellationKillsDescendants(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := append(os.Environ(), "AGENT_ASSISTANT_PROCESS_TEST=1")
-	output, err := runCodex(context.Background(), Config{Timeout: 2 * time.Second}, binary, []string{"-test.run=^TestWindowsCodexProcessHelper$", "--", "parent"}, t.TempDir(), env, "")
+	output, err := runCLI(context.Background(), Config{Timeout: 2 * time.Second}, binary, []string{"-test.run=^TestWindowsCodexProcessHelper$", "--", "parent"}, t.TempDir(), env, "")
 	if err == nil {
 		t.Fatal("cancelled process unexpectedly succeeded")
 	}
