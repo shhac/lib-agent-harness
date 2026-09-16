@@ -8,6 +8,7 @@ import (
 	"io"
 	"os/exec"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -36,6 +37,7 @@ type streamWire struct {
 	pending   map[string]chan response
 	failure   error
 	done      chan struct{}
+	reaped    chan struct{}
 	once      sync.Once
 	next      atomic.Uint64
 	event     func(map[string]json.RawMessage)
@@ -43,7 +45,10 @@ type streamWire struct {
 }
 
 func newProcessWire(ctx context.Context, o Options, nativeID string, resuming bool, event func(map[string]json.RawMessage), ended func(error)) (*streamWire, error) {
-	args := commandArgs(o, nativeID, resuming)
+	return newProcessWireArgs(ctx, o, commandArgs(o, nativeID, resuming), event, ended)
+}
+
+func newProcessWireArgs(ctx context.Context, o Options, args []string, event func(map[string]json.RawMessage), ended func(error)) (*streamWire, error) {
 	runCtx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(runCtx, o.Binary, args...)
 	cmd.Dir = o.WorkDir
@@ -66,10 +71,10 @@ func newProcessWire(ctx context.Context, o Options, nativeID string, resuming bo
 		return nil, ErrTransport
 	}
 	cmd.Cancel = func() error { p.Stop(); return nil }
-	w := &streamWire{engine: o.Engine, stdin: stdin, stdout: reader, pending: map[string]chan response{}, done: make(chan struct{}), writeGate: make(chan struct{}, 1), event: event, ended: ended}
+	w := &streamWire{engine: o.Engine, stdin: stdin, stdout: reader, pending: map[string]chan response{}, done: make(chan struct{}), reaped: make(chan struct{}), writeGate: make(chan struct{}, 1), event: event, ended: ended}
 	w.stop = func() { cancel(); p.Stop(); stdin.Close(); reader.Close() }
 	go w.read()
-	go func() { err := p.Run(); p.Close(); writer.CloseWithError(err); cancel() }()
+	go func() { defer close(w.reaped); err := p.Run(); p.Close(); writer.CloseWithError(err); cancel() }()
 	return w, nil
 }
 func (w *streamWire) close() { w.once.Do(func() { close(w.done); w.stop() }) }
@@ -223,6 +228,9 @@ func (w *streamWire) reply(m map[string]json.RawMessage) bool {
 				return malformed()
 			}
 			r.err = ErrRejected
+			if strings.HasPrefix(message, "Unsupported control request subtype:") {
+				r.err = ErrUnsupported
+			}
 		default:
 			return malformed()
 		}

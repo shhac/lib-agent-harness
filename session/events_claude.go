@@ -23,6 +23,10 @@ func (s *Session) claudeEvent(t *Turn, ref Ref, m map[string]json.RawMessage) {
 		return
 	}
 	switch str(m, "type") {
+	case "system":
+		if str(m, "subtype") == "compact_boundary" {
+			s.invalidateContext(t, "context compacted; awaiting a fresh observation")
+		}
 	case "stream_event":
 		s.claudeStreamEvent(t, m)
 	case "assistant":
@@ -41,6 +45,7 @@ func (s *Session) claudeStreamEvent(t *Turn, m map[string]json.RawMessage) {
 	}
 	switch str(event, "type") {
 	case "message_start":
+		s.claudeMessageContext(t, event["message"])
 		var message struct{ ID string }
 		if json.Unmarshal(event["message"], &message) == nil {
 			t.mu.Lock()
@@ -60,6 +65,7 @@ func (s *Session) claudeStreamEvent(t *Turn, m map[string]json.RawMessage) {
 }
 
 func (s *Session) claudeAssistant(t *Turn, m map[string]json.RawMessage) {
+	s.claudeMessageContext(t, m["message"])
 	var message struct {
 		ID      string
 		Content []struct{ Type, ID, Name, Text string }
@@ -142,6 +148,7 @@ func (s *Session) claudeResult(t *Turn, m map[string]json.RawMessage) {
 			err = ErrTurnFailed
 		}
 	}
+	s.claudeModelCapacity(t, m["modelUsage"])
 	if usage.Known {
 		s.emit(t, Event{Kind: "usage", Usage: &usage})
 	}

@@ -34,7 +34,12 @@ type Capability struct {
 	Availability Availability `json:"availability"`
 	Reason       string       `json:"reason,omitempty"`
 }
-type Capabilities struct{ Start, Resume, Interrupt, Steer, ReplaceInstructions, AppendInstructions Capability }
+type Capabilities struct {
+	Start, Resume, Interrupt, Steer, ReplaceInstructions, AppendInstructions Capability
+	// Telemetry capabilities become Native only after a successful response or
+	// event. Older CLI versions may reject optional inspection methods.
+	Account, Quota, Context Capability
+}
 
 // CapabilitiesFor describes availability before contacting an installed CLI.
 // Strategy alone is not evidence that a particular installed version supports it.
@@ -43,7 +48,7 @@ func CapabilitiesFor(e Engine) Capabilities {
 	if e != Codex && e != Claude {
 		u = Capability{Unsupported, "unrecognized harness"}
 	}
-	return Capabilities{u, u, u, u, u, u}
+	return Capabilities{Start: u, Resume: u, Interrupt: u, Steer: u, ReplaceInstructions: u, AppendInstructions: u, Account: u, Quota: u, Context: u}
 }
 
 var (
@@ -126,13 +131,16 @@ type SteerResult struct {
 	Turn     *Turn
 }
 type Event struct {
-	Kind   string `json:"kind"` // text_delta, text, tool_started, tool_completed, status, usage
-	TurnID string `json:"turn_id"`
-	ItemID string `json:"item_id,omitempty"`
-	Text   string `json:"text,omitempty"`
-	Tool   string `json:"tool,omitempty"`
-	Status string `json:"status,omitempty"`
-	Usage  *Usage `json:"usage,omitempty"`
+	Kind    string           `json:"kind"` // text_delta, text, tool_started, tool_completed, status, usage, context, quota, account
+	TurnID  string           `json:"turn_id"`
+	ItemID  string           `json:"item_id,omitempty"`
+	Text    string           `json:"text,omitempty"`
+	Tool    string           `json:"tool,omitempty"`
+	Status  string           `json:"status,omitempty"`
+	Usage   *Usage           `json:"usage,omitempty"`
+	Context *ContextSnapshot `json:"context,omitempty"`
+	Quota   *QuotaSnapshot   `json:"quota,omitempty"`
+	Account *AccountSnapshot `json:"account,omitempty"`
 }
 
 // Usage is per-turn. Input excludes CacheRead; Reasoning is a subset of Output.
@@ -148,6 +156,7 @@ type Result struct {
 	NativeError          bool
 	TurnID, Text, Status string
 	Usage                Usage
+	Context              ContextSnapshot
 }
 type Turn struct {
 	mu                 sync.Mutex
@@ -175,7 +184,9 @@ func (t *Turn) Wait(ctx context.Context) (Result, error) {
 	case <-t.done:
 		t.mu.Lock()
 		defer t.mu.Unlock()
-		return t.result, t.err
+		result := t.result
+		result.Context = cloneContext(result.Context)
+		return result, t.err
 	case <-ctx.Done():
 		return Result{}, ctx.Err()
 	}

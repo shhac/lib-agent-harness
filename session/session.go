@@ -17,6 +17,7 @@ type Session struct {
 	options   Options
 	ref       Ref
 	caps      Capabilities
+	telemetry Telemetry
 	transport wire
 	active    *Turn
 	closed    bool
@@ -116,9 +117,11 @@ func (s *Session) initialize(ctx context.Context, resume bool) error {
 		s.ref.ID = response.Thread.ID
 		s.mu.Unlock()
 	} else {
-		if _, err := s.transport.request(ctx, "initialize", map[string]any{}); err != nil {
+		body, err := s.transport.request(ctx, "initialize", map[string]any{})
+		if err != nil {
 			return err
 		}
+		s.observeClaudeAccount(body)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -211,6 +214,8 @@ func (s *Session) startTurn(ctx context.Context, in Input) (*Turn, error) {
 	t := &Turn{id: newID(), events: make(chan Event, s.options.EventBuffer), done: make(chan struct{})}
 	t.starting = s.options.Engine == Codex
 	s.active = t
+	invalidate(&s.telemetry.Context.Observation, "conversation is changing; awaiting a fresh observation")
+	t.result.Context = cloneContext(s.telemetry.Context)
 	ref := s.ref
 	s.mu.Unlock()
 	var err error
@@ -238,6 +243,7 @@ func (s *Session) startTurn(ctx context.Context, in Input) (*Turn, error) {
 
 	return t, nil
 }
+
 // startCodexTurn asks the server to open the turn and adopts the id it assigns.
 // Notifications that arrived while the turn was still starting were buffered
 // against the local id, so they are replayed here, under eventMu for the whole

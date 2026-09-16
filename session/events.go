@@ -18,13 +18,19 @@ func (s *Session) notificationLocked(m map[string]json.RawMessage) {
 	s.mu.Lock()
 	t := s.active
 	ref := s.ref
+	closed := s.closed
 	s.mu.Unlock()
+	if closed {
+		return
+	}
 	if t == nil {
+		s.idleTelemetry(m, ref, nil)
 		return
 	}
 	t.mu.Lock()
 	if t.finished {
 		t.mu.Unlock()
+		s.idleTelemetry(m, ref, t)
 		return
 	}
 	if t.starting {
@@ -45,6 +51,9 @@ func (s *Session) notificationLocked(m map[string]json.RawMessage) {
 		return
 	}
 	t.mu.Unlock()
+	if s.accountTelemetryEvent(m, ref, t) {
+		return
+	}
 	if s.options.Engine == Codex {
 		s.codexEvent(t, ref, m)
 	} else {

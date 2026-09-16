@@ -30,6 +30,10 @@ func (s *Session) codexEvent(t *Turn, ref Ref, m map[string]json.RawMessage) {
 			return
 		}
 		typ := str(item, "type")
+		if typ == "contextCompaction" {
+			s.invalidateContext(t, "context compacting; awaiting a fresh observation")
+			return
+		}
 		id := str(item, "id")
 		if typ == "agentMessage" {
 			if method == "item/completed" {
@@ -50,6 +54,12 @@ func (s *Session) codexEvent(t *Turn, ref Ref, m map[string]json.RawMessage) {
 			s.emit(t, Event{Kind: kind, ItemID: id, Tool: tool, Status: str(item, "status")})
 		}
 	case "thread/tokenUsage/updated":
+		if str(p, "turnId") == "" {
+			return
+		}
+		if c, err := parseCodexContext(p["tokenUsage"]); err == nil {
+			s.observeContext(c, t)
+		}
 		var envelope struct {
 			Last  json.RawMessage `json:"last"`
 			Total json.RawMessage `json:"total"`
@@ -79,6 +89,8 @@ func (s *Session) codexEvent(t *Turn, ref Ref, m map[string]json.RawMessage) {
 		usage := t.result.Usage
 		t.mu.Unlock()
 		s.emit(t, Event{Kind: "usage", Usage: &usage})
+	case "thread/compacted":
+		s.invalidateContext(t, "context compacted; awaiting a fresh observation")
 	case "turn/completed":
 		var turn struct{ ID, Status string }
 		if json.Unmarshal(p["turn"], &turn) != nil {
