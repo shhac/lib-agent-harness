@@ -56,9 +56,15 @@ dummy local key. The bundled model catalog uses a disposable Codex home too.
 ## Failure classification
 
 Use `errors.As(err, &requestError)` with `*completion.RequestError` to inspect
-`Kind`, `RetryAfter` and `Retryable()`. Only explicit overload, rate-limit, and
+`Kind`, `RetryAfter` and `Retryable()`. `Engine`, `Phase` (preflight, process,
+response), `Code` and optional `ExitCode` provide safe diagnostics without
+retaining raw provider or subprocess text. `Code` is an allowlisted native enum
+or library code; an unknown native value is omitted. Exit status is only present
+when observed from the subprocess. These fields do not establish whether quota
+was consumed. Only explicit overload, rate-limit, and
 service-unavailable failures without partial response output are retryable.
-Authentication, context limits, unknown failures, timeouts, transport loss,
+Authentication, permission denials, unavailable models, structured-output
+exhaustion, context limits, unknown failures, timeouts, transport loss,
 malformed output and capability probes never authorize a retry. The caller owns
 retry budgets and scheduling; no request is retried here. Classification does
 not establish that the failed request consumed no quota. `RetryAfter` is zero
@@ -67,10 +73,17 @@ when the CLI supplies no trustworthy delay (currently both completion adapters).
 Claude classification requires a typed assistant error and terminal failed
 result. Codex exec exposes only a message in its terminal error envelope, so the
 adapter recognizes a narrow set of canonical native error formats: exact
-capacity/context failures and anchored HTTP 429/503/529/401 status formats. Any
+capacity/context failures and anchored HTTP 429/503/529/401/403 status formats. Any
 item output, successful completion, malformed/unknown event or unrecognized
 format prevents transient classification. Provider prose is never searched for
 keywords or retained in public errors. Sources:
 [Codex error formatting](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/error.rs),
 [Codex exec envelope](https://github.com/openai/codex/blob/main/codex-rs/exec/src/exec_events.rs),
 [Claude native message types](https://github.com/anthropics/claude-agent-sdk-python/blob/main/src/claude_agent_sdk/types.py).
+
+Claude terminal diagnostics recognize structured-output exhaustion, context
+limits, model-not-found and account permission errors even after partial output;
+they never make such partial responses retryable. Timeouts use `ErrorTimeout`
+and preserve `errors.Is(err, context.DeadlineExceeded)`. Cancellation preserves
+`context.Canceled`. Missing Codex catalog models fail at preflight with
+`ErrorModelUnavailable`; this is not a claim about remote model availability.

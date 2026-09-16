@@ -96,7 +96,7 @@ func codexComplete(ctx context.Context, cfg Config, messages []Message, tools []
 	}
 	payload, err := json.Marshal(map[string]any{"messages": messages, "available_tools": tools})
 	if err != nil || len(payload) > cfg.MaxContextBytes {
-		return empty, usage, &RequestError{Kind: ErrorContextLimit}
+		return empty, usage, &RequestError{Kind: ErrorContextLimit, Engine: "codex", Phase: PhasePreflight, Code: "context_bytes"}
 	}
 	if err := ctx.Err(); err != nil {
 		return empty, usage, err
@@ -109,15 +109,9 @@ func codexComplete(ctx context.Context, cfg Config, messages []Message, tools []
 	output, err := runCLI(ctx, cfg, bin, args, dir, authEnv, string(payload))
 	if err != nil {
 		if ctx.Err() != nil {
-			return empty, usage, ctx.Err()
+			err = ctx.Err()
 		}
-		var exit *exec.ExitError
-		if errors.As(err, &exit) && exit.ExitCode() > 0 {
-			if failure := codexRequestFailure(output); failure != nil {
-				return empty, usage, failure
-			}
-		}
-		return empty, usage, &RequestError{Kind: ErrorUnknown}
+		return empty, usage, processRequestFailure("codex", output, err)
 	}
 	return parseCodex(output, tools)
 }
@@ -208,7 +202,7 @@ func restrictedCatalog(data []byte, model, effort string) ([]byte, error) {
 		m["base_instructions"] = json.RawMessage(strconv.Quote(codexInstructions))
 		return json.Marshal(map[string]any{"models": []map[string]json.RawMessage{m}})
 	}
-	return nil, fmt.Errorf("Codex does not advertise model %s in its installed catalog; update Codex or select an advertised model", model)
+	return nil, &RequestError{Kind: ErrorModelUnavailable, Engine: "codex", Phase: PhasePreflight, Code: "model_not_in_catalog"}
 }
 
 func actionSchema(tools []Tool) ([]byte, error) {
@@ -322,14 +316,14 @@ func parseCodex(data []byte, tools []Tool) (Message, Usage, error) {
 			} `json:"usage"`
 		}
 		if json.Unmarshal(line, &event) != nil {
-			return result, usage, errors.New("Codex returned malformed event JSON")
+			return result, usage, &RequestError{Kind: ErrorUnknown, Engine: "codex", Phase: PhaseResponse, Code: "malformed_event_json"}
 		}
 		switch event.Type {
 		case "turn.failed", "error":
-			return result, usage, &RequestError{Kind: ErrorUnknown}
+			return result, usage, &RequestError{Kind: ErrorUnknown, Engine: "codex", Phase: PhaseResponse, Code: event.Type}
 		case "item.started", "item.completed":
 			if event.Item.Type != "agent_message" && event.Item.Type != "reasoning" && event.Item.Type != "error" {
-				return result, usage, errors.New("Codex emitted an unexpected native tool event")
+				return result, usage, &RequestError{Kind: ErrorUnknown, Engine: "codex", Phase: PhaseResponse, Code: "unexpected_native_tool"}
 			}
 			if event.Type == "item.completed" && event.Item.Type == "agent_message" {
 				// Match output-last-message: commentary may precede the final answer.
@@ -344,10 +338,13 @@ func parseCodex(data []byte, tools []Tool) (Message, Usage, error) {
 		}
 	}
 	if !completed {
-		return Message{}, usage, errors.New("Codex did not complete its response")
+		return Message{}, usage, &RequestError{Kind: ErrorUnknown, Engine: "codex", Phase: PhaseResponse, Code: "missing_terminal_result"}
 	}
 	result, err := parseActionEnvelope([]byte(result.Content), tools)
-	return result, usage, err
+	if err != nil {
+		return result, usage, &RequestError{Kind: ErrorUnknown, Engine: "codex", Phase: PhaseResponse, Code: "invalid_action_envelope"}
+	}
+	return result, usage, nil
 }
 
 // parseActionEnvelope validates proposals before either CLI can invoke app tools.

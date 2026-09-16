@@ -88,7 +88,7 @@ func claudeComplete(ctx context.Context, cfg Config, messages []Message, tools [
 	}
 	payload, err := json.Marshal(map[string]any{"messages": messages, "available_tools": tools})
 	if err != nil || len(payload) > cfg.MaxContextBytes {
-		return empty, usage, &RequestError{Kind: ErrorContextLimit}
+		return empty, usage, &RequestError{Kind: ErrorContextLimit, Engine: "claude", Phase: PhasePreflight, Code: "context_bytes"}
 	}
 	args := append(claudeBaseArgs(), "-p", "--output-format", "stream-json", "--verbose", "--model", cfg.Model, "--system-prompt", codexInstructions, "--json-schema", string(schema))
 	if cfg.Effort != "" {
@@ -108,15 +108,9 @@ func claudeComplete(ctx context.Context, cfg Config, messages []Message, tools [
 	output, err := runCLI(ctx, cfg, bin, args, dir, env, string(payload))
 	if err != nil {
 		if ctx.Err() != nil {
-			return empty, usage, ctx.Err()
+			err = ctx.Err()
 		}
-		var exit *exec.ExitError
-		if errors.As(err, &exit) && exit.ExitCode() > 0 {
-			if failure := claudeRequestFailure(output); failure != nil {
-				return empty, usage, failure
-			}
-		}
-		return empty, usage, &RequestError{Kind: ErrorUnknown}
+		return empty, usage, processRequestFailure("claude", output, err)
 	}
 	return parseClaude(output, tools)
 }
@@ -128,6 +122,7 @@ func parseClaude(data []byte, tools []Tool) (Message, Usage, error) {
 	var usage Usage
 	var result Message
 	completed := false
+	assistantError := ""
 	for _, line := range bytes.Split(data, []byte("\n")) {
 		if len(bytes.TrimSpace(line)) == 0 {
 			continue
@@ -136,6 +131,9 @@ func parseClaude(data []byte, tools []Tool) (Message, Usage, error) {
 			Type    string   `json:"type"`
 			Subtype string   `json:"subtype"`
 			IsError bool     `json:"is_error"`
+			Reason  string   `json:"terminal_reason"`
+			Stop    string   `json:"stop_reason"`
+			Error   string   `json:"error"`
 			Tools   []string `json:"tools"`
 			Message struct {
 				Content []struct {
@@ -152,19 +150,20 @@ func parseClaude(data []byte, tools []Tool) (Message, Usage, error) {
 			} `json:"usage"`
 		}
 		if json.Unmarshal(line, &event) != nil {
-			return Message{}, usage, errors.New("Claude returned malformed event JSON")
+			return Message{}, usage, &RequestError{Kind: ErrorUnknown, Engine: "claude", Phase: PhaseResponse, Code: "malformed_event_json"}
 		}
 		if event.Type == "system" && event.Subtype == "init" {
 			for _, tool := range event.Tools {
 				if tool != "StructuredOutput" {
-					return Message{}, usage, errors.New("Claude exposed an unexpected native tool")
+					return Message{}, usage, &RequestError{Kind: ErrorUnknown, Engine: "claude", Phase: PhaseResponse, Code: "unexpected_native_tool"}
 				}
 			}
 		}
 		if event.Type == "assistant" {
+			assistantError = claudeErrorCode(event.Error)
 			for _, block := range event.Message.Content {
 				if block.Type == "tool_use" && block.Name != "StructuredOutput" {
-					return Message{}, usage, errors.New("Claude emitted an unexpected native tool event")
+					return Message{}, usage, &RequestError{Kind: ErrorUnknown, Engine: "claude", Phase: PhaseResponse, Code: "unexpected_native_tool"}
 				}
 			}
 		}
@@ -172,7 +171,7 @@ func parseClaude(data []byte, tools []Tool) (Message, Usage, error) {
 			continue
 		}
 		if event.IsError || event.Subtype != "success" || completed {
-			return Message{}, usage, &RequestError{Kind: ErrorUnknown}
+			return Message{}, usage, claudeTerminalFailure(event.Subtype, event.Reason, event.Stop, assistantError)
 		}
 		completed = true
 		if event.Usage != nil {
@@ -182,11 +181,11 @@ func parseClaude(data []byte, tools []Tool) (Message, Usage, error) {
 		var err error
 		result, err = parseActionEnvelope(event.Structured, tools)
 		if err != nil {
-			return Message{}, usage, err
+			return Message{}, usage, &RequestError{Kind: ErrorUnknown, Engine: "claude", Phase: PhaseResponse, Code: "invalid_action_envelope"}
 		}
 	}
 	if !completed {
-		return Message{}, usage, errors.New("Claude did not complete its response")
+		return Message{}, usage, &RequestError{Kind: ErrorUnknown, Engine: "claude", Phase: PhaseResponse, Code: "missing_terminal_result"}
 	}
 	return result, usage, nil
 }

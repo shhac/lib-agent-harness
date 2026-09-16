@@ -17,16 +17,20 @@ import (
 	"github.com/shhac/lib-agent-harness/process"
 )
 
+var errOutputLimit = errors.New("model output limit exceeded")
+
 type limitedOutput struct {
-	buffer bytes.Buffer
-	max    int
-	stop   func()
+	exceeded bool
+	buffer   bytes.Buffer
+	max      int
+	stop     func()
 }
 
 func (w *limitedOutput) Write(p []byte) (int, error) {
 	if len(p) > w.max-w.buffer.Len() {
+		w.exceeded = true
 		w.stop()
-		return 0, errors.New("Codex output limit exceeded")
+		return 0, errOutputLimit
 	}
 	return w.buffer.Write(p)
 }
@@ -61,6 +65,9 @@ func runCLI(ctx context.Context, cfg Config, bin string, args []string, dir stri
 	err = child.Run()
 	if ctx.Err() != nil {
 		return output.buffer.Bytes(), ctx.Err()
+	}
+	if output.exceeded {
+		return output.buffer.Bytes(), errOutputLimit
 	}
 	return output.buffer.Bytes(), err
 }
