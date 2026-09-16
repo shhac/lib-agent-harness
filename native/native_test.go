@@ -284,3 +284,87 @@ func TestUsageAvailabilityDistinguishesZeroFromAbsent(t *testing.T) {
 		}
 	}
 }
+
+func TestClaudeInterruptedPlaceholderAccountingStaysUnknown(t *testing.T) {
+	for _, cost := range []string{"0", "0.75"} {
+		t.Run(cost, func(t *testing.T) {
+			var events []Event
+			var transcript bytes.Buffer
+			s, _ := NewStream("claude", &transcript, StreamOptions{OnEvent: func(e Event) { events = append(events, e) }})
+			s.UserPrompt("work")
+			io.WriteString(s, `{"type":"assistant","message":{"content":[{"type":"text","text":"Already doing work"}]}}`+"\n")
+			io.WriteString(s, `{"type":"result","subtype":"error_during_execution","is_error":true,"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"total_cost_usd":`+cost+`}`)
+			s.Close()
+			r := s.Snapshot()
+			if r.UsageKnown || r.CostKnown || r.CostUSD != 0 {
+				t.Fatalf("interrupted accounting must be unknown, not free/stale: %+v", r)
+			}
+			last := events[len(events)-1]
+			if last.Kind != "usage" || last.UsageKnown || last.CostKnown {
+				t.Fatalf("event claimed known accounting: %+v", last)
+			}
+			if !strings.Contains(r.RawUsage, `"output_tokens":0`) {
+				t.Fatal("lost diagnostic raw payload", r.RawUsage)
+			}
+		})
+	}
+}
+
+func TestClaudeUnknownInvocationMakesWholeSessionIncomplete(t *testing.T) {
+	for _, interrupted := range []string{
+		`{"type":"result","subtype":"error_during_execution","is_error":true,"usage":{"input_tokens":0,"output_tokens":0},"total_cost_usd":0}`,
+		`{"type":"result","subtype":"error_during_execution","is_error":true}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"Interrupted without result"}]}}`,
+	} {
+		t.Run(interrupted, func(t *testing.T) {
+			s, _ := NewStream("claude", io.Discard, StreamOptions{})
+			turn := func(wire string) { s.UserPrompt("continue"); io.WriteString(s, wire); s.Close() }
+			turn(`{"type":"result","result":"first","usage":{"input_tokens":100,"output_tokens":10},"total_cost_usd":0.5}`)
+			if r := s.Snapshot(); !r.UsageKnown || !r.CostKnown {
+				t.Fatalf("first result unknown: %+v", r)
+			}
+			turn(interrupted)
+			r := s.Snapshot()
+			if r.UsageKnown || r.CostKnown || r.Usage.Input != 100 || r.CostUSD != 0.5 {
+				t.Fatalf("must retain prior evidence without claiming completeness: %+v", r)
+			}
+			turn(`{"type":"result","result":"last","usage":{"input_tokens":20,"output_tokens":2},"total_cost_usd":0.1}`)
+			r = s.Snapshot()
+			if r.UsageKnown || r.CostKnown || r.Usage.Input != 120 || r.Usage.Output != 12 || r.CostUSD != 0.6 {
+				t.Fatalf("later per-invocation report cannot repair missing turn: %+v", r)
+			}
+		})
+	}
+}
+
+func TestClaudeErrorCanCarryUsableAccounting(t *testing.T) {
+	s, _ := NewStream("claude", io.Discard, StreamOptions{})
+	io.WriteString(s, `{"type":"result","is_error":true,"result":"tool failed","usage":{"input_tokens":100,"output_tokens":7},"total_cost_usd":0.1}`)
+	s.Close()
+	r := s.Snapshot()
+	if !r.UsageKnown || !r.CostKnown || r.Usage.Total() != 107 || r.CostUSD != 0.1 {
+		t.Fatalf("discarded actual error-run usage: %+v", r)
+	}
+}
+
+func TestCodexInterruptedTurnDoesNotReusePreviousKnownTotal(t *testing.T) {
+	s, _ := NewStream("codex", io.Discard, StreamOptions{})
+	s.UserPrompt("first")
+	io.WriteString(s, `{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":10}}`)
+	s.Close()
+	if !s.Snapshot().UsageKnown {
+		t.Fatal("first total unavailable")
+	}
+	s.UserPrompt("next")
+	io.WriteString(s, `{"type":"turn.failed","error":{"message":"interrupted"}}`)
+	s.Close()
+	if r := s.Snapshot(); r.UsageKnown || r.Usage.Input != 100 {
+		t.Fatalf("reused prior total as complete: %+v", r)
+	}
+	s.UserPrompt("recover")
+	io.WriteString(s, `{"type":"turn.completed","usage":{"input_tokens":180,"output_tokens":18}}`)
+	s.Close()
+	if r := s.Snapshot(); !r.UsageKnown || r.Usage.Input != 180 {
+		t.Fatalf("cumulative total should repair prior gap: %+v", r)
+	}
+}

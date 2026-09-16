@@ -94,19 +94,21 @@ const structuredOutputTool = "StructuredOutput"
 type streamTranscoder struct {
 	markerSink // line reassembly, marker writing, the prompt banner
 
-	structured bool
-	completed  bool
-	sawUsage   bool
-	sawCost    bool
-	sessionID  string
-	usage      TokenUsage        // summed across every invocation
-	rawUsage   []json.RawMessage // every result event's usage, verbatim
-	costUSD    float64           // ditto; see renderResult for what this figure means
-	report     json.RawMessage   // structured_output of the most recent result message
-	failure    string            // the run's own account of why it ended without a report
-	promptSeen bool              // the first text-bearing user message is the prompt, the rest are tool results
-	pending    []time.Time       // start times of tool calls awaiting a result, FIFO
-	suppressed map[string]bool   // tool_use ids whose result must be dropped too
+	structured      bool
+	completed       bool
+	sawUsage        bool
+	sawCost         bool
+	usageIncomplete bool
+	costIncomplete  bool
+	sessionID       string
+	usage           TokenUsage        // summed across every invocation
+	rawUsage        []json.RawMessage // every result event's usage, verbatim
+	costUSD         float64           // ditto; see renderResult for what this figure means
+	report          json.RawMessage   // structured_output of the most recent result message
+	failure         string            // the run's own account of why it ended without a report
+	promptSeen      bool              // the first text-bearing user message is the prompt, the rest are tool results
+	pending         []time.Time       // start times of tool calls awaiting a result, FIFO
+	suppressed      map[string]bool   // tool_use ids whose result must be dropped too
 
 	now func() time.Time // injectable clock so the rendered durations are testable
 }
@@ -130,7 +132,15 @@ func (t *streamTranscoder) Write(p []byte) (int, error) { return t.writeLines(p,
 // a prompt no event ever arrived to flush (a run that died before its first
 // message still shows what it was asked). No token trailer here, unlike
 // codex's: claude prints one per result event, from renderResult.
-func (t *streamTranscoder) Close() { t.flushPartial(t.consume) }
+func (t *streamTranscoder) Close() {
+	t.flushPartial(t.consume)
+	// An interrupted process may never emit its result. No future per-invocation
+	// total can repair the missing turn, so session accounting remains partial.
+	if !t.completed {
+		t.usageIncomplete = true
+		t.costIncomplete = true
+	}
+}
 
 // consume renders one stream line. A line that isn't a JSON event is passed
 // through verbatim: claude occasionally prints plain warnings, and dropping
@@ -235,13 +245,22 @@ func (t *streamTranscoder) renderResult(ev streamEvent, rawLine []byte) {
 		// assistant message does.
 		t.emit("claude", jsonCompact(string(t.report)))
 	}
+	// Claude can emit a terminal error with all-zero counters despite having
+	// streamed output. Such placeholders are not evidence of a free invocation.
+	failed := ev.IsError || strings.HasPrefix(ev.Subtype, "error")
+	usageUsable := ev.Usage != nil && (!failed || addUsage(TokenUsage{}, *ev.Usage).Total() > 0)
 	if ev.Usage != nil {
-		t.sawUsage = true
-		t.usage = addUsage(t.usage, *ev.Usage)
 		if raw := extractUsage(rawLine); raw != nil {
 			t.rawUsage = append(t.rawUsage, raw)
 		}
 	}
+	if usageUsable {
+		t.sawUsage = true
+		t.usage = addUsage(t.usage, *ev.Usage)
+	} else {
+		t.usageIncomplete = true
+	}
+
 	// A run that ends with no report has failed; say so in the transcript
 	// rather than leaving a bare token trailer. The CLI's own wording is the
 	// best diagnosis available, and it is otherwise dropped.
@@ -259,20 +278,34 @@ func (t *streamTranscoder) renderResult(ev streamEvent, rawLine []byte) {
 	// would have cost at API rates, which is precisely the figure
 	// --max-budget-usd is compared against, and the only per-review spend
 	// signal either engine reports.
-	if ev.TotalCostUSD != nil {
+	// On error, unusable usage also makes a carried-over cost untrustworthy.
+	costUsable := ev.TotalCostUSD != nil && *ev.TotalCostUSD >= 0 && (!failed || (usageUsable && *ev.TotalCostUSD > 0))
+	if costUsable {
 		t.sawCost = true
 		t.costUSD += *ev.TotalCostUSD
+	} else {
+		t.costIncomplete = true
 	}
-	t.event(Event{Kind: "usage", Usage: t.usage, CostUSD: t.costUSD})
+	t.event(Event{Kind: "usage", Usage: t.usage, CostUSD: t.costUSD, UsageKnown: t.sawUsage && !t.usageIncomplete, CostKnown: t.sawCost && !t.costIncomplete})
 
 	// The trailer the UI renders as the run's token count. A resumed run
 	// appends a second one, mirroring codex's per-invocation trailers. The
 	// cost line rides along so a live log shows spend without waiting for
 	// the review to land in history; codex reports none, so it stays off
 	// there rather than printing a misleading zero.
-	_, _ = fmt.Fprintf(t.out, "tokens used\n%s\n", withThousands(t.usage.Total()))
+	if t.sawUsage && !t.usageIncomplete {
+		_, _ = fmt.Fprintf(t.out, "tokens used\n%s\n", withThousands(t.usage.Total()))
+	} else if t.sawUsage {
+		_, _ = fmt.Fprintf(t.out, "usage incomplete; recorded tokens: %s\n", withThousands(t.usage.Total()))
+	} else {
+		_, _ = fmt.Fprintln(t.out, "usage unavailable")
+	}
 	if t.costUSD > 0 {
-		_, _ = fmt.Fprintf(t.out, "~ $%.4f at API rates\n", t.costUSD)
+		if t.sawCost && !t.costIncomplete {
+			_, _ = fmt.Fprintf(t.out, "~ $%.4f at API rates\n", t.costUSD)
+		} else {
+			_, _ = fmt.Fprintf(t.out, "~ $%.4f recorded at API rates; total unavailable\n", t.costUSD)
+		}
 	}
 }
 

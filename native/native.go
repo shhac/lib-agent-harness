@@ -60,21 +60,25 @@ type Request struct {
 // model/tool data; applications must apply their own visibility/redaction rules.
 // Callbacks run synchronously and must return promptly; no events are dropped.
 type Event struct {
-	Kind      string
-	SessionID string
-	ItemID    string
-	Text      string
-	ToolName  string
-	Input     json.RawMessage
-	Output    string
-	Failed    bool
-	Usage     TokenUsage
-	CostUSD   float64
+	UsageKnown bool
+	CostKnown  bool
+	Kind       string
+	SessionID  string
+	ItemID     string
+	Text       string
+	ToolName   string
+	Input      json.RawMessage
+	Output     string
+	Failed     bool
+	Usage      TokenUsage
+	CostUSD    float64
 }
 
 // Result is the latest response plus session-wide accumulated metadata.
 // Codex usage is already cumulative; Claude usage is summed per invocation.
 // CostUSD is the CLI's API-rate valuation, not necessarily money charged.
+// Known flags describe completeness: after an unaccounted invocation, numeric
+// fields retain recorded partial usage/cost but must not be treated as totals.
 type Result struct {
 	SessionID string
 	// Report is valid JSON: the structured output object, or a JSON string for plain text.
@@ -150,6 +154,7 @@ func (s *Stream) UserPrompt(prompt string) {
 		s.codex.report = nil
 		s.codex.failure = ""
 		s.codex.completed = false
+		s.codex.sawUsage = false
 		s.codex.userPrompt(prompt)
 	} else {
 		s.claude.report = nil
@@ -164,7 +169,7 @@ func (s *Stream) Snapshot() Result {
 		return Result{SessionID: t.threadID, Report: append(json.RawMessage(nil), t.report...), Usage: t.usage, RawUsage: joinRawUsage(t.rawUsage), UsageKnown: t.sawUsage, Failure: t.failure}
 	}
 	t := s.claude
-	return Result{SessionID: t.sessionID, Report: append(json.RawMessage(nil), t.report...), Usage: t.usage, RawUsage: joinRawUsage(t.rawUsage), CostUSD: t.costUSD, Failure: t.failure, UsageKnown: t.sawUsage, CostKnown: t.sawCost}
+	return Result{SessionID: t.sessionID, Report: append(json.RawMessage(nil), t.report...), Usage: t.usage, RawUsage: joinRawUsage(t.rawUsage), CostUSD: t.costUSD, Failure: t.failure, UsageKnown: t.completed && t.sawUsage && !t.usageIncomplete, CostKnown: t.completed && t.sawCost && !t.costIncomplete}
 }
 func (s *Stream) Report() (json.RawMessage, error) {
 	r := s.Snapshot()

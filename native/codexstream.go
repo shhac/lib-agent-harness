@@ -143,6 +143,7 @@ func (t *codexTranscoder) consume(line []byte) {
 		return
 	}
 	if ev.Type == "turn.failed" || ev.Type == "error" {
+		t.sawUsage = false
 		t.failure = ev.Message
 		if t.failure == "" {
 			t.failure = decodeResultText(ev.Error)
@@ -181,7 +182,7 @@ func (t *codexTranscoder) recordUsage(ev codexEvent, line []byte) {
 	}
 	t.usage = ev.Usage.tokenUsage()
 	t.sawUsage = true
-	t.event(Event{Kind: "usage", Usage: t.usage})
+	t.event(Event{Kind: "usage", Usage: t.usage, UsageKnown: true})
 	if raw := extractUsage(line); raw != nil {
 		t.rawUsage = append(t.rawUsage, raw)
 	}
