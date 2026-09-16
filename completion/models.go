@@ -62,29 +62,59 @@ func discoverModels(ctx context.Context, cfg Config, run modelTransport) ([]Mode
 	return models, nil
 }
 
-func runModelTransport(ctx context.Context, cfg Config, exchange func(io.Reader, io.Writer) error) error {
-	bin := cfg.CodexBin
-	if bin == "" {
-		bin = "codex"
-	}
+// catalogInvocation selects the engine's catalog command once: its binary, its
+// arguments, and its login environment. Only the selected engine's invocation
+// is built, so discovering Claude's models never resolves a Codex home.
+func catalogInvocation(cfg Config) (bin string, args, env []string, err error) {
 	if cfg.Engine == "claude" {
-		bin = cfg.ClaudeBin
-		if bin == "" {
-			bin = "claude"
-		}
+		return claudeCatalogInvocation(cfg)
+	}
+	return codexCatalogInvocation(cfg)
+}
+
+func codexCatalogInvocation(cfg Config) (string, []string, []string, error) {
+	bin, err := resolveCatalogBinary(cfg.CodexBin, "codex")
+	if err != nil {
+		return "", nil, nil, err
+	}
+	env, err := CodexEnvironment(cfg.CodexHome)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	args := []string{"app-server", "--listen", "stdio://", "-c", "analytics.enabled=false", "-c", "check_for_update_on_startup=false"}
+	// No thread is created. Also disable tool-discovery features during startup.
+	for _, feature := range disabledCodexFeatures {
+		args = append(args, "-c", "features."+feature+"=false")
+	}
+	return bin, args, env, nil
+}
+
+func claudeCatalogInvocation(cfg Config) (string, []string, []string, error) {
+	bin, err := resolveCatalogBinary(cfg.ClaudeBin, "claude")
+	if err != nil {
+		return "", nil, nil, err
+	}
+	env, err := ClaudeEnvironment(cfg.ClaudeHome)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	return bin, append(claudeBaseArgs(), "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"), env, nil
+}
+
+func resolveCatalogBinary(configured, engine string) (string, error) {
+	bin := configured
+	if bin == "" {
+		bin = engine
 	}
 	bin, err := exec.LookPath(bin)
 	if err != nil {
-		return err
+		return "", err
 	}
-	bin, err = filepath.Abs(bin)
-	if err != nil {
-		return err
-	}
-	env, err := CodexEnvironment(cfg.CodexHome)
-	if cfg.Engine == "claude" {
-		env, err = ClaudeEnvironment(cfg.ClaudeHome)
-	}
+	return filepath.Abs(bin)
+}
+
+func runModelTransport(ctx context.Context, cfg Config, exchange func(io.Reader, io.Writer) error) error {
+	bin, args, env, err := catalogInvocation(cfg)
 	if err != nil {
 		return err
 	}
@@ -95,14 +125,6 @@ func runModelTransport(ctx context.Context, cfg Config, exchange func(io.Reader,
 	defer os.RemoveAll(dir)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	args := []string{"app-server", "--listen", "stdio://", "-c", "analytics.enabled=false", "-c", "check_for_update_on_startup=false"}
-	// No thread is created. Also disable tool-discovery features during startup.
-	for _, feature := range disabledCodexFeatures {
-		args = append(args, "-c", "features."+feature+"=false")
-	}
-	if cfg.Engine == "claude" {
-		args = append(claudeBaseArgs(), "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose")
-	}
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir, cmd.Env, cmd.Stderr = dir, env, io.Discard
 	stdinReader, stdinWriter := io.Pipe()
