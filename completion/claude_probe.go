@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -39,16 +40,10 @@ func probeClaude(ctx context.Context, cfg Config, bin string, args []string, dir
 	})}
 	go server.Serve(listener)
 	defer server.Close()
-	probeEnv := make([]string, 0, len(env)+2)
-	for _, entry := range env {
-		// Probe uses disposable configuration plus dummy auth, never the selected
-		// account. Paid inference subsequently uses the untouched native-login env.
-		if strings.HasPrefix(entry, "HOME=") || strings.HasPrefix(entry, "CLAUDE_CONFIG_DIR=") || strings.HasPrefix(entry, "USER=") {
-			continue
-		}
-		probeEnv = append(probeEnv, entry)
-	}
-	probeEnv = append(probeEnv, "HOME="+dir, "CLAUDE_CONFIG_DIR="+dir, "ANTHROPIC_API_KEY=agent-harness-local-probe", "ANTHROPIC_BASE_URL=http://"+listener.Addr().String())
+	// Dummy auth and rebased OS directories prevent native account discovery,
+	// including Windows USERPROFILE/APPDATA/LOCALAPPDATA and macOS USER.
+	probeEnv := isolatedOperatingEnvironment(env, runtime.GOOS, dir)
+	probeEnv = append(probeEnv, "CLAUDE_CONFIG_DIR="+dir, "ANTHROPIC_API_KEY=agent-harness-local-probe", "ANTHROPIC_BASE_URL=http://"+listener.Addr().String())
 	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	_, _ = runClaude(probeCtx, cfg, bin, args, dir, probeEnv, `{"messages":[{"role":"user","content":"Capability check only."}],"available_tools":[]}`)

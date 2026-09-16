@@ -43,3 +43,12 @@ catalogs return an error rather than invented model options.
 The unit suite uses synthetic CLI responses and local rejecting servers. Optional
 installed-Codex protocol tests are explicitly gated; they also use a local dummy
 provider. No test needs a paid model call or production account data.
+
+The native environment is an explicit OS-context allowlist. On Windows this
+includes `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `SystemRoot`, `COMSPEC`, and
+`PATHEXT`; temporary paths include `TMP` and `TEMP` as well as `TMPDIR`. Provider
+secrets and arbitrary process overrides remain excluded. Dummy probes rebase
+home, config/cache, and temporary directories and remove native user identity.
+The Codex capability probe retains only its explicitly selected `CODEX_HOME` to
+verify that home's instruction boundary; its provider authentication remains a
+dummy local key. The bundled model catalog uses a disposable Codex home too.

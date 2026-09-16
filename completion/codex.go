@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -69,11 +70,7 @@ func codexComplete(ctx context.Context, cfg Config, messages []Message, tools []
 	}
 	// Snapshot the selected login environment once for both probe and inference.
 	// Process-local environment mutation would mix independently configured callers.
-	for i, value := range authEnv {
-		if strings.HasPrefix(value, "TMPDIR=") {
-			authEnv[i] = "TMPDIR=" + dir
-		}
-	}
+	authEnv = withTemporaryDirectory(authEnv, runtime.GOOS, dir)
 	catalog, err := runCodex(ctx, cfg, bin, []string{"debug", "models", "--bundled"}, dir, cleanEnv, "")
 	if err != nil {
 		if ctx.Err() != nil {
@@ -293,17 +290,14 @@ func CodexEnvironment(home string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	env := []string{"PATH=" + os.Getenv("PATH"), "CODEX_HOME=" + selected, "TMPDIR=" + os.TempDir()}
-	if userHome := os.Getenv("HOME"); userHome != "" {
-		env = append(env, "HOME="+userHome)
-	}
+	env := append(nativeOperatingEnvironment(), "CODEX_HOME="+selected)
 	// Codex resolves its own login store. Provider API keys and application
 	// integration credentials must never reach this subprocess.
 	return env, nil
 }
 
 func codexCatalogEnvironment(dir string) []string {
-	return []string{"PATH=" + os.Getenv("PATH"), "TMPDIR=" + dir, "HOME=" + dir, "CODEX_HOME=" + dir}
+	return append(isolatedOperatingEnvironment(nativeOperatingEnvironment(), runtime.GOOS, dir), "CODEX_HOME="+dir)
 }
 
 // probeCodex makes no inference call. A dummy provider rejects the first request
@@ -344,7 +338,16 @@ func probeCodex(ctx context.Context, cfg Config, bin string, args []string, dir 
 	probeArgs = append(probeArgs, "-c", `model_provider="harness_probe"`, "-c", provider)
 	probeCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	_, _ = runCodex(probeCtx, cfg, bin, probeArgs, dir, append(env, "HARNESS_PROBE_KEY=local-dummy-value"), `{"messages":[{"role":"user","content":"Return an empty response."}],"available_tools":[]}`)
+	// Preserve the explicitly selected Codex home so the probe verifies the
+	// same global-instruction boundary. OS account discovery is disposable;
+	// provider auth is the explicit dummy key, never the native login.
+	probeEnv := isolatedOperatingEnvironment(env, runtime.GOOS, dir)
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "CODEX_HOME=") {
+			probeEnv = append(probeEnv, entry)
+		}
+	}
+	_, _ = runCodex(probeCtx, cfg, bin, probeArgs, dir, append(probeEnv, "HARNESS_PROBE_KEY=local-dummy-value"), `{"messages":[{"role":"user","content":"Return an empty response."}],"available_tools":[]}`)
 	if err := ctx.Err(); err != nil {
 		return err
 	}

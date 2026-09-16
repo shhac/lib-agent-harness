@@ -33,15 +33,9 @@ func ClaudeEnvironment(home string) ([]string, error) {
 	if err := ValidateClaudeHome(home); err != nil {
 		return nil, err
 	}
-	env := []string{"PATH=" + os.Getenv("PATH"), "TMPDIR=" + os.TempDir(), "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1", "DISABLE_AUTOUPDATER=1", "DISABLE_TELEMETRY=1", "MAX_RETRIES=0"}
-	if userHome := os.Getenv("HOME"); userHome != "" {
-		env = append(env, "HOME="+userHome)
-	}
-	// Claude uses USER to locate the native macOS keychain credential. Without
-	// it, an authenticated CLI reports "Not logged in" in this restricted env.
-	if user := os.Getenv("USER"); user != "" {
-		env = append(env, "USER="+user)
-	}
+	// USER is part of native OS context: Claude needs it for macOS keychain
+	// lookup. Windows native login/cache directories are retained explicitly too.
+	env := append(nativeOperatingEnvironment(), "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1", "DISABLE_AUTOUPDATER=1", "DISABLE_TELEMETRY=1", "MAX_RETRIES=0")
 	nativeHome, _ := os.UserHomeDir()
 	if home != "" && filepath.Clean(home) != filepath.Join(nativeHome, ".claude") {
 		env = append(env, "CLAUDE_CONFIG_DIR="+home)
