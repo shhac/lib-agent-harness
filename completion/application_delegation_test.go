@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 )
@@ -12,10 +13,16 @@ import (
 // A transport without native agents must still carry the caller's delegation
 // function. The CLI proposes an action; only the application may execute it.
 func TestApplicationDelegationAcrossConstrainedTransports(t *testing.T) {
+	// Use an existing executable for preflight on every platform. The injected
+	// transport handles every invocation; no CLI or native login is required.
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, name := range []string{"codex", "claude"} {
 		t.Run(name, func(t *testing.T) {
 			tools := []Tool{{Type: "function", Function: Function{Name: "delegate", Description: "Commission an approved application worker"}}}
-			cfg := Config{Engine: name, Model: "test-model", Effort: "high", CodexBin: "sh", ClaudeBin: "test-claude", WorkDirRoot: t.TempDir()}
+			cfg := Config{Engine: name, Model: "test-model", Effort: "high", CodexBin: binary, ClaudeBin: binary, CodexHome: t.TempDir(), ClaudeHome: t.TempDir(), WorkDirRoot: t.TempDir()}
 			cfg.run = func(_ context.Context, _ string, args []string, _ string, env []string, input string) ([]byte, error) {
 				if args[0] == "debug" {
 					return []byte(testCatalog), nil
