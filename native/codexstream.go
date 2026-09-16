@@ -114,6 +114,27 @@ func newCodexTranscoder(out io.Writer) *codexTranscoder {
 
 func (t *codexTranscoder) Write(p []byte) (int, error) { return t.writeLines(p, t.consume) }
 
+// beginTurn starts a new invocation, clearing the previous report and failure.
+// sawUsage is cleared too, unlike claude's: recordUsage REPLACES the figure
+// with the session total every turn, so a turn that reports no usage must not
+// leave the previous turn's total standing as the current one.
+func (t *codexTranscoder) beginTurn(prompt string) {
+	t.report = nil
+	t.failure = ""
+	t.completed = false
+	t.sawUsage = false
+	t.userPrompt(prompt)
+}
+
+func (t *codexTranscoder) reachedTerminal() bool { return t.completed }
+
+// snapshot assembles codex's Result. Usage is known as soon as any
+// turn.completed carried it, because that figure is already the session total;
+// codex reports no cost, so CostKnown stays false.
+func (t *codexTranscoder) snapshot() Result {
+	return Result{SessionID: t.threadID, Report: append(json.RawMessage(nil), t.report...), Usage: t.usage, RawUsage: joinRawUsage(t.rawUsage), UsageKnown: t.sawUsage, Failure: t.failure}
+}
+
 // Close renders any trailing line the stream ended without a newline on, plus
 // a prompt no event ever arrived to flush (a run that died before its first
 // message still shows what it was asked), then the token trailer.

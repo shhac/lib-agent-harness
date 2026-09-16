@@ -50,7 +50,7 @@ func TestTranscodeGoldenTranscript(t *testing.T) {
 	}
 	want, err := os.ReadFile(goldenTranscript)
 	if err != nil {
-		t.Fatalf("%v (regenerate with: go test ./internal/review -update-golden)", err)
+		t.Fatalf("%v (regenerate with: go test ./native -update-golden)", err)
 	}
 	if got != string(want) {
 		t.Errorf("transcript drifted from the fixture the UI parser reads.\n--- got ---\n%s\n--- want ---\n%s", got, want)
@@ -87,7 +87,7 @@ func TestCodexTranscodeGoldenTranscript(t *testing.T) {
 	}
 	want, err := os.ReadFile(goldenCodexTranscript)
 	if err != nil {
-		t.Fatalf("%v (regenerate with: go test ./internal/review -update-golden)", err)
+		t.Fatalf("%v (regenerate with: go test ./native -update-golden)", err)
 	}
 	if got != string(want) {
 		t.Errorf("transcript drifted from the fixture the UI parser reads.\n--- got ---\n%s\n--- want ---\n%s", got, want)

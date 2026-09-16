@@ -99,13 +99,27 @@ type StreamOptions struct {
 	Structured bool
 }
 
+// transcoder is one engine's half of Stream: reading that CLI's stream, the
+// per-turn reset its usage accounting requires, and assembling its Result.
+// Those three rules differ per engine and are stated beside the engine
+// knowledge that justifies them, in codexstream.go and claudestream.go.
+// Stream owns dispatch and nothing else.
+type transcoder interface {
+	io.Writer
+	Close()
+	beginTurn(prompt string)
+	snapshot() Result
+	// reachedTerminal reports whether the turn ended with a terminal result.
+	// Named apart from the transcoders' own completed field, which it reads.
+	reachedTerminal() bool
+}
+
 // Stream converts JSON-line CLI output to a common transcript and events.
 // Reuse the same stream for sequential resumes of ONE session. It is not safe
 // for concurrent writes or snapshots. Close flushes a turn, not the session.
 type Stream struct {
 	engine string
-	codex  *codexTranscoder
-	claude *streamTranscoder
+	t      transcoder
 }
 
 func NewStream(engine string, transcript io.Writer, options StreamOptions) (*Stream, error) {
@@ -115,62 +129,33 @@ func NewStream(engine string, transcript io.Writer, options StreamOptions) (*Str
 	s := &Stream{engine: engine}
 	switch engine {
 	case "codex":
-		s.codex = newCodexTranscoder(transcript)
-		s.codex.onEvent = options.OnEvent
-		s.codex.structured = options.Structured
+		t := newCodexTranscoder(transcript)
+		t.onEvent = options.OnEvent
+		t.structured = options.Structured
 		if options.Clock != nil {
-			s.codex.now = options.Clock
+			t.now = options.Clock
 		}
+		s.t = t
 	case "claude":
-		s.claude = newStreamTranscoder(transcript)
-		s.claude.onEvent = options.OnEvent
-		s.claude.structured = options.Structured
+		t := newStreamTranscoder(transcript)
+		t.onEvent = options.OnEvent
+		t.structured = options.Structured
 		if options.Clock != nil {
-			s.claude.now = options.Clock
+			t.now = options.Clock
 		}
+		s.t = t
 	default:
 		return nil, fmt.Errorf("unsupported native harness %q", engine)
 	}
 	return s, nil
 }
 
-func (s *Stream) Write(p []byte) (int, error) {
-	if s.codex != nil {
-		return s.codex.Write(p)
-	}
-	return s.claude.Write(p)
-}
-func (s *Stream) Close() {
-	if s.codex != nil {
-		s.codex.Close()
-	} else {
-		s.claude.Close()
-	}
-}
+func (s *Stream) Write(p []byte) (int, error) { return s.t.Write(p) }
+func (s *Stream) Close()                      { s.t.Close() }
 
 // UserPrompt begins a new invocation, clearing the previous report and failure.
-func (s *Stream) UserPrompt(prompt string) {
-	if s.codex != nil {
-		s.codex.report = nil
-		s.codex.failure = ""
-		s.codex.completed = false
-		s.codex.sawUsage = false
-		s.codex.userPrompt(prompt)
-	} else {
-		s.claude.report = nil
-		s.claude.failure = ""
-		s.claude.completed = false
-		s.claude.userPrompt(prompt)
-	}
-}
-func (s *Stream) Snapshot() Result {
-	if s.codex != nil {
-		t := s.codex
-		return Result{SessionID: t.threadID, Report: append(json.RawMessage(nil), t.report...), Usage: t.usage, RawUsage: joinRawUsage(t.rawUsage), UsageKnown: t.sawUsage, Failure: t.failure}
-	}
-	t := s.claude
-	return Result{SessionID: t.sessionID, Report: append(json.RawMessage(nil), t.report...), Usage: t.usage, RawUsage: joinRawUsage(t.rawUsage), CostUSD: t.costUSD, Failure: t.failure, UsageKnown: t.completed && t.sawUsage && !t.usageIncomplete, CostKnown: t.completed && t.sawCost && !t.costIncomplete}
-}
+func (s *Stream) UserPrompt(prompt string) { s.t.beginTurn(prompt) }
+func (s *Stream) Snapshot() Result         { return s.t.snapshot() }
 func (s *Stream) Report() (json.RawMessage, error) {
 	r := s.Snapshot()
 	if len(r.Report) > 0 {
@@ -347,8 +332,7 @@ func Run(ctx context.Context, c Config, r Request, stream *Stream) (Result, erro
 	if err == nil && result.Failure != "" {
 		err = fmt.Errorf("%s: %s", c.Engine, result.Failure)
 	}
-	completed := stream.codex != nil && stream.codex.completed || stream.claude != nil && stream.claude.completed
-	if err == nil && !completed {
+	if err == nil && !stream.t.reachedTerminal() {
 		err = fmt.Errorf("%s ended without a terminal result", c.Engine)
 	}
 	if err == nil && len(bytes.TrimSpace(result.Report)) == 0 {

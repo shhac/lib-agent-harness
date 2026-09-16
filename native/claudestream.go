@@ -128,6 +128,26 @@ func (t *streamTranscoder) userPrompt(text string) {
 
 func (t *streamTranscoder) Write(p []byte) (int, error) { return t.writeLines(p, t.consume) }
 
+// beginTurn starts a new invocation, clearing the previous report and failure.
+// The usage and cost flags deliberately survive the reset, unlike codex's:
+// addUsage accumulates across invocations, so they describe the session rather
+// than this turn, and an incompleteness Close recorded still holds.
+func (t *streamTranscoder) beginTurn(prompt string) {
+	t.report = nil
+	t.failure = ""
+	t.completed = false
+	t.userPrompt(prompt)
+}
+
+func (t *streamTranscoder) reachedTerminal() bool { return t.completed }
+
+// snapshot assembles claude's Result. Usage and cost count as known only for a
+// turn that reached its result event and recorded a figure no interruption
+// left partial; the numbers survive either way, as recorded partial totals.
+func (t *streamTranscoder) snapshot() Result {
+	return Result{SessionID: t.sessionID, Report: append(json.RawMessage(nil), t.report...), Usage: t.usage, RawUsage: joinRawUsage(t.rawUsage), CostUSD: t.costUSD, Failure: t.failure, UsageKnown: t.completed && t.sawUsage && !t.usageIncomplete, CostKnown: t.completed && t.sawCost && !t.costIncomplete}
+}
+
 // Close renders any trailing line the stream ended without a newline on, plus
 // a prompt no event ever arrived to flush (a run that died before its first
 // message still shows what it was asked). No token trailer here, unlike
