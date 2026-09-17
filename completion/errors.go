@@ -51,6 +51,9 @@ type RequestError struct {
 }
 
 func (e *RequestError) Error() string {
+	if detail := e.diagnosticDetail(); detail != "" {
+		return detail
+	}
 	switch e.Kind {
 	case ErrorOverloaded:
 		return "model provider overloaded"
@@ -97,6 +100,9 @@ func processRequestFailure(engine string, data []byte, err error) error {
 	if errors.Is(err, errOutputLimit) {
 		failure.Code = "output_limit"
 		return failure
+	}
+	if start := startFailure(engine, PhaseProcess, err); start != nil {
+		return start
 	}
 	var exit *exec.ExitError
 	if errors.As(err, &exit) {

@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 
 	"io"
 	"os"
@@ -38,22 +37,25 @@ func codexComplete(ctx context.Context, cfg Config, messages []Message, tools []
 	}
 	bin, err = exec.LookPath(bin)
 	if err != nil {
-		return empty, usage, errors.New("Codex executable not found; install Codex and run codex login")
+		if failure := startFailure("codex", PhasePreflight, err); failure != nil {
+			return empty, usage, failure
+		}
+		return empty, usage, preflightFailure("codex", "executable_not_found")
 	}
 	bin, err = filepath.Abs(bin)
 	if err != nil {
-		return empty, usage, errors.New("cannot resolve Codex executable")
+		return empty, usage, preflightFailure("codex", "executable_unresolved")
 	}
 	workRoot := ""
 	if cfg.WorkDirRoot != "" {
 		workRoot, err = ensureDirectory(cfg.WorkDirRoot, "model-runs")
 		if err != nil {
-			return empty, usage, fmt.Errorf("prepare model scratch directory: %w", err)
+			return empty, usage, preflightFailure("codex", "scratch_directory")
 		}
 	}
 	dir, err := os.MkdirTemp(workRoot, "agent-harness-model-")
 	if err != nil {
-		return empty, usage, err
+		return empty, usage, preflightFailure("codex", "scratch_directory")
 	}
 	defer os.RemoveAll(dir)
 	cleanEnv := codexCatalogEnvironment(dir)
@@ -69,7 +71,16 @@ func codexComplete(ctx context.Context, cfg Config, messages []Message, tools []
 		if ctx.Err() != nil {
 			return empty, usage, ctx.Err()
 		}
-		return empty, usage, errors.New("cannot read Codex bundled model catalog; upgrade Codex to a CLI supporting debug models --bundled")
+		if errors.Is(err, context.Canceled) {
+			return empty, usage, context.Canceled
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return empty, usage, preflightFailure("codex", "catalog_timeout")
+		}
+		if failure := startFailure("codex", PhasePreflight, err); failure != nil {
+			return empty, usage, failure
+		}
+		return empty, usage, preflightFailure("codex", "catalog_read_failed")
 	}
 	if cfg.Effort == "" {
 		cfg.Effort = catalogDefaultEffort(catalog, cfg.Model)
@@ -83,11 +94,11 @@ func codexComplete(ctx context.Context, cfg Config, messages []Message, tools []
 	instructionsPath := filepath.Join(dir, "instructions.txt")
 	schema, err := actionSchema(tools)
 	if err != nil {
-		return empty, usage, err
+		return empty, usage, preflightFailure("codex", "invalid_tool_catalog")
 	}
 	for path, data := range map[string][]byte{catalogPath: restricted, schemaPath: schema, instructionsPath: []byte(codexInstructions)} {
 		if err := os.WriteFile(path, data, 0600); err != nil {
-			return empty, usage, err
+			return empty, usage, preflightFailure("codex", "scratch_write")
 		}
 	}
 	args := codexArgs(cfg, dir, catalogPath, schemaPath, instructionsPath)
@@ -169,7 +180,7 @@ func restrictedCatalog(data []byte, model, effort string) ([]byte, error) {
 		Models []map[string]json.RawMessage `json:"models"`
 	}
 	if json.Unmarshal(data, &catalog) != nil {
-		return nil, errors.New("Codex returned an invalid model catalog")
+		return nil, preflightFailure("codex", "invalid_model_catalog")
 	}
 	for _, m := range catalog.Models {
 		var slug string
@@ -181,7 +192,7 @@ func restrictedCatalog(data []byte, model, effort string) ([]byte, error) {
 			Effort string `json:"effort"`
 		}
 		if json.Unmarshal(m["supported_reasoning_levels"], &levels) != nil {
-			return nil, errors.New("Codex model has no reasoning-effort catalog")
+			return nil, preflightFailure("codex", "missing_effort_catalog")
 		}
 		supported := false
 		for _, level := range levels {
@@ -190,7 +201,7 @@ func restrictedCatalog(data []byte, model, effort string) ([]byte, error) {
 			}
 		}
 		if !supported {
-			return nil, fmt.Errorf("Codex model %s does not advertise reasoning effort %s", model, effort)
+			return nil, preflightFailure("codex", "unsupported_effort")
 		}
 		// Retain the selected model's exact identity and capabilities while removing
 		// native execution surfaces; no model fallback or model name substitution.
@@ -243,12 +254,12 @@ func resolveCodexHome(home string) (string, error) {
 	if home == "" {
 		userHome, err := os.UserHomeDir()
 		if err != nil {
-			return "", errors.New("cannot resolve Codex login home")
+			return "", preflightFailure("codex", "codex_home_unresolved")
 		}
 		home = filepath.Join(userHome, ".codex")
 	}
 	if !filepath.IsAbs(home) {
-		return "", errors.New("Codex home must be an absolute directory path")
+		return "", preflightFailure("codex", "codex_home_invalid")
 	}
 	return filepath.Clean(home), nil
 }
@@ -256,7 +267,7 @@ func resolveCodexHome(home string) (string, error) {
 func validateSelectedCodexHome(home string) error {
 	info, err := os.Stat(home)
 	if err != nil || !info.IsDir() {
-		return errors.New("Configured Codex home is unavailable; sign in with the selected Codex home before starting this runtime")
+		return preflightFailure("codex", "codex_home_unavailable")
 	}
 	for _, name := range []string{"AGENTS.override.md", "AGENTS.md"} {
 		info, err := os.Stat(filepath.Join(home, name))
@@ -264,12 +275,12 @@ func validateSelectedCodexHome(home string) error {
 			continue
 		}
 		if err != nil {
-			return errors.New("cannot inspect Codex instruction boundary")
+			return preflightFailure("codex", "codex_home_inspection")
 		}
 		if info.Size() == 0 && info.Mode().IsRegular() {
 			continue
 		}
-		return errors.New("Codex home contains global AGENTS instructions that exec cannot disable; choose a dedicated Codex home containing no AGENTS.md or AGENTS.override.md and sign in with that home (credentials are not copied)")
+		return preflightFailure("codex", "codex_home_instructions")
 	}
 	return nil
 }

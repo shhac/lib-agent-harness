@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -22,16 +21,22 @@ func probeCodex(ctx context.Context, cfg Config, bin string, args []string, dir 
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return errors.New("cannot start local Codex capability check")
+		return preflightFailure("codex", "probe_listen_failed")
 	}
 	var mu sync.Mutex
-	verified := true
+	mismatch := ""
 	requests := 0
 	server := &http.Server{ReadHeaderTimeout: 5 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		data, readErr := io.ReadAll(io.LimitReader(r.Body, 2*1024*1024+1))
 		mu.Lock()
 		requests++
-		verified = verified && readErr == nil && len(data) <= 2*1024*1024 && validCodexProbe(data, cfg.Model, cfg.Effort)
+		if mismatch == "" {
+			if readErr != nil || len(data) > 2*1024*1024 {
+				mismatch = "probe_invalid_request"
+			} else {
+				mismatch = codexProbeMismatch(data, cfg.Model, cfg.Effort)
+			}
+		}
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -54,15 +59,26 @@ func probeCodex(ctx context.Context, cfg Config, bin string, args []string, dir 
 			probeEnv = append(probeEnv, entry)
 		}
 	}
-	_, _ = runCLI(probeCtx, cfg, bin, probeArgs, dir, append(probeEnv, "HARNESS_PROBE_KEY=local-dummy-value"), `{"messages":[{"role":"user","content":"Return an empty response."}],"available_tools":[]}`)
+	_, runErr := runCLI(probeCtx, cfg, bin, probeArgs, dir, append(probeEnv, "HARNESS_PROBE_KEY=local-dummy-value"), `{"messages":[{"role":"user","content":"Return an empty response."}],"available_tools":[]}`)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if failure := probeRunFailure("codex", ctx, runErr); failure != nil {
+		return failure
+	}
 	mu.Lock()
-	ok := verified && requests == 1
-	mu.Unlock()
-	if !ok {
-		return errors.New("Codex capability check failed: this CLI did not prove tool-free inference with the requested model and effort; no live model call was made")
+	defer mu.Unlock()
+	if probeCtx.Err() != nil {
+		return preflightFailure("codex", "probe_timeout")
+	}
+	if requests == 0 {
+		return preflightFailure("codex", "probe_no_requests")
+	}
+	if requests != 1 {
+		return preflightFailure("codex", "probe_request_limit")
+	}
+	if mismatch != "" {
+		return preflightFailure("codex", mismatch)
 	}
 	return nil
 }
@@ -72,6 +88,10 @@ func probeCodex(ctx context.Context, cfg Config, bin string, args []string, dir 
 // the CLI merged global AGENTS instructions into what it sends. The size bound
 // belongs to the transport and stays at the handler.
 func validCodexProbe(data []byte, model, effort string) bool {
+	return codexProbeMismatch(data, model, effort) == ""
+}
+
+func codexProbeMismatch(data []byte, model, effort string) string {
 	var req struct {
 		Model     string            `json:"model"`
 		Tools     []json.RawMessage `json:"tools"`
@@ -79,5 +99,20 @@ func validCodexProbe(data []byte, model, effort string) bool {
 			Effort string `json:"effort"`
 		} `json:"reasoning"`
 	}
-	return json.Unmarshal(data, &req) == nil && req.Model == model && req.Reasoning.Effort == effort && len(req.Tools) == 0 && !bytes.Contains(data, []byte("# AGENTS.md instructions"))
+	if json.Unmarshal(data, &req) != nil {
+		return "probe_invalid_request"
+	}
+	if req.Model != model {
+		return "probe_changed_model"
+	}
+	if req.Reasoning.Effort != effort {
+		return "probe_changed_effort"
+	}
+	if len(req.Tools) != 0 {
+		return "probe_unexpected_tools"
+	}
+	if bytes.Contains(data, []byte("# AGENTS.md instructions")) {
+		return "probe_unexpected_instructions"
+	}
+	return ""
 }

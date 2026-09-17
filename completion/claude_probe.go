@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -23,7 +22,7 @@ func probeClaude(ctx context.Context, cfg Config, bin string, args []string, dir
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return errors.New("cannot start local Claude capability check")
+		return preflightFailure("claude", "probe_listen_failed")
 	}
 	var mu sync.Mutex
 	requests := 0
@@ -62,26 +61,29 @@ func probeClaude(ctx context.Context, cfg Config, bin string, args []string, dir
 	probeEnv = append(probeEnv, "CLAUDE_CONFIG_DIR="+dir, "ANTHROPIC_API_KEY=agent-harness-local-probe", "ANTHROPIC_BASE_URL=http://"+listener.Addr().String())
 	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	_, _ = runCLI(probeCtx, cfg, bin, args, dir, probeEnv, `{"messages":[{"role":"user","content":"Capability check only."}],"available_tools":[]}`)
+	_, runErr := runCLI(probeCtx, cfg, bin, args, dir, probeEnv, `{"messages":[{"role":"user","content":"Capability check only."}],"available_tools":[]}`)
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if failure := probeRunFailure("claude", ctx, runErr); failure != nil {
+		return failure
 	}
 	mu.Lock()
 	defer mu.Unlock()
 	if probeCtx.Err() != nil {
-		return errors.New("Claude CLI capability check timed out against the local test provider; no account inference was attempted")
+		return preflightFailure("claude", "probe_timeout")
 	}
 	if requests == 0 {
-		return errors.New("Claude CLI capability check made no request to the local test provider; check CLI startup and supported flags (no account inference attempted)")
+		return preflightFailure("claude", "probe_no_requests")
 	}
 	// Claude may retry a rejected request using a compatibility fallback, even
 	// with MAX_RETRIES=0. Every request must still prove the same restricted
 	// tool, schema, system instruction and effort surface. Bound local retries.
 	if requests > 4 || preflights > 4 {
-		return errors.New("Claude CLI capability check exceeded its local request limit; no account inference was attempted")
+		return preflightFailure("claude", "probe_request_limit")
 	}
 	if mismatch != "" {
-		return errors.New("Claude CLI capability check rejected " + mismatch + "; constrained completion remains disabled (not an account login check)")
+		return preflightFailure("claude", claudeProbeCode(mismatch))
 	}
 	return nil
 }
@@ -137,4 +139,29 @@ func claudeProbeMismatch(data, schema []byte, effort string) string {
 		return "missing application instructions"
 	}
 	return ""
+}
+
+// Mismatch reasons are generated locally; explicitly map them so future reasons
+// cannot accidentally become arbitrary diagnostic text.
+func claudeProbeCode(reason string) string {
+	switch reason {
+	case "invalid or oversized request":
+		return "probe_invalid_request"
+	case "unexpected tools":
+		return "probe_unexpected_tools"
+	case "invalid output schema":
+		return "probe_invalid_schema"
+	case "changed output schema":
+		return "probe_changed_schema"
+	case "changed reasoning effort":
+		return "probe_changed_effort"
+	case "unexpected system instruction type":
+		return "probe_instruction_type"
+	case "unexpected system instructions":
+		return "probe_unexpected_instructions"
+	case "missing application instructions":
+		return "probe_missing_instructions"
+	default:
+		return "probe_mismatch"
+	}
 }

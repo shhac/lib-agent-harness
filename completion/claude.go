@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,12 +18,12 @@ func ValidateClaudeHome(home string) error {
 		return nil
 	}
 	if !filepath.IsAbs(home) || strings.ContainsRune(home, '\x00') {
-		return errors.New("Claude home must be an absolute directory")
+		return preflightFailure("claude", "claude_home_invalid")
 	}
 	if stat, err := os.Stat(home); err == nil && !stat.IsDir() {
-		return errors.New("Claude home must be a directory")
+		return preflightFailure("claude", "claude_home_not_directory")
 	} else if err != nil && !os.IsNotExist(err) {
-		return errors.New("cannot access Claude home")
+		return preflightFailure("claude", "claude_home_unavailable")
 	}
 	return nil
 }
@@ -62,29 +61,35 @@ func claudeComplete(ctx context.Context, cfg Config, messages []Message, tools [
 	}
 	bin, err = exec.LookPath(bin)
 	if err != nil && cfg.run == nil {
-		return empty, usage, errors.New("Claude executable not found; install Claude Code and sign in")
+		if failure := startFailure("claude", PhasePreflight, err); failure != nil {
+			return empty, usage, failure
+		}
+		return empty, usage, preflightFailure("claude", "executable_not_found")
 	}
 	if cfg.run != nil && bin == "" {
 		bin = cfg.ClaudeBin
 	}
 	if bin != "" {
-		bin, _ = filepath.Abs(bin)
+		bin, err = filepath.Abs(bin)
+		if err != nil {
+			return empty, usage, preflightFailure("claude", "executable_unresolved")
+		}
 	}
 	root := ""
 	if cfg.WorkDirRoot != "" {
 		root, err = ensureDirectory(cfg.WorkDirRoot, "model-runs")
 		if err != nil {
-			return empty, usage, err
+			return empty, usage, preflightFailure("claude", "scratch_directory")
 		}
 	}
 	dir, err := os.MkdirTemp(root, "agent-harness-claude-")
 	if err != nil {
-		return empty, usage, err
+		return empty, usage, preflightFailure("claude", "scratch_directory")
 	}
 	defer os.RemoveAll(dir)
 	schema, err := actionSchema(tools)
 	if err != nil {
-		return empty, usage, err
+		return empty, usage, preflightFailure("claude", "invalid_tool_catalog")
 	}
 	payload, err := json.Marshal(map[string]any{"messages": messages, "available_tools": tools})
 	if err != nil || len(payload) > cfg.MaxContextBytes {

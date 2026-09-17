@@ -5,7 +5,6 @@ package completion
 
 import (
 	"context"
-	"errors"
 	"time"
 )
 
@@ -63,10 +62,10 @@ type Function struct {
 // Complete performs one invocation and never executes proposed application tools.
 func Complete(ctx context.Context, cfg Config, messages []Message, tools []Tool) (Message, Usage, error) {
 	if cfg.Engine != "codex" && cfg.Engine != "claude" {
-		return Message{}, Usage{}, errors.New("unsupported CLI harness")
+		return Message{}, Usage{}, preflightFailure(cfg.Engine, "unsupported_engine")
 	}
 	if cfg.Model == "" {
-		return Message{}, Usage{}, errors.New("model is required")
+		return Message{}, Usage{}, preflightFailure(cfg.Engine, "model_required")
 	}
 	if cfg.MaxContextBytes == 0 {
 		cfg.MaxContextBytes = 128 * 1024
@@ -75,7 +74,7 @@ func Complete(ctx context.Context, cfg Config, messages []Message, tools []Tool)
 		cfg.Timeout = 5 * time.Minute
 	}
 	if cfg.MaxContextBytes < 1024 || cfg.Timeout <= 0 {
-		return Message{}, Usage{}, errors.New("invalid context or timeout limit")
+		return Message{}, Usage{}, preflightFailure(cfg.Engine, "invalid_limits")
 	}
 	if err := ctx.Err(); err != nil {
 		return Message{}, Usage{}, err
