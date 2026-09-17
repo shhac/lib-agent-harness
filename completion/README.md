@@ -20,10 +20,22 @@ or incompatible CLI fails closed. Codex homes containing nonempty global
 cannot reliably disable those instructions.
 
 `BeforeRequest` runs only after these non-billable checks and immediately before
-the inference invocation. Its error prevents that invocation. Failures are not
-retried, since usage and external effects can be uncertain. CLI diagnostics are
-not included in returned errors. The output stream is bounded and unexpected
-native tool events or malformed structured responses are rejected.
+the inference invocation. Its error prevents that invocation. It gates one CLI
+invocation, which is the unit this library controls; a CLI or provider may make
+more than one upstream request inside it, so this is not a per-provider-request
+gate. Failures are not retried, since usage and external effects can be
+uncertain. CLI diagnostics are not included in returned errors. The output
+stream is bounded and unexpected native tool events or malformed structured
+responses are rejected.
+
+A failed invocation still reports what the provider said it consumed. When the
+stream carries an authoritative terminal report — Claude's `result` event or
+Codex's `turn.completed` — its accounting is returned alongside the original
+typed error, with no action proposal. Partial or streamed estimates, absent,
+duplicated, negative and overflowing reports stay unknown rather than being
+repaired into a number that cannot later be told apart from a measured one.
+Input counts cached input as the provider reports it, identically on the success
+and failure paths.
 
 Each call uses a private, disposable working directory. When `WorkDirRoot` is
 provided, it must be a canonical existing directory; a private `model-runs`

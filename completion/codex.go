@@ -122,7 +122,9 @@ func codexComplete(ctx context.Context, cfg Config, messages []Message, tools []
 		if ctx.Err() != nil {
 			err = ctx.Err()
 		}
-		return empty, usage, processRequestFailure("codex", output, err)
+		// A request that ended badly can still have been billed. Report whatever
+		// the provider stated it consumed, and no action proposal.
+		return empty, TerminalUsage("codex", output), processRequestFailure("codex", output, err)
 	}
 	return parseCodex(output, tools)
 }
@@ -306,7 +308,7 @@ func codexCatalogEnvironment(dir string) []string {
 
 func parseCodex(data []byte, tools []Tool) (Message, Usage, error) {
 	if failure := codexRequestFailure(data); failure != nil {
-		return Message{}, Usage{}, failure
+		return Message{}, TerminalUsage("codex", data), failure
 	}
 	var result Message
 	var usage Usage
@@ -331,7 +333,7 @@ func parseCodex(data []byte, tools []Tool) (Message, Usage, error) {
 		}
 		switch event.Type {
 		case "turn.failed", "error":
-			return result, usage, &RequestError{Kind: ErrorUnknown, Engine: "codex", Phase: PhaseResponse, Code: event.Type}
+			return Message{}, TerminalUsage("codex", data), &RequestError{Kind: ErrorUnknown, Engine: "codex", Phase: PhaseResponse, Code: event.Type}
 		case "item.started", "item.completed":
 			if event.Item.Type != "agent_message" && event.Item.Type != "reasoning" && event.Item.Type != "error" {
 				return result, usage, &RequestError{Kind: ErrorUnknown, Engine: "codex", Phase: PhaseResponse, Code: "unexpected_native_tool"}

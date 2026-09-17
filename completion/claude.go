@@ -115,14 +115,16 @@ func claudeComplete(ctx context.Context, cfg Config, messages []Message, tools [
 		if ctx.Err() != nil {
 			err = ctx.Err()
 		}
-		return empty, usage, processRequestFailure("claude", output, err)
+		// A request that ended badly can still have been billed. Report whatever
+		// the provider stated it consumed, and no action proposal.
+		return empty, TerminalUsage("claude", output), processRequestFailure("claude", output, err)
 	}
 	return parseClaude(output, tools)
 }
 
 func parseClaude(data []byte, tools []Tool) (Message, Usage, error) {
 	if failure := claudeRequestFailure(data); failure != nil {
-		return Message{}, Usage{}, failure
+		return Message{}, TerminalUsage("claude", data), failure
 	}
 	var usage Usage
 	var result Message
@@ -176,7 +178,9 @@ func parseClaude(data []byte, tools []Tool) (Message, Usage, error) {
 			continue
 		}
 		if event.IsError || event.Subtype != "success" || completed {
-			return Message{}, usage, claudeTerminalFailure(event.Subtype, event.Reason, event.Stop, assistantError)
+			// The failing result carries its own accounting; read it rather than
+			// the running total, which only tracks successful results.
+			return Message{}, TerminalUsage("claude", data), claudeTerminalFailure(event.Subtype, event.Reason, event.Stop, assistantError)
 		}
 		completed = true
 		if event.Usage != nil {

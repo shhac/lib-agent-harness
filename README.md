@@ -210,8 +210,11 @@ cancellation terminates contained descendants. Event/output bounds keep a noisy
 CLI from growing memory indefinitely where the API advertises those bounds.
 
 Usage preserves provider-specific accounting scopes. Missing or interrupted
-usage can be unknown; zero counters do not necessarily mean a free run. Reported
-costs are provider API-rate valuations, not a statement of subscription charges.
+usage can be unknown; zero counters do not necessarily mean a free run. A
+rejected or abandoned constrained completion still returns any authoritative
+terminal accounting its CLI reported, because a failed request can have been
+billed. Reported costs are provider API-rate valuations, not a statement of
+subscription charges.
 
 ## Development
 
