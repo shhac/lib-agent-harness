@@ -6,26 +6,18 @@ import (
 	"math"
 )
 
-// TerminalUsage recovers what a provider reported it consumed from a CLI stream
-// that ended in a failure. A rejected or interrupted request can still have been
-// billed, and dropping its accounting would present real consumption as free.
+// terminalUsage is the single definition of what a CLI stream establishes about
+// consumption, used for successful and failed invocations alike so the two
+// cannot disagree about the same provider's accounting.
 //
-// It reads only an authoritative terminal report — Claude's `result` event or
-// Codex's `turn.completed` — never a partial or streamed estimate, and never an
-// action proposal. An absent, malformed, negative or overflowing report stays
-// unknown: a caller must be able to tell unavailable accounting from zero.
-func TerminalUsage(engine string, data []byte) Usage {
-	if engine == "claude" {
-		return terminalClaudeUsage(data)
-	}
-	if engine == "codex" {
-		return terminalCodexUsage(data)
-	}
-	return Usage{}
-}
-
-func terminalClaudeUsage(data []byte) Usage {
+// Only an authoritative terminal report counts — Claude's `result` event or
+// Codex's `turn.completed` — never a partial or streamed estimate. A stream
+// that cannot be fully parsed, that carries more than one terminal report, or
+// whose report is absent, incomplete, negative or too large to sum is unknown.
+// A report of explicit zeros is a measurement and stays known.
+func terminalUsage(engine string, data []byte) Usage {
 	var out Usage
+	terminals := 0
 	for _, line := range bytes.Split(data, []byte("\n")) {
 		if len(bytes.TrimSpace(line)) == 0 {
 			continue
@@ -39,58 +31,49 @@ func terminalClaudeUsage(data []byte) Usage {
 				CacheWrite *int `json:"cache_creation_input_tokens"`
 			} `json:"usage"`
 		}
-		if json.Unmarshal(line, &event) != nil || event.Type != "result" || event.Usage == nil {
+		// A line we cannot read may be the terminal report, or may hide a second
+		// one. Either way the stream is no longer authoritative about any of it.
+		if json.Unmarshal(line, &event) != nil {
+			return Usage{}
+		}
+		if !terminalEvent(engine, event.Type) {
+			continue
+		}
+		// Terminal reports are counted whether or not they carry accounting: a
+		// second one makes the first ambiguous even when it is the one missing
+		// its usage.
+		terminals++
+		if terminals > 1 {
+			return Usage{}
+		}
+		if event.Usage == nil {
 			continue
 		}
 		// Cached input is input the provider charged for. Counting it keeps one
-		// definition of consumption across engines and across success and failure.
+		// definition of consumption across engines, and across success and
+		// failure. Codex reports no cache split; its absent fields contribute
+		// nothing rather than making the report incomplete.
 		usage, ok := normalizedUsage(event.Usage.Input, event.Usage.Output, event.Usage.CacheRead, event.Usage.CacheWrite)
 		if !ok {
 			return Usage{}
 		}
-		// A stream carrying more than one terminal result is not authoritative
-		// about any of them.
-		if out.Known {
-			return Usage{}
-		}
 		out = usage
 	}
 	return out
 }
 
-func terminalCodexUsage(data []byte) Usage {
-	var out Usage
-	for _, line := range bytes.Split(data, []byte("\n")) {
-		if len(bytes.TrimSpace(line)) == 0 {
-			continue
-		}
-		var event struct {
-			Type  string `json:"type"`
-			Usage *struct {
-				Input  *int `json:"input_tokens"`
-				Output *int `json:"output_tokens"`
-			} `json:"usage"`
-		}
-		if json.Unmarshal(line, &event) != nil || event.Type != "turn.completed" || event.Usage == nil {
-			continue
-		}
-		usage, ok := normalizedUsage(event.Usage.Input, event.Usage.Output, nil, nil)
-		if !ok {
-			return Usage{}
-		}
-		if out.Known {
-			return Usage{}
-		}
-		out = usage
+func terminalEvent(engine, eventType string) bool {
+	if engine == "claude" {
+		return eventType == "result"
 	}
-	return out
+	return engine == "codex" && eventType == "turn.completed"
 }
 
-// normalizedUsage accepts a report only when every field it needs is present,
-// non-negative and sums without overflow. Anything else is unknown rather than
-// a repaired number, because a repaired number cannot be told from a measured
-// one once it is stored.
-func normalizedUsage(input, output *int, cacheRead, cacheWrite *int) (Usage, bool) {
+// normalizedUsage accepts a report only when the counts it needs are present,
+// non-negative and sum without overflow. Anything else is unknown rather than a
+// repaired number, because a repaired number cannot be told from a measured one
+// once it is stored.
+func normalizedUsage(input, output, cacheRead, cacheWrite *int) (Usage, bool) {
 	if input == nil || output == nil {
 		return Usage{}, false
 	}
@@ -108,6 +91,5 @@ func normalizedUsage(input, output *int, cacheRead, cacheWrite *int) (Usage, boo
 		}
 		total += part
 	}
-	in := total - *output
-	return Usage{InputTokens: in, OutputTokens: *output, TotalTokens: total, Known: true}, true
+	return Usage{InputTokens: total - *output, OutputTokens: *output, TotalTokens: total, Known: true}, true
 }

@@ -28,14 +28,16 @@ uncertain. CLI diagnostics are not included in returned errors. The output
 stream is bounded and unexpected native tool events or malformed structured
 responses are rejected.
 
-A failed invocation still reports what the provider said it consumed. When the
-stream carries an authoritative terminal report — Claude's `result` event or
-Codex's `turn.completed` — its accounting is returned alongside the original
-typed error, with no action proposal. Partial or streamed estimates, absent,
-duplicated, negative and overflowing reports stay unknown rather than being
-repaired into a number that cannot later be told apart from a measured one.
-Input counts cached input as the provider reports it, identically on the success
-and failure paths.
+Usage comes from one definition for every invocation, successful or not, so the
+two paths cannot disagree about the same provider's accounting. Only an
+authoritative terminal report counts — Claude's `result` event or Codex's
+`turn.completed`. A stream that cannot be fully parsed, that carries more than
+one terminal report, or whose report is absent, incomplete, negative or too
+large to sum is unknown; a report of explicit zeros is a measurement and stays
+known. Input counts cached input as the provider reports it.
+
+A failed invocation therefore still reports what the provider said it consumed,
+returned alongside the original typed error and never with an action proposal.
 
 Each call uses a private, disposable working directory. When `WorkDirRoot` is
 provided, it must be a canonical existing directory; a private `model-runs`

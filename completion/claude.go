@@ -117,14 +117,14 @@ func claudeComplete(ctx context.Context, cfg Config, messages []Message, tools [
 		}
 		// A request that ended badly can still have been billed. Report whatever
 		// the provider stated it consumed, and no action proposal.
-		return empty, TerminalUsage("claude", output), processRequestFailure("claude", output, err)
+		return empty, terminalUsage("claude", output), processRequestFailure("claude", output, err)
 	}
 	return parseClaude(output, tools)
 }
 
 func parseClaude(data []byte, tools []Tool) (Message, Usage, error) {
 	if failure := claudeRequestFailure(data); failure != nil {
-		return Message{}, TerminalUsage("claude", data), failure
+		return Message{}, terminalUsage("claude", data), failure
 	}
 	var usage Usage
 	var result Message
@@ -180,13 +180,9 @@ func parseClaude(data []byte, tools []Tool) (Message, Usage, error) {
 		if event.IsError || event.Subtype != "success" || completed {
 			// The failing result carries its own accounting; read it rather than
 			// the running total, which only tracks successful results.
-			return Message{}, TerminalUsage("claude", data), claudeTerminalFailure(event.Subtype, event.Reason, event.Stop, assistantError)
+			return Message{}, terminalUsage("claude", data), claudeTerminalFailure(event.Subtype, event.Reason, event.Stop, assistantError)
 		}
 		completed = true
-		if event.Usage != nil {
-			input := event.Usage.Input + event.Usage.CacheRead + event.Usage.CacheWrite
-			usage = Usage{InputTokens: input, OutputTokens: event.Usage.Output, TotalTokens: input + event.Usage.Output, Known: true}
-		}
 		var err error
 		result, err = parseActionEnvelope(event.Structured, tools)
 		if err != nil {
@@ -196,5 +192,5 @@ func parseClaude(data []byte, tools []Tool) (Message, Usage, error) {
 	if !completed {
 		return Message{}, usage, &RequestError{Kind: ErrorUnknown, Engine: "claude", Phase: PhaseResponse, Code: "missing_terminal_result"}
 	}
-	return result, usage, nil
+	return result, terminalUsage("claude", data), nil
 }

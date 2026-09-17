@@ -124,7 +124,7 @@ func codexComplete(ctx context.Context, cfg Config, messages []Message, tools []
 		}
 		// A request that ended badly can still have been billed. Report whatever
 		// the provider stated it consumed, and no action proposal.
-		return empty, TerminalUsage("codex", output), processRequestFailure("codex", output, err)
+		return empty, terminalUsage("codex", output), processRequestFailure("codex", output, err)
 	}
 	return parseCodex(output, tools)
 }
@@ -308,7 +308,7 @@ func codexCatalogEnvironment(dir string) []string {
 
 func parseCodex(data []byte, tools []Tool) (Message, Usage, error) {
 	if failure := codexRequestFailure(data); failure != nil {
-		return Message{}, TerminalUsage("codex", data), failure
+		return Message{}, terminalUsage("codex", data), failure
 	}
 	var result Message
 	var usage Usage
@@ -333,7 +333,7 @@ func parseCodex(data []byte, tools []Tool) (Message, Usage, error) {
 		}
 		switch event.Type {
 		case "turn.failed", "error":
-			return Message{}, TerminalUsage("codex", data), &RequestError{Kind: ErrorUnknown, Engine: "codex", Phase: PhaseResponse, Code: event.Type}
+			return Message{}, terminalUsage("codex", data), &RequestError{Kind: ErrorUnknown, Engine: "codex", Phase: PhaseResponse, Code: event.Type}
 		case "item.started", "item.completed":
 			if event.Item.Type != "agent_message" && event.Item.Type != "reasoning" && event.Item.Type != "error" {
 				return result, usage, &RequestError{Kind: ErrorUnknown, Engine: "codex", Phase: PhaseResponse, Code: "unexpected_native_tool"}
@@ -345,17 +345,15 @@ func parseCodex(data []byte, tools []Tool) (Message, Usage, error) {
 			}
 		case "turn.completed":
 			completed = true
-			if event.Usage != nil {
-				usage = Usage{InputTokens: event.Usage.Input, OutputTokens: event.Usage.Output, TotalTokens: event.Usage.Input + event.Usage.Output, Known: true}
-			}
 		}
 	}
 	if !completed {
 		return Message{}, usage, &RequestError{Kind: ErrorUnknown, Engine: "codex", Phase: PhaseResponse, Code: "missing_terminal_result"}
 	}
+	usage = terminalUsage("codex", data)
 	result, err := parseActionEnvelope([]byte(result.Content), tools)
 	if err != nil {
-		return result, usage, &RequestError{Kind: ErrorUnknown, Engine: "codex", Phase: PhaseResponse, Code: "invalid_action_envelope"}
+		return Message{}, usage, &RequestError{Kind: ErrorUnknown, Engine: "codex", Phase: PhaseResponse, Code: "invalid_action_envelope"}
 	}
 	return result, usage, nil
 }
