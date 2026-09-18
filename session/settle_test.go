@@ -152,6 +152,10 @@ func TestATurnEndingClosesToolAdmissionWithoutCancellingWhatRuns(t *testing.T) {
 		ToolDefinition{Name: "read_file", Schema: map[string]any{"type": "object"}},
 		ToolDefinition{Name: "run_command", Schema: map[string]any{"type": "object"}},
 	)
+	refusals := make(chan Diagnostic, 4)
+	s := &Session{tools: h}
+	s.options.OnDiagnostic = func(d Diagnostic) { refusals <- d }
+	h.onRefusal = s.toolRefused
 	turn := &Turn{id: "turn-one", events: make(chan Event, 4), done: make(chan struct{}), closeTools: h.closeAdmission}
 	c := dial(t, h, string(h.secret))
 	c.send(t, "tools/call", map[string]any{"name": "run_command", "arguments": map[string]any{}})
@@ -164,6 +168,16 @@ func TestATurnEndingClosesToolAdmissionWithoutCancellingWhatRuns(t *testing.T) {
 	text, isError := late.call(t, "read_file", map[string]any{})
 	if !isError || !strings.Contains(text, "paused") {
 		t.Fatalf("a call after the turn ended was admitted: %q", text)
+	}
+	// And the refusal is reported rather than disappearing. There is no turn left
+	// to observe it on, which is exactly why it has to go somewhere.
+	select {
+	case d := <-refusals:
+		if d.Code != "paused" || !strings.Contains(d.Detail, "read_file") {
+			t.Errorf("the refusal did not say what was refused or why: %+v", d)
+		}
+	default:
+		t.Error("a tool refused after its turn ended was not reported anywhere")
 	}
 	// The one that was already running was not abandoned half-done.
 	if cancelled.Load() {

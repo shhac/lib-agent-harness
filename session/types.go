@@ -260,6 +260,10 @@ type Turn struct {
 func (t *Turn) ID() string           { t.mu.Lock(); defer t.mu.Unlock(); return t.id }
 func (t *Turn) Events() <-chan Event { return t.events }
 
+// ended reports that this turn's stream is closed, so anything emitted to it now
+// would be dropped rather than observed.
+func (t *Turn) ended() bool { t.mu.Lock(); defer t.mu.Unlock(); return t.finished }
+
 // Wait does not drain Events; callers should consume the bounded event stream
 // concurrently. Context cancellation here only stops waiting.
 func (t *Turn) Wait(ctx context.Context) (Result, error) {

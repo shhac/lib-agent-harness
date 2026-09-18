@@ -237,12 +237,19 @@ func (s *Session) ToolsClosed() bool {
 
 func (s *Session) toolRefused(tool, reason string) {
 	s.mu.Lock()
-	t := s.active
+	t, report := s.active, s.options.OnDiagnostic
 	s.mu.Unlock()
-	if t == nil {
+	if t != nil && !t.ended() {
+		s.emit(t, Event{Kind: "tool_refused", Tool: tool, Status: reason})
 		return
 	}
-	s.emit(t, Event{Kind: "tool_refused", Tool: tool, Status: reason})
+	// No live turn to report it on. This is the refusal that matters most — a
+	// harness asking for a tool after its turn ended — so it goes to the caller's
+	// diagnostic record instead of nowhere. Both fields are fixed vocabulary: the
+	// caller's own tool name and this library's own reason.
+	if report != nil {
+		report(Diagnostic{Engine: string(s.options.Engine), Stage: "tool_refused", Code: reason, Detail: "tool: " + tool, At: time.Now().UTC()})
+	}
 }
 func newID() string {
 	var b [16]byte
