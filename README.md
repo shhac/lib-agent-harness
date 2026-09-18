@@ -170,7 +170,7 @@ Restricting writes is not what this does. A tool that can read is a disclosure
 path whatever it may write, so the restriction is the removal of the tools; a
 sandbox mode and a working directory are neither claimed nor relied on as one.
 
-A restricted session runs in `Options.RuntimeHome`: a durable private home whose
+A restricted Codex session runs in `Options.RuntimeHome`: a durable private home whose
 configuration this library writes, sharing only the login from `Options.Home`.
 That is how a worker gets the operator's account without the servers, hooks,
 plugins and trust settings that live beside it — none of which Codex's
@@ -180,7 +180,8 @@ result, a model, an error or a log; no API key is substituted for it. Which copy
 is authoritative is decided by digest: a source that still matches what the home
 was given has not changed, so a refresh the harness made wins; a source that has
 changed is a new login and wins instead; a source that has been removed is a
-logout and is left removed.
+logout and is left removed. Restricted Claude sessions use the selected native
+login and Claude Code's restricted mode; they do not use this credential-copy route.
 
 Your bridge command is your own binary re-executed as the harness's tool server.
 Its whole implementation is `session.RunBridge(ctx, os.Stdin, os.Stdout)`, which
@@ -376,9 +377,11 @@ private material; the library does not make them safe for public display.
 ## Authentication and resource handling
 
 Binary and home paths are optional per configuration. The library never changes
-the parent process's environment or copies credentials. Constrained completion
-and interactive sessions filter ambient provider overrides; native runs can
-inherit the caller's environment explicitly for compatibility with CLI setups.
+the parent process's environment. Restricted Codex sessions share login material
+into a private runtime home as described above; other invocation modes use the
+selected native login directly. Constrained completion and interactive sessions
+filter ambient provider overrides; native runs can inherit the caller's
+environment explicitly for compatibility with CLI setups.
 A separate working directory does not require a separate account. Selecting a
 custom home can select a different login namespace; authenticate through the
 CLI's supported flow for that home.
