@@ -7,7 +7,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 )
 
 func normalize(o Options) (Options, error) {
@@ -98,8 +100,39 @@ func normalize(o Options) (Options, error) {
 	if o.Policy.ClaudeTools != nil {
 		o.Policy.ClaudeTools = append([]string{}, o.Policy.ClaudeTools...)
 	}
+	if o.Restriction != nil {
+		if !restrictedPlatform() {
+			return o, &CapabilityError{Engine: string(o.Engine), Code: CapabilityUnsupportedPlatform}
+		}
+		// Two tool policies would silently disagree about what this session may
+		// do. The restriction owns the surface, so the other one has to be absent.
+		if o.Policy.ClaudeTools != nil {
+			return o, errors.New("a restricted session owns its tool surface; leave Policy.ClaudeTools unset")
+		}
+		if o.Instructions.Mode == Replace {
+			return o, errors.New("a restricted session keeps the harness's coding instructions; append scoped instructions instead of replacing them")
+		}
+		if o.Engine == Codex && o.Model == "" {
+			return o, errors.New("a restricted Codex session requires an explicit model to restrict in the installed catalog")
+		}
+		if err = o.Restriction.Tools.validate(); err != nil {
+			return o, err
+		}
+		if o.Restriction.Probe <= 0 {
+			o.Restriction.Probe = 60 * time.Second
+		}
+		o.Restriction.Tools.Tools = append([]ToolDefinition(nil), o.Restriction.Tools.Tools...)
+	}
 	return o, nil
 }
+
+// reference digests the stable contract a resume has to match. The tool channel
+// contributes its surface — the server name and every tool's name and schema —
+// and deliberately not its endpoint: the listener path and the per-launch
+// channel credential change every time the owning process restarts, and
+// including them would invalidate every stored reference on each restart while
+// proving nothing about what the session can do. The credential never reaches a
+// reference in any form.
 func reference(o Options, id string) Ref {
 	// Include nil versus empty tool lists: they have different permission meaning.
 	payload, _ := json.Marshal(struct {
@@ -107,19 +140,54 @@ func reference(o Options, id string) Ref {
 		Instructions          Instructions
 		Policy                Policy
 		ToolsSpecified        bool
-	}{o.Binary, o.Model, o.Effort, o.Instructions, o.Policy, o.Policy.ClaudeTools != nil})
+		Restricted            bool
+		ToolServer            string
+		HostedTools           []ToolDefinition
+	}{o.Binary, o.Model, o.Effort, o.Instructions, o.Policy, o.Policy.ClaudeTools != nil, o.Restriction != nil, toolServerName(o), hostedTools(o)})
 	hash := sha256.Sum256(payload)
 	return Ref{Engine: o.Engine, ID: id, Home: o.Home, WorkDir: o.WorkDir, AccountIdentity: o.AccountIdentity, ConfigHash: hex.EncodeToString(hash[:])}
+}
+
+func toolServerName(o Options) string {
+	if o.Restriction == nil {
+		return ""
+	}
+	return o.Restriction.Tools.Server
+}
+
+func hostedTools(o Options) []ToolDefinition {
+	if o.Restriction == nil {
+		return nil
+	}
+	tools := append([]ToolDefinition(nil), o.Restriction.Tools.Tools...)
+	sort.Slice(tools, func(i, j int) bool { return tools[i].Name < tools[j].Name })
+	return tools
 }
 func compatible(o Options, r Ref) bool {
 	expected := reference(o, r.ID)
 	return r.ID != "" && r == expected
 }
-func commandArgs(o Options, nativeID string, resuming bool) []string {
+
+// launch describes one restricted session's prepared runtime: the arguments it
+// adds and the private files it depends on.
+type launch struct {
+	host    *toolHost
+	extra   []string
+	catalog string
+}
+
+func commandArgs(o Options, nativeID string, resuming bool, l *launch) []string {
 	if o.Engine == Codex {
-		return []string{"app-server", "--listen", "stdio://"}
+		args := []string{"app-server", "--listen", "stdio://"}
+		if l != nil {
+			args = append(args, l.extra...)
+		}
+		return args
 	}
 	args := []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--permission-mode", o.Policy.ClaudePermission}
+	if l != nil {
+		args = append(args, l.extra...)
+	}
 	if resuming {
 		args = append(args, "--resume", nativeID)
 	} else {

@@ -7,6 +7,7 @@ package session
 
 import (
 	"encoding/json"
+	"time"
 )
 
 func (s *Session) notification(m map[string]json.RawMessage) {
@@ -19,8 +20,12 @@ func (s *Session) notificationLocked(m map[string]json.RawMessage) {
 	t := s.active
 	ref := s.ref
 	closed := s.closed
+	s.lastEvent = time.Now().UTC()
 	s.mu.Unlock()
 	if closed {
+		return
+	}
+	if s.options.Engine == Claude && s.observeClaudeInit(m) {
 		return
 	}
 	if t == nil {
@@ -89,3 +94,47 @@ func (s *Session) text(t *Turn, item, text string, replace bool) {
 	s.emit(t, Event{Kind: kind, ItemID: item, Text: text})
 }
 func mustMarshal(v any) []byte { b, _ := json.Marshal(v); return b }
+
+// observeClaudeInit cross-checks the tool surface the harness says it enabled,
+// on the frame it emits at startup and therefore before any prompt. The
+// pre-launch probe is what establishes the restriction; this catches a harness
+// whose behaviour differs between a probe and a credentialed run, still without
+// any inference having happened.
+func (s *Session) observeClaudeInit(m map[string]json.RawMessage) bool {
+	if str(m, "type") != "system" || str(m, "subtype") != "init" {
+		return false
+	}
+	if s.options.Restriction == nil {
+		return false
+	}
+	var frame struct {
+		Tools []string `json:"tools"`
+	}
+	if json.Unmarshal(mustMarshal(m), &frame) != nil {
+		s.recordRestriction(&CapabilityError{Engine: string(Claude), Code: CapabilityProbeUnreadable})
+		return true
+	}
+	server := s.options.Restriction.Tools.Server
+	observed := make([]string, 0, len(frame.Tools))
+	for _, name := range frame.Tools {
+		observed = append(observed, normalizeWireTool(name, server))
+	}
+	s.recordRestriction(compareTools(string(Claude), toolNames(s.options.Restriction.Tools.Tools), observed))
+	return true
+}
+
+// recordRestriction stores the outcome of the startup cross-check. A mismatch
+// ends the session: a harness with tools the caller did not authorize is a
+// disclosure path, and the right response is to stop, not to note it.
+func (s *Session) recordRestriction(failure *CapabilityError) {
+	if failure != nil {
+		s.mu.Lock()
+		s.caps.RestrictTools = Capability{Unsupported, "installed harness advertised a different tool surface"}
+		s.mu.Unlock()
+		s.fail(failure)
+		return
+	}
+	s.mu.Lock()
+	s.caps.RestrictTools = Capability{Native, "installed harness advertised exactly the configured tools"}
+	s.mu.Unlock()
+}

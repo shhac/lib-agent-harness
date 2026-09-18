@@ -21,6 +21,9 @@ type Session struct {
 	transport wire
 	active    *Turn
 	closed    bool
+	failure   error
+	lastEvent time.Time
+	tools     *toolHost
 	done      chan struct{}
 }
 
@@ -43,7 +46,26 @@ func open(ctx context.Context, o Options, r *Ref) (*Session, error) {
 	if r != nil && !compatible(o, *r) {
 		return nil, ErrIncompatibleResume
 	}
+	// The restricted runtime is prepared and proved first. Nothing below this
+	// point runs with the caller's login until the harness has demonstrated,
+	// against a provider that refuses to infer, that it dropped its own tools.
+	l, err := prepareLaunch(ctx, o)
+	if err != nil {
+		return nil, err
+	}
 	s := &Session{options: o, ref: reference(o, ""), caps: CapabilitiesFor(o.Engine), done: make(chan struct{}), opGate: make(chan struct{}, 1)}
+	if l != nil {
+		s.tools = l.host
+		l.host.onRefusal = s.toolRefused
+		l.host.activeTurn = func() string {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			if s.active == nil {
+				return ""
+			}
+			return s.active.ID()
+		}
+	}
 	if r != nil {
 		s.ref = *r
 	} else if o.Engine == Claude {
@@ -52,10 +74,11 @@ func open(ctx context.Context, o Options, r *Ref) (*Session, error) {
 	// Reader callbacks may fire before startup returns; the transport assignment
 	// is protected so an early process failure cannot race Close.
 	s.mu.Lock()
-	w, err := newProcessWire(ctx, o, s.ref.ID, r != nil, s.notification, s.fail)
+	w, err := newProcessWire(ctx, o, s.ref.ID, r != nil, l, s.notification, s.fail)
 	s.transport = w
 	s.mu.Unlock()
 	if err != nil {
+		s.releaseTools()
 		return nil, err
 	}
 	if err = s.initialize(ctx, r != nil); err != nil {
@@ -63,6 +86,37 @@ func open(ctx context.Context, o Options, r *Ref) (*Session, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+// releaseTools shuts the private tool channel. It is safe before a session has
+// one, and idempotent afterwards.
+func (s *Session) releaseTools() {
+	s.mu.Lock()
+	host := s.tools
+	s.mu.Unlock()
+	if host != nil {
+		host.close()
+	}
+}
+
+// ToolsClosed reports that a closing tool has ended this session's tool
+// channel. It is the only signal that means the work asked to stop; a status,
+// a quiet period or a finished turn is not one.
+func (s *Session) ToolsClosed() bool {
+	s.mu.Lock()
+	host := s.tools
+	s.mu.Unlock()
+	return host != nil && host.channelClosed()
+}
+
+func (s *Session) toolRefused(tool, reason string) {
+	s.mu.Lock()
+	t := s.active
+	s.mu.Unlock()
+	if t == nil {
+		return
+	}
+	s.emit(t, Event{Kind: "tool_refused", Tool: tool, Status: reason})
 }
 func newID() string {
 	var b [16]byte
@@ -169,15 +223,22 @@ func (s *Session) failTurn(expected *Turn, err error) {
 		return
 	}
 	s.closed = true
+	if s.failure == nil && err != nil && !errors.Is(err, ErrClosed) {
+		s.failure = err
+	}
 	close(s.done)
 	t := s.active
 	w := s.transport
+	host := s.tools
 	s.mu.Unlock()
 	if t != nil {
 		t.finish("failed", err)
 	}
 	if w != nil {
 		w.close()
+	}
+	if host != nil {
+		host.close()
 	}
 }
 

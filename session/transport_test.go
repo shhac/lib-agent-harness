@@ -175,7 +175,7 @@ func TestMalformedProcessOutputStopsStartup(t *testing.T) {
 func TestInstructionArgumentsAreNative(t *testing.T) {
 	for _, mode := range []InstructionMode{Replace, Append} {
 		o := Options{Engine: Claude, Instructions: Instructions{mode, "system instruction"}, Policy: Policy{ClaudePermission: "dontAsk", ClaudeTools: []string{}}}
-		args := strings.Join(commandArgs(o, "session", false), "\n")
+		args := strings.Join(commandArgs(o, "session", false, nil), "\n")
 		flag := "--system-prompt"
 		if mode == Append {
 			flag = "--append-system-prompt"

@@ -84,23 +84,18 @@ func (s *Session) codexEvent(t *Turn, ref Ref, m map[string]json.RawMessage) {
 		if !lastOK || !totalOK {
 			return
 		}
-		u := struct{ Last, Total codexUsage }{last, total}
 		// last is one model response; total identifies repeated notifications. Sum
 		// response usage within this turn, never the resumed session's old total.
 		t.mu.Lock()
-		if t.lastCodexTotal != u.Total || !t.result.Usage.Known {
-			last := u.Last.normalized()
-			t.result.Usage.Known = true
-			t.result.Usage.Input += last.Input
-			t.result.Usage.Output += last.Output
-			t.result.Usage.CacheRead += last.CacheRead
-			t.result.Usage.CacheWrite += last.CacheWrite
-			t.result.Usage.Reasoning += last.Reasoning
-			t.lastCodexTotal = u.Total
+		fresh := t.lastCodexTotal != total || !t.result.Usage.Known
+		if fresh {
+			t.result.Usage = t.result.Usage.add(last.normalized())
+			t.lastCodexTotal = total
 		}
-		usage := t.result.Usage
 		t.mu.Unlock()
-		s.emit(t, Event{Kind: "usage", Usage: &usage})
+		if fresh {
+			s.observeRequestUsage(t, last.normalized())
+		}
 	case "thread/compacted":
 		s.invalidateContext(t, "context compacted; awaiting a fresh observation")
 	case "turn/completed":
@@ -123,6 +118,15 @@ func (s *Session) codexEvent(t *Turn, ref Ref, m map[string]json.RawMessage) {
 		default:
 			s.fail(ErrProtocol)
 			return
+		}
+		// The turn's own accounting is published separately from the per-response
+		// observations, so a caller never has to guess which one it is holding.
+		t.mu.Lock()
+		accounting := t.result.Usage
+		t.mu.Unlock()
+		if accounting.Known {
+			accounting.Final = true
+			s.emit(t, Event{Kind: "usage", Usage: &accounting})
 		}
 		s.emit(t, Event{Kind: "status", Status: turn.Status})
 		t.finish(turn.Status, err)

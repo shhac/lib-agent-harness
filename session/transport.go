@@ -42,18 +42,31 @@ type streamWire struct {
 	next      atomic.Uint64
 	event     func(map[string]json.RawMessage)
 	ended     func(error)
+	stderr    *boundedBuffer
+	exit      *ProcessError
+	diagnose  func(Diagnostic)
 }
 
-func newProcessWire(ctx context.Context, o Options, nativeID string, resuming bool, event func(map[string]json.RawMessage), ended func(error)) (*streamWire, error) {
-	return newProcessWireArgs(ctx, o, commandArgs(o, nativeID, resuming), event, ended)
+func newProcessWire(ctx context.Context, o Options, nativeID string, resuming bool, l *launch, event func(map[string]json.RawMessage), ended func(error)) (*streamWire, error) {
+	return newProcessWireArgs(ctx, o, commandArgs(o, nativeID, resuming, l), nil, event, ended)
 }
 
-func newProcessWireArgs(ctx context.Context, o Options, args []string, event func(map[string]json.RawMessage), ended func(error)) (*streamWire, error) {
+// newProcessWireArgs launches a contained harness. env overrides the session's
+// own environment; a capability probe uses that to run with a disposable home
+// and a dummy credential instead of the caller's login.
+func newProcessWireArgs(ctx context.Context, o Options, args, env []string, event func(map[string]json.RawMessage), ended func(error)) (*streamWire, error) {
 	runCtx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(runCtx, o.Binary, args...)
 	cmd.Dir = o.WorkDir
-	cmd.Env = environment(o)
-	cmd.Stderr = io.Discard
+	if env == nil {
+		env = environment(o)
+	}
+	cmd.Env = env
+	// A harness's own standard error is the only local evidence of why a startup
+	// or a stream ended. Keep a bounded tail for the caller's diagnostic hook;
+	// it never enters an error value, for the same reason provider text does not.
+	stderr := &boundedBuffer{limit: 8 << 10}
+	cmd.Stderr = stderr
 	cmd.WaitDelay = 2 * time.Second
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -71,11 +84,57 @@ func newProcessWireArgs(ctx context.Context, o Options, args []string, event fun
 		return nil, ErrTransport
 	}
 	cmd.Cancel = func() error { p.Stop(); return nil }
-	w := &streamWire{engine: o.Engine, stdin: stdin, stdout: reader, pending: map[string]chan response{}, done: make(chan struct{}), reaped: make(chan struct{}), writeGate: make(chan struct{}, 1), event: event, ended: ended}
+	w := &streamWire{engine: o.Engine, stdin: stdin, stdout: reader, pending: map[string]chan response{}, done: make(chan struct{}), reaped: make(chan struct{}), writeGate: make(chan struct{}, 1), event: event, ended: ended, stderr: stderr, diagnose: o.OnDiagnostic}
 	w.stop = func() { cancel(); p.Stop(); stdin.Close(); reader.Close() }
 	go w.read()
-	go func() { defer close(w.reaped); err := p.Run(); p.Close(); writer.CloseWithError(err); cancel() }()
+	go func() {
+		defer close(w.reaped)
+		err := p.Run()
+		p.Close()
+		w.observeExit(err)
+		writer.CloseWithError(err)
+		cancel()
+	}()
 	return w, nil
+}
+
+// observeExit records how the harness ended. A stream that stops because its
+// process died is a different fact from a stream that stopped on its own, and
+// collapsing both into one transport error is what made every failure unknown.
+func (w *streamWire) observeExit(err error) {
+	exit := &ProcessError{Engine: string(w.engine), Code: ProcessExited}
+	var status *exec.ExitError
+	switch {
+	case err == nil:
+		exit.Code = ProcessExited
+	case errors.As(err, &status):
+		code := status.ExitCode()
+		exit.ExitCode = &code
+		if code < 0 {
+			exit.Code = ProcessSignalled
+		}
+	default:
+		exit.Code = ProcessStartFailed
+	}
+	w.mu.Lock()
+	w.exit = exit
+	detail := sanitize(w.stderr.Bytes(), 2048)
+	report := w.diagnose
+	w.mu.Unlock()
+	if report != nil {
+		report(Diagnostic{Engine: string(w.engine), Stage: "process_exit", Code: exit.Code, Detail: detail, At: time.Now().UTC()})
+	}
+}
+
+// processError reports the recorded exit when one is known, so a transport
+// failure caused by a dead harness says so.
+func (w *streamWire) processError() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.exit == nil {
+		return nil
+	}
+	return w.exit
 }
 func (w *streamWire) close() { w.once.Do(func() { close(w.done); w.stop() }) }
 func (w *streamWire) fail(err error) {
@@ -94,6 +153,20 @@ func (w *streamWire) terminalError() error {
 		return w.failure
 	}
 	return ErrClosed
+}
+
+// endOfStream distinguishes a harness that died from one whose stream simply
+// ended. The process is reaped concurrently, so wait briefly for its status
+// rather than reporting a generic transport failure that was actually an exit.
+func (w *streamWire) endOfStream() error {
+	select {
+	case <-w.reaped:
+	case <-time.After(2 * time.Second):
+	}
+	if exit := w.processError(); exit != nil {
+		return exit
+	}
+	return ErrTransport
 }
 func (w *streamWire) send(ctx context.Context, msg map[string]any) error {
 	if err := ctx.Err(); err != nil {
@@ -194,7 +267,7 @@ func (w *streamWire) read() {
 	if errors.Is(scanner.Err(), bufio.ErrTooLong) {
 		w.fail(ErrOutputLimit)
 	} else {
-		w.fail(ErrTransport)
+		w.fail(w.endOfStream())
 	}
 }
 func (w *streamWire) reply(m map[string]json.RawMessage) bool {

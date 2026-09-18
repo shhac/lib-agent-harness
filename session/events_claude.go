@@ -66,6 +66,10 @@ func (s *Session) claudeStreamEvent(t *Turn, m map[string]json.RawMessage) {
 
 func (s *Session) claudeAssistant(t *Turn, m map[string]json.RawMessage) {
 	s.claudeMessageContext(t, m["message"])
+	// One completed model response. A turn contains many, and its terminal
+	// accounting arrives far too late for a caller holding a budget to act on,
+	// so publish each response's figures as they are reported.
+	s.observeRequestUsage(t, claudeResponseUsage(m["message"]))
 	var message struct {
 		ID      string
 		Content []struct{ Type, ID, Name, Text string }
@@ -135,8 +139,13 @@ func (s *Session) claudeResult(t *Turn, m map[string]json.RawMessage) {
 	t.mu.Lock()
 	interrupted := t.interruptRequested
 	t.result.NativeError = r.IsError
+	// An errored or interrupted turn's terminal counters are not this turn's
+	// accounting: the CLI has been observed carrying the preceding completed
+	// turn's figures into them. They stay unknown, and what this turn actually
+	// consumed survives as the per-response observations in Result.Observed —
+	// evidence a caller can show, rather than a measurement it can trust.
 	if r.Usage != nil && !r.IsError && validClaudeUsage(m["usage"]) {
-		t.result.Usage = Usage{Known: true, Input: r.Usage.Input, Output: r.Usage.Output, CacheRead: r.Usage.CacheRead, CacheWrite: r.Usage.CacheWrite}
+		t.result.Usage = Usage{Known: true, Final: true, Input: r.Usage.Input, Output: r.Usage.Output, CacheRead: r.Usage.CacheRead, CacheWrite: r.Usage.CacheWrite}
 	}
 	usage := t.result.Usage
 	t.mu.Unlock()
@@ -150,10 +159,32 @@ func (s *Session) claudeResult(t *Turn, m map[string]json.RawMessage) {
 	}
 	s.claudeModelCapacity(t, m["modelUsage"])
 	if usage.Known {
+		usage.Final = true
 		s.emit(t, Event{Kind: "usage", Usage: &usage})
 	}
 	s.emit(t, Event{Kind: "status", Status: status})
 	t.finish(status, err)
+}
+
+// claudeResponseUsage reads one assistant message's reported consumption. An
+// absent or unusable report is unknown, never zero.
+func claudeResponseUsage(raw json.RawMessage) Usage {
+	var message struct {
+		Usage json.RawMessage `json:"usage"`
+	}
+	if json.Unmarshal(raw, &message) != nil || len(message.Usage) == 0 || !validClaudeUsage(message.Usage) {
+		return Usage{}
+	}
+	var counts struct {
+		Input      int64 `json:"input_tokens"`
+		Output     int64 `json:"output_tokens"`
+		CacheRead  int64 `json:"cache_read_input_tokens"`
+		CacheWrite int64 `json:"cache_creation_input_tokens"`
+	}
+	if json.Unmarshal(message.Usage, &counts) != nil {
+		return Usage{}
+	}
+	return Usage{Known: true, Input: counts.Input, Output: counts.Output, CacheRead: counts.CacheRead, CacheWrite: counts.CacheWrite}
 }
 
 func validClaudeUsage(raw json.RawMessage) bool {

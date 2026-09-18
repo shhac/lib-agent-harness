@@ -90,6 +90,23 @@ func (s *Session) observeQuota(q QuotaSnapshot, t *Turn) {
 		s.emit(t, Event{Kind: "quota", Quota: &copy})
 	}
 }
+
+// observeRequestUsage records one model response's reported consumption and
+// publishes it while the turn is still running. A caller watching a budget has
+// nothing else to act on until the turn ends, and by then it is too late to
+// interrupt.
+func (s *Session) observeRequestUsage(t *Turn, u Usage) {
+	if !u.Known || t == nil {
+		return
+	}
+	t.mu.Lock()
+	t.result.Observed = t.result.Observed.add(u)
+	observed := t.result.Observed
+	t.mu.Unlock()
+	observed.Final = false
+	s.emit(t, Event{Kind: "usage", Usage: &observed})
+}
+
 func (s *Session) observeContext(c ContextSnapshot, t *Turn) {
 	s.mu.Lock()
 	s.telemetry.Context = cloneContext(c)

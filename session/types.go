@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"time"
 )
 
 // MaxFrameBytes bounds one native JSON-line frame, including discarded tool
@@ -39,6 +40,10 @@ type Capabilities struct {
 	// Telemetry capabilities become Native only after a successful response or
 	// event. Older CLI versions may reject optional inspection methods.
 	Account, Quota, Context, Compact Capability
+	// RestrictTools reports whether the installed harness was observed running
+	// with exactly the configured tool surface. Unknown means it was not checked
+	// on this path, never that it was checked and found acceptable.
+	RestrictTools Capability
 }
 
 // CapabilitiesFor describes availability before contacting an installed CLI.
@@ -113,8 +118,32 @@ type Options struct {
 	AccountIdentity string
 	Instructions    Instructions
 	Policy          Policy
+	// Restriction opts this session into the restricted worker contract: the
+	// harness's own tools are removed and replaced by the caller's, verified
+	// against the installed CLI before a credentialed process starts. Leaving it
+	// nil keeps the ordinary native contract exactly as it was.
+	Restriction *Restriction
+	// OnDiagnostic receives bounded, sanitized detail about a failure, once, for
+	// the caller's own private records. It is deliberately not part of any error
+	// value: like provider text, captured harness output does not belong in a
+	// message that might reach a log or a user interface by default.
+	OnDiagnostic func(Diagnostic)
+	// QuietAfter is how long without an event makes a live session Quiet rather
+	// than Running. Quiet is unknown, never stuck. Defaults to two minutes.
+	QuietAfter time.Duration
 	// EventBuffer defaults to 256; MaxTextBytes defaults to 1 MiB per turn.
 	EventBuffer, MaxTextBytes int
+}
+
+// Diagnostic carries what a failure looked like locally. Detail is a bounded,
+// control-stripped tail of the harness's own standard error with credential-
+// shaped runs removed; it is evidence for an operator, not a classification.
+type Diagnostic struct {
+	Engine string    `json:"engine"`
+	Stage  string    `json:"stage"`
+	Code   string    `json:"code"`
+	Detail string    `json:"detail,omitempty"`
+	At     time.Time `json:"at"`
 }
 
 // Ref is safe to persist as private application state. It contains local paths
@@ -147,12 +176,37 @@ type Event struct {
 	Account *AccountSnapshot `json:"account,omitempty"`
 }
 
-// Usage is per-turn. Input excludes CacheRead; Reasoning is a subset of Output.
-// Known distinguishes unavailable accounting from zero usage.
+// Usage is what a provider reported. Input excludes CacheRead; Reasoning is a
+// subset of Output. Known distinguishes unavailable accounting from zero usage.
+//
+// Final separates a turn's own accounting from an observation of one model
+// response inside it. A turn makes many requests, so a caller that wants to
+// react while work is still running has to read the non-final ones — and a
+// caller that wants the turn's accounting must not sum them.
 type Usage struct {
 	Known                                           bool
+	Final                                           bool
 	Input, Output, CacheRead, CacheWrite, Reasoning int64
 }
+
+// add accumulates one response's figures. Anything that would not stay
+// representable makes the accumulation unknown rather than wrapping into a
+// number that looks measured.
+func (u Usage) add(next Usage) Usage {
+	if !next.Known {
+		return u
+	}
+	columns := [][2]int64{{u.Input, next.Input}, {u.Output, next.Output}, {u.CacheRead, next.CacheRead}, {u.CacheWrite, next.CacheWrite}, {u.Reasoning, next.Reasoning}}
+	for _, c := range columns {
+		if c[1] < 0 || c[0] > maxInt64-c[1] {
+			return Usage{}
+		}
+	}
+	return Usage{Known: true, Input: u.Input + next.Input, Output: u.Output + next.Output, CacheRead: u.CacheRead + next.CacheRead, CacheWrite: u.CacheWrite + next.CacheWrite, Reasoning: u.Reasoning + next.Reasoning}
+}
+
+const maxInt64 = int64(^uint64(0) >> 1)
+
 type Result struct {
 	// NativeError preserves a native failure indication, including Claude's
 	// error_during_execution result after a requested interruption. Correlation
@@ -160,7 +214,13 @@ type Result struct {
 	NativeError          bool
 	TurnID, Text, Status string
 	Usage                Usage
-	Context              ContextSnapshot
+	// Observed accumulates each model response's reported usage during this
+	// turn. It survives a failed or interrupted turn, where the provider's own
+	// terminal accounting is often absent or zero despite work having happened.
+	// It is evidence of what was seen, not a measurement of the turn: a caller
+	// with a budget should still treat an unknown Usage as an unknown call.
+	Observed Usage
+	Context  ContextSnapshot
 }
 type Turn struct {
 	mu                 sync.Mutex
