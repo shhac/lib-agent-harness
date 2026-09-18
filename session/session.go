@@ -24,6 +24,10 @@ type Session struct {
 	failure   error
 	lastEvent time.Time
 	tools     *toolHost
+	// lifetime is the context this session was opened with. It owns the harness
+	// process, so it — not a bounded control request — is what a replacement
+	// turn is watched against.
+	lifetime context.Context
 	// identified carries the outcome of durably recording the running harness's
 	// identity. A restricted session waits for it before its first inference.
 	identified chan error
@@ -56,7 +60,7 @@ func open(ctx context.Context, o Options, r *Ref) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Session{options: o, ref: reference(o, ""), caps: CapabilitiesFor(o.Engine), done: make(chan struct{}), opGate: make(chan struct{}, 1)}
+	s := &Session{options: o, ref: reference(o, ""), caps: CapabilitiesFor(o.Engine), lifetime: ctx, done: make(chan struct{}), opGate: make(chan struct{}, 1)}
 	if l != nil {
 		s.tools = l.host
 		l.host.onRefusal = s.toolRefused
@@ -415,7 +419,23 @@ func (s *Session) StartTurn(ctx context.Context, in Input) (*Turn, error) {
 	return s.startTurn(ctx, in)
 }
 func (s *Session) startTurn(ctx context.Context, in Input) (*Turn, error) {
-	if err := ctx.Err(); err != nil {
+	return s.startTurnScoped(ctx, ctx, in)
+}
+
+// startTurnScoped separates the two lifetimes a turn actually has.
+//
+// request bounds getting the turn started — a send, or a protocol round trip.
+// lifetime is what the turn is watched against, and cancelling it stops the
+// session, so it must be something that outlives the turn. For an ordinary
+// StartTurn the caller supplies both and they are the same context. For a
+// composed steer they are emphatically not: the control request is bounded, and
+// binding the replacement turn to it would end the session the moment steering
+// returned — which is precisely the trap this exists to close.
+func (s *Session) startTurnScoped(lifetime, request context.Context, in Input) (*Turn, error) {
+	if err := request.Err(); err != nil {
+		return nil, err
+	}
+	if err := lifetime.Err(); err != nil {
 		return nil, err
 	}
 	if in.Text == "" {
@@ -434,6 +454,10 @@ func (s *Session) startTurn(ctx context.Context, in Input) (*Turn, error) {
 			return nil, ErrBusy
 		}
 	}
+	// Starting a turn is what authorizes tool work again after a pause. Anything
+	// queued from before is refused by the generation change. This takes only the
+	// host's own lock, so it is safe from inside the session's.
+	s.tools.reopen()
 	t := &Turn{id: newID(), events: make(chan Event, s.options.EventBuffer), done: make(chan struct{})}
 	t.starting = s.options.Engine == Codex
 	s.active = t
@@ -443,9 +467,9 @@ func (s *Session) startTurn(ctx context.Context, in Input) (*Turn, error) {
 	s.mu.Unlock()
 	var err error
 	if s.options.Engine == Codex {
-		err = s.startCodexTurn(ctx, t, ref, in)
+		err = s.startCodexTurn(request, t, ref, in)
 	} else {
-		err = s.transport.send(ctx, map[string]any{"type": "user", "session_id": ref.ID, "parent_tool_use_id": nil, "message": map[string]any{"role": "user", "content": in.Text}})
+		err = s.transport.send(request, map[string]any{"type": "user", "session_id": ref.ID, "parent_tool_use_id": nil, "message": map[string]any{"role": "user", "content": in.Text}})
 	}
 	if err != nil {
 		if definitiveRejection(err) {
@@ -457,8 +481,8 @@ func (s *Session) startTurn(ctx context.Context, in Input) (*Turn, error) {
 	}
 	go func() {
 		select {
-		case <-ctx.Done():
-			s.failTurn(t, ctx.Err())
+		case <-lifetime.Done():
+			s.failTurn(t, lifetime.Err())
 		case <-t.done:
 		case <-s.done:
 		}
@@ -592,7 +616,17 @@ func (s *Session) Steer(ctx context.Context, expected string, in Input, o SteerO
 		if err = s.interrupt(ctx, expected); err != nil {
 			return SteerResult{}, err
 		}
-		next, err := s.startTurn(ctx, in)
+		// The interrupted turn is over, but the caller's tools are not: both
+		// installed harnesses were observed reporting a terminal interrupted
+		// result while a hosted call was still running. Settle them before the
+		// replacement turn can ask for more, so the work that follows is not
+		// racing the work that was just stopped.
+		s.CancelTools()
+		lifetime := s.lifetime
+		if lifetime == nil {
+			lifetime = context.Background()
+		}
+		next, err := s.startTurnScoped(lifetime, ctx, in)
 		if err != nil {
 			return SteerResult{}, err
 		}

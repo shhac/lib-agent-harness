@@ -101,9 +101,14 @@ func prepareRuntimeHome(source, runtime string) (string, error) {
 	return runtime, nil
 }
 
-// sameDirectory reports whether two paths name the same directory, following
-// links and comparing resolved paths so a symlinked home is not mistaken for a
-// separate one.
+// sameDirectory reports whether two paths name the same directory.
+//
+// Comparing text is not enough. A case-insensitive filesystem answers to
+// several spellings of one path, a symlink gives it another name, and a hard
+// link or bind mount gives it one with no textual relationship at all. So where
+// both paths exist the question is put to the filesystem, which is the only
+// thing that actually knows. Text comparison remains as a fallback for a path
+// that does not exist yet, where there is nothing to ask about.
 func sameDirectory(a, b string) (bool, error) {
 	if a == "" || b == "" {
 		return false, nil
@@ -118,6 +123,11 @@ func sameDirectory(a, b string) (bool, error) {
 	}
 	if left == right {
 		return true, nil
+	}
+	leftInfo, leftErr := os.Stat(left)
+	rightInfo, rightErr := os.Stat(right)
+	if leftErr == nil && rightErr == nil {
+		return os.SameFile(leftInfo, rightInfo), nil
 	}
 	if resolved, err := filepath.EvalSymlinks(left); err == nil {
 		left = resolved
@@ -197,8 +207,12 @@ func writeBackCredential(source, runtime string) error {
 	if err != nil {
 		return err
 	}
-	if current != nil && hex.EncodeToString(current) != shared.Source {
-		// The source moved on while this worker held an older login.
+	// Write-back updates a login that is still the one this worker was given.
+	// An absent source is a logout — someone deliberately removed that account —
+	// and recreating it from a worker's copy would undo it. A changed source is
+	// a newer login, and reinstating an older one over it is the same mistake in
+	// the other direction. Neither is a write-back; both leave the source alone.
+	if current == nil || hex.EncodeToString(current) != shared.Source {
 		return nil
 	}
 	if err = copyPrivate(from, to); err != nil {

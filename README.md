@@ -170,6 +170,18 @@ Restricting writes is not what this does. A tool that can read is a disclosure
 path whatever it may write, so the restriction is the removal of the tools; a
 sandbox mode and a working directory are neither claimed nor relied on as one.
 
+A restricted session runs in `Options.RuntimeHome`: a durable private home whose
+configuration this library writes, sharing only the login from `Options.Home`.
+That is how a worker gets the operator's account without the servers, hooks,
+plugins and trust settings that live beside it — none of which Codex's
+`app-server` has any flag to ignore. The credential moves between two owner-only
+directories in private application state and never reaches a workspace, a tool
+result, a model, an error or a log; no API key is substituted for it. Which copy
+is authoritative is decided by digest: a source that still matches what the home
+was given has not changed, so a refresh the harness made wins; a source that has
+changed is a new login and wins instead; a source that has been removed is a
+logout and is left removed.
+
 Your bridge command is your own binary re-executed as the harness's tool server.
 Its whole implementation is `session.RunBridge(ctx, os.Stdin, os.Stdout)`, which
 relays the protocol and holds a lock naming the launch it belongs to. The
@@ -180,6 +192,18 @@ recovery looks for them. The credential sits in an owner-only file and never
 appears in arguments, environment values, references or tool results. `Dir` also
 carries an assignment lease, taken before anything is launched, so a second
 process cannot drive the same assignment even before a bridge exists.
+
+`CancelTools` pauses the channel: it stops every call this session admitted —
+executing *and* queued — and refuses further ones until `ResumeTools`, which a
+new turn does for you. Cancelling only what happened to be running left the
+queue behind it to execute afterwards, which is a write arriving after the work
+was reported as stopped. A pause is not the same as the channel being finished:
+a closing tool ends the work, a pause suspends it. `ToolsSettled` reports that
+neither kind of call is outstanding.
+
+A composed steer replaces the turn, and the replacement is bound to the
+session's lifetime rather than to the bounded context that requested the steer.
+Cancelling a control request must not end the work it started.
 
 Tool calls execute one at a time. A native turn will ask for several at once,
 and running them concurrently would make "after the work was reported" an
