@@ -24,6 +24,11 @@ const (
 	holdLaunchEnv = "AGENT_HARNESS_TEST_HOLD_LAUNCH"
 )
 
+// holdFixtureLifetime bounds a stand-in bridge that was never killed. It is far
+// longer than any test that starts one, so reaching it means something went
+// wrong rather than that a test was slow.
+const holdFixtureLifetime = 10 * time.Minute
+
 func TestMain(m *testing.M) {
 	if path := os.Getenv(holdLockEnv); path != "" {
 		lock, err := holdBridgeLock(path, os.Getenv(holdLaunchEnv))
@@ -34,9 +39,34 @@ func TestMain(m *testing.M) {
 		if _, err = os.Stdout.WriteString("held\n"); err != nil {
 			os.Exit(2)
 		}
-		select {}
+		// Wait to be killed, by sleeping rather than by blocking forever.
+		//
+		// `select {}` is not a way to stay alive: with nothing else runnable the
+		// Go runtime declares a deadlock and exits the process. This fixture
+		// exists to *be* an orphan, so a fixture that sometimes exited on its own
+		// made the tests that look for one flaky — on a loaded CI machine the
+		// orphan was already gone before Reclaim went looking.
+		//
+		// The bound is a backstop: a fixture leaked by a test that failed before
+		// its kill must not outlive the run that started it.
+		time.Sleep(holdFixtureLifetime)
+		os.Exit(3)
 	}
 	os.Exit(m.Run())
+}
+
+// requireAlive fails the test if the stand-in bridge is not running. A dead
+// fixture makes every assertion after it meaningless, and saying so here is the
+// difference between "the fixture exited" and "Reclaim reported the wrong thing".
+func requireAlive(t *testing.T, pid int) {
+	t.Helper()
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		t.Fatalf("stand-in bridge %d could not be found: %v", pid, err)
+	}
+	if err = process.Signal(syscall.Signal(0)); err != nil {
+		t.Fatalf("stand-in bridge %d exited before the test could use it: %v", pid, err)
+	}
 }
 
 // A bridge relays the harness's protocol and proves it holds this session's
@@ -169,6 +199,9 @@ func TestReclaimTerminatesAnIdentifiedOrphan(t *testing.T) {
 	if !ready.Scan() || ready.Text() != "held" {
 		t.Fatalf("stand-in bridge did not take the lock: %v", ready.Err())
 	}
+	// What follows is only meaningful against a live orphan. Checking here
+	// separates a fixture that died from a Reclaim that got the wrong answer.
+	requireAlive(t, cmd.Process.Pid)
 	if err = recordLaunch(dir, launchRecord{Engine: "claude", PID: cmd.Process.Pid, Group: cmd.Process.Pid, Launch: launch}); err != nil {
 		t.Fatal(err)
 	}
@@ -202,6 +235,7 @@ func TestReclaimRefusesAnUnidentifiedLiveGroup(t *testing.T) {
 	if !ready.Scan() || ready.Text() != "held" {
 		t.Fatalf("stand-in bridge did not take the lock: %v", ready.Err())
 	}
+	requireAlive(t, cmd.Process.Pid)
 	if err = recordLaunch(dir, launchRecord{Engine: "claude", PID: cmd.Process.Pid, Group: cmd.Process.Pid, Launch: "/tmp/our-launch"}); err != nil {
 		t.Fatal(err)
 	}
