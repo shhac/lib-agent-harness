@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -55,7 +57,7 @@ func TestNormalizeDoesNotMutateTheCallersRestriction(t *testing.T) {
 		Tools:   []ToolDefinition{{Name: "read_file", Schema: schema}},
 		Handler: echoHandler(t), Dir: privateDir(t), Bridge: Bridge{Path: "/usr/bin/true"},
 	}}
-	o := Options{Engine: Claude, Binary: "claude", Model: "haiku", WorkDir: t.TempDir(), Home: t.TempDir(), Restriction: caller}
+	o := Options{Engine: Claude, Binary: "claude", Model: "haiku", WorkDir: t.TempDir(), Home: t.TempDir(), RuntimeHome: t.TempDir(), Restriction: caller}
 	normalized, err := normalize(o)
 	if err != nil {
 		t.Fatal(err)
@@ -98,17 +100,77 @@ func TestUnidentifiedLaunchMarkerReservesTheAssignment(t *testing.T) {
 	}
 }
 
-// Recording the identity is what makes a harness findable later, so a session
-// whose identity could not be written must not go on to do work.
-func TestSessionRefusesToStartWhenItsIdentityCannotBeRecorded(t *testing.T) {
+// A launch that demonstrably produced nothing settles its marker. Holding one
+// forever would turn a repairable failure — a missing binary, a bad path — into
+// an assignment no later resume could unblock.
+func TestConfirmedFailedLaunchSettlesItsMarker(t *testing.T) {
 	dir := privateDir(t)
-	// A directory where the marker file should be makes the write fail.
-	if err := os.Mkdir(launchPath(dir), 0700); err != nil {
+	o, err := normalize(Options{
+		Engine: Claude, Binary: filepath.Join(t.TempDir(), "absent-harness"),
+		WorkDir: t.TempDir(), Home: t.TempDir(), RuntimeHome: t.TempDir(),
+		Restriction: &Restriction{Tools: ToolHost{
+			Server: "agent_workspace", Handler: echoHandler(t), Dir: dir,
+			Bridge: Bridge{Path: "/usr/bin/true"},
+			Tools:  []ToolDefinition{{Name: "read_file", Schema: map[string]any{"type": "object"}}},
+		}},
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
-	err := recordLaunch(dir, launchRecord{Engine: "claude", Launch: dir})
-	if err == nil {
-		t.Fatal("an unwritable launch record was reported as recorded")
+	// Stand in for the launch: mark the attempt, then settle it the way a
+	// confirmed start failure does.
+	if err = recordLaunch(dir, launchRecord{Engine: "claude", Launch: dir}); err != nil {
+		t.Fatal(err)
+	}
+	session := &Session{options: o, done: make(chan struct{}), opGate: make(chan struct{}, 1)}
+	host, err := newToolHost(o.Restriction.Tools)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer host.close()
+	session.settleFailedLaunch(&launch{host: host})
+	if _, err = os.Stat(launchPath(dir)); !os.IsNotExist(err) {
+		t.Fatal("a confirmed failed launch left a marker no resume could clear")
+	}
+	// And recovery now reports nothing to reclaim, so a repaired configuration
+	// can simply be resumed.
+	out, err := Reclaim(context.Background(), dir)
+	if err != nil || out.Found || !out.Confirmed {
+		t.Fatalf("a settled launch still blocked recovery: %+v %v", out, err)
+	}
+}
+
+// A marker naming a live process is never settled by the same path: that is the
+// crash window, and it stays reserved.
+func TestLiveLaunchIsNotSettledAsFailed(t *testing.T) {
+	dir := privateDir(t)
+	group, err := syscall.Getpgid(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = recordLaunch(dir, launchRecord{Engine: "claude", PID: os.Getpid(), Group: group, Launch: dir}); err != nil {
+		t.Fatal(err)
+	}
+	o, err := normalize(Options{
+		Engine: Claude, Binary: "/usr/bin/true", WorkDir: t.TempDir(), Home: t.TempDir(), RuntimeHome: t.TempDir(),
+		Restriction: &Restriction{Tools: ToolHost{
+			Server: "agent_workspace", Handler: echoHandler(t), Dir: dir,
+			Bridge: Bridge{Path: "/usr/bin/true"},
+			Tools:  []ToolDefinition{{Name: "read_file", Schema: map[string]any{"type": "object"}}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, err := newToolHost(o.Restriction.Tools)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer host.close()
+	session := &Session{options: o, done: make(chan struct{}), opGate: make(chan struct{}, 1)}
+	session.settleFailedLaunch(&launch{host: host})
+	if _, err = os.Stat(launchPath(dir)); err != nil {
+		t.Fatal("a marker naming a live process was cleared")
 	}
 }
 

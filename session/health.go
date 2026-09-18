@@ -216,3 +216,21 @@ func opaque(field string) bool {
 	}
 	return digits > 0 || (letters > 24 && strings.ToLower(field) != field)
 }
+
+// TurnError reports a native turn that the provider ended in failure. Code is a
+// fixed value from the provider's own enumerated result vocabulary; provider
+// prose is never placed in it. Bounded, sanitized detail reaches the caller
+// through Options.OnDiagnostic instead, so a diagnostic can be recorded without
+// a message that might be displayed carrying anything a provider wrote.
+type TurnError struct {
+	Engine string
+	Code   string
+}
+
+func (e *TurnError) Error() string {
+	return e.Engine + " harness turn failed: " + e.Code
+}
+
+// Unwrap keeps ErrTurnFailed identity, so callers that classified a failed turn
+// before this existed keep working while gaining the code.
+func (e *TurnError) Unwrap() error { return ErrTurnFailed }

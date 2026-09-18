@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -40,14 +39,11 @@ func prepareLaunch(ctx context.Context, o Options) (*launch, error) {
 	if o.Engine == Claude {
 		l.extra = claudeRestrictedArgs(host)
 	} else {
-		if inherited := restrict.InspectCodexHome(o.Home); inherited != nil {
-			var named *restrict.InheritedConfig
-			code := CapabilityInheritedConfig
-			tools := []string{}
-			if errors.As(inherited, &named) {
-				tools = append(tools, named.Key)
-			}
-			return fail(&CapabilityError{Engine: string(Codex), Code: code, Phase: BeforeLaunch, Tools: tools})
+		// The session runs in a home this library owns, with the operator's login
+		// shared into it. Their own home keeps its servers, hooks and trust
+		// settings, and none of it reaches the worker.
+		if _, err = prepareRuntimeHome(o.Home, o.RuntimeHome); err != nil {
+			return fail(err)
 		}
 		catalog, readErr := readCodexCatalog(ctx, o)
 		if readErr != nil {
@@ -289,16 +285,12 @@ func probeRestriction(ctx context.Context, o Options, l *launch) error {
 		return &CapabilityError{Engine: string(o.Engine), Code: CapabilityProbeNoRequest, Phase: BeforeLaunch}
 	}
 	hosted := toolNames(o.Restriction.Tools.Tools)
-	index := map[string]bool{}
-	for _, name := range hosted {
-		index[name] = true
-	}
 	var surfaces []requestSurface
 	for _, body := range requests {
 		if body == nil {
 			return &CapabilityError{Engine: string(o.Engine), Code: CapabilityProbeUnreadable, Phase: BeforeLaunch}
 		}
-		surface, ok := readSurface(body, o.Restriction.Tools.Server, index)
+		surface, ok := readSurface(body, o.Restriction.Tools.Server)
 		if !ok {
 			return &CapabilityError{Engine: string(o.Engine), Code: CapabilityProbeUnreadable, Phase: BeforeLaunch}
 		}
@@ -312,7 +304,7 @@ func probeRestriction(ctx context.Context, o Options, l *launch) error {
 	//
 	// Assign before returning: a typed nil pointer returned straight into an
 	// error result is not nil, and every passing check would read as a failure.
-	if failure := judgeSurfaces(string(o.Engine), o.Restriction.Tools.Server, hosted, surfaces, l.host.served()); failure != nil {
+	if failure := judgeSurfaces(string(o.Engine), hosted, surfaces, l.host.served()); failure != nil {
 		return failure
 	}
 	return nil

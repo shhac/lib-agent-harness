@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"sort"
 	"strings"
 	"time"
 
@@ -83,6 +82,7 @@ const (
 	CapabilityServerNotLoaded     = "tool_server_not_loaded"
 	CapabilityServerNameReserved  = "tool_server_name_reserved"
 	CapabilityInheritedConfig     = "inherited_configuration_present"
+	CapabilityLoginUnavailable    = "harness_login_unavailable"
 )
 
 // Capability check phases. The distinction matters to an operator: one of these
@@ -125,6 +125,7 @@ func (e *CapabilityError) Error() string {
 		CapabilityServerNotLoaded:     "the installed harness did not load this session's tool server",
 		CapabilityServerNameReserved:  "the installed harness reserves this tool server name; choose another",
 		CapabilityInheritedConfig:     "the selected harness home declares configuration that would add capabilities this session did not configure",
+		CapabilityLoginUnavailable:    "the selected harness home has no file-backed login to share with a restricted session; log in to that home first",
 	}[e.Code]
 	if message == "" {
 		message = "the restricted session configuration could not be established"
@@ -145,40 +146,6 @@ func (e *CapabilityError) Error() string {
 }
 func (e *CapabilityError) Unwrap() error { return ErrUnsupported }
 
-// compareTools is the whole capability judgement: exactly the configured tools,
-// nothing else. Extra tools are a disclosure path; missing tools mean the
-// session cannot do its work and would improvise with whatever remained.
-func compareTools(engine, phase string, expected, actual []string) *CapabilityError {
-	want := map[string]bool{}
-	for _, name := range expected {
-		want[name] = true
-	}
-	got := map[string]bool{}
-	for _, name := range actual {
-		got[name] = true
-	}
-	var extra, missing []string
-	for name := range got {
-		if !want[name] {
-			extra = append(extra, name)
-		}
-	}
-	for name := range want {
-		if !got[name] {
-			missing = append(missing, name)
-		}
-	}
-	sort.Strings(extra)
-	sort.Strings(missing)
-	if len(extra) > 0 {
-		return &CapabilityError{Engine: engine, Code: CapabilityNativeToolsPresent, Phase: phase, Tools: extra}
-	}
-	if len(missing) > 0 {
-		return &CapabilityError{Engine: engine, Code: CapabilityHostedToolsMissing, Phase: phase, Tools: missing}
-	}
-	return nil
-}
-
 // claudeRestrictedArgs disables every inherited customization surface and
 // leaves the caller's tools as the only ones available.
 //
@@ -196,6 +163,14 @@ func claudeRestrictedArgs(h *toolHost) []string {
 		},
 	}})
 	return []string{
+		// --restricted independently removes the built-in tools that run commands
+		// or code, ignores user, project and local settings files, confines file
+		// tools to the working directory and refuses bypassPermissions. Checked
+		// against the installed CLI: it leaves an explicit MCP server loaded, so
+		// it costs nothing here. --safe-mode would go further and was measured to
+		// disable the explicit MCP configuration too, and --bare would drop the
+		// subscription login for an API key; neither is usable for a worker.
+		"--restricted",
 		"--setting-sources=", `--settings={"disableAllHooks":true}`,
 		"--strict-mcp-config", "--mcp-config=" + string(config),
 		"--disable-slash-commands", "--no-chrome",
@@ -235,6 +210,12 @@ func codexRestrictedArgs(h *toolHost, catalogPath string) ([]string, error) {
 		return nil, err
 	}
 	settings = append(settings, server...)
+	// Without this the installed CLI refuses every hosted call with "MCP tool
+	// call requires approval, but approval policy is never" — the tools are
+	// advertised and unusable. It approves this one server, which the daemon owns
+	// and whose tools it implements; no host approval policy is widened, and
+	// approval_policy stays "never" for everything else.
+	settings = append(settings, "mcp_servers."+h.cfg.Server+`.default_tools_approval_mode="approve"`)
 	args := make([]string, 0, len(settings)*2)
 	for _, setting := range settings {
 		args = append(args, "-c", setting)

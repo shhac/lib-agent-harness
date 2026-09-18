@@ -3,6 +3,7 @@ package session
 import (
 	"encoding/json"
 	"strings"
+	"time"
 )
 
 // Claude's stream-json dialect. Kept apart from Codex's because the two
@@ -25,7 +26,11 @@ func (s *Session) claudeEvent(t *Turn, ref Ref, m map[string]json.RawMessage) {
 	switch str(m, "type") {
 	case "system":
 		if str(m, "subtype") == "compact_boundary" {
+			// Both a boundary observation and an invalidation. A caller counting
+			// compactions needs to be told one happened; invalidating the occupancy
+			// alone leaves it looking like the number simply moved.
 			s.invalidateContext(t, "context compacted; awaiting a fresh observation")
+			s.emit(t, Event{Kind: "compaction_completed", ItemID: str(m, "uuid"), Status: claudeCompactionTrigger(m)})
 		}
 	case "stream_event":
 		s.claudeStreamEvent(t, m)
@@ -154,7 +159,12 @@ func (s *Session) claudeResult(t *Turn, m map[string]json.RawMessage) {
 			status = "interrupted"
 		} else {
 			status = "failed"
-			err = ErrTurnFailed
+			// Keep what the provider actually said about it, as fixed codes rather
+			// than its text. A failure that arrives only as "the turn failed" is the
+			// unexplained outcome this whole contract exists to stop producing, and
+			// a protocol-level result error typically has no process output to fall
+			// back on.
+			err = s.claudeTerminalFailure(m, r.Subtype)
 		}
 	}
 	s.claudeModelCapacity(t, m["modelUsage"])
@@ -207,4 +217,64 @@ func validClaudeUsage(raw json.RawMessage) bool {
 		}
 	}
 	return true
+}
+
+// claudeCompactionTrigger reports why a compaction happened, from the frame's
+// own enumerated value. An unrecognized trigger is reported as unknown rather
+// than passed through: this is a status, not a place for provider text.
+func claudeCompactionTrigger(m map[string]json.RawMessage) string {
+	switch trigger := str(m, "compact_metadata_trigger"); trigger {
+	case "auto", "manual":
+		return trigger
+	}
+	switch trigger := str(m, "trigger"); trigger {
+	case "auto", "manual":
+		return trigger
+	}
+	return "unknown"
+}
+
+// claudeTerminalFailure builds a typed failure from a result frame, and hands
+// the caller a bounded, sanitized diagnostic through the hook that exists for
+// it. Provider text never enters the error value.
+func (s *Session) claudeTerminalFailure(m map[string]json.RawMessage, subtype string) error {
+	failure := &TurnError{Engine: string(Claude), Code: claudeResultCode(subtype)}
+	var frame struct {
+		Reason string `json:"terminal_reason"`
+		Stop   string `json:"stop_reason"`
+		Error  string `json:"error"`
+	}
+	if json.Unmarshal(mustMarshal(m), &frame) == nil {
+		if code := claudeErrorCode(frame.Error); code != "" {
+			failure.Code = code
+		}
+		if frame.Reason == "prompt_too_long" || frame.Stop == "model_context_window_exceeded" {
+			failure.Code = "model_context_window_exceeded"
+		}
+	}
+	if report := s.options.OnDiagnostic; report != nil {
+		report(Diagnostic{Engine: string(Claude), Stage: "turn_result", Code: failure.Code, Detail: sanitize(mustMarshal(m["errors"]), 1024), At: time.Now().UTC()})
+	}
+	return failure
+}
+
+// claudeResultCode maps a terminal subtype to a fixed code.
+func claudeResultCode(subtype string) string {
+	switch subtype {
+	case "error_during_execution", "error_max_turns", "error_max_budget_usd", "error_max_structured_output_retries":
+		return subtype
+	}
+	return "turn_failed"
+}
+
+// claudeErrorCode accepts only values the native schema defines. An unknown
+// value could be provider prose, so it is dropped rather than retained.
+func claudeErrorCode(code string) string {
+	switch code {
+	case "authentication_failed", "oauth_org_not_allowed", "account_on_hold", "verification_required",
+		"billing_error", "rate_limit", "overloaded", "invalid_request", "model_not_found",
+		"server_error", "unknown", "max_output_tokens", "cloud_credential_error":
+		return code
+	}
+	return ""
 }

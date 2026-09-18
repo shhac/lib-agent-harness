@@ -17,6 +17,12 @@ import (
 // refused rather than run without containment.
 func restrictedPlatform() bool { return true }
 
+// openNoFollow opens a file without traversing a final symbolic link, so a link
+// planted where a credential belongs cannot redirect a read or a write.
+func openNoFollow(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+}
+
 func ownerOnly(info fs.FileInfo) error {
 	if info.Mode().Perm()&0077 != 0 {
 		return errors.New("tool host directory must be readable only by its owner")

@@ -122,6 +122,12 @@ type Options struct {
 	AccountIdentity string
 	Instructions    Instructions
 	Policy          Policy
+	// RuntimeHome is the durable private home a restricted session runs in. The
+	// library owns its configuration and shares only the login from Home, so a
+	// worker gets the operator's account without the rest of their setup. It must
+	// be separate from Home, must persist for the assignment's life — the native
+	// conversation lives in it — and belongs in private application state.
+	RuntimeHome string
 	// Restriction opts this session into the restricted worker contract: the
 	// harness's own tools are removed and replaced by the caller's, verified
 	// against the installed CLI before a credentialed process starts. Leaving it

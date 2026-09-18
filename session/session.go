@@ -103,6 +103,7 @@ func open(ctx context.Context, o Options, r *Ref) (*Session, error) {
 	s.transport = w
 	s.mu.Unlock()
 	if err != nil {
+		s.settleFailedLaunch(l)
 		s.releaseTools()
 		return nil, err
 	}
@@ -111,13 +112,56 @@ func open(ctx context.Context, o Options, r *Ref) (*Session, error) {
 	// not find, so it is stopped here rather than allowed to start work.
 	if err = s.awaitIdentity(ctx); err != nil {
 		s.fail(err)
+		s.settleFailedLaunch(l)
 		return nil, err
 	}
 	if err = s.initialize(ctx, r != nil); err != nil {
 		s.fail(err)
+		s.settleFailedLaunch(l)
 		return nil, err
 	}
 	return s, nil
+}
+
+// settleFailedLaunch clears the marker when this launch demonstrably produced
+// nothing to reclaim.
+//
+// The marker exists so a crash between "about to spawn" and "spawned" is held
+// rather than assumed away. But a launch that failed in front of us is not that
+// case: a missing binary, a harness that exited during its handshake, an
+// identity that could not be written — each is a known outcome, and leaving a
+// marker naming no process behind would turn one repairable failure into an
+// assignment that no later resume could ever unblock. So the marker is settled
+// when the process is confirmed gone, and kept when it is not.
+func (s *Session) settleFailedLaunch(l *launch) {
+	if l == nil {
+		return
+	}
+	s.mu.Lock()
+	w, _ := s.transport.(*streamWire)
+	s.mu.Unlock()
+	if w != nil {
+		w.close()
+		select {
+		case <-w.reaped:
+		case <-time.After(5 * time.Second):
+			// Still there. That is exactly the uncertainty the marker is for.
+			return
+		}
+	}
+	record, err := readLaunchRecord(l.host.cfg.Dir)
+	if err != nil {
+		return
+	}
+	if record != nil && record.identified() {
+		// A process existed. Whether it is gone is Reclaim's question, not this
+		// one, and answering it here would risk clearing a live harness's marker.
+		alive, aliveErr := groupAlive(record.Group)
+		if aliveErr != nil || alive {
+			return
+		}
+	}
+	_ = clearLaunchRecord(l.host.cfg.Dir)
 }
 
 // awaitIdentity waits for the launch record to name the running harness. It is
@@ -137,6 +181,23 @@ func (s *Session) awaitIdentity(ctx context.Context) error {
 		return s.transportFailure()
 	case <-ctx.Done():
 		return ctx.Err()
+	}
+}
+
+// awaitReaped waits for the transport's process to be collected, bounded by the
+// caller's context. It is best effort: a harness that will not die is exactly
+// what the reclamation that follows is for.
+func (s *Session) awaitReaped(ctx context.Context) {
+	s.mu.Lock()
+	w, _ := s.transport.(*streamWire)
+	s.mu.Unlock()
+	if w == nil {
+		return
+	}
+	select {
+	case <-w.reaped:
+	case <-ctx.Done():
+	case <-time.After(10 * time.Second):
 	}
 }
 
@@ -282,10 +343,24 @@ func (s *Session) Release(ctx context.Context) (Reclamation, error) {
 	if host == nil {
 		return Reclamation{Confirmed: true}, nil
 	}
+	// Wait for this session's own harness to be reaped before asking the general
+	// question. Reclaim reads a process group, and a process that has exited but
+	// not yet been reaped still occupies one — so asking immediately after Close
+	// reports an ordinary, orderly shutdown as an unresolved survivor, which in a
+	// caller's hands becomes a worker that looks stuck every time it finishes.
+	s.awaitReaped(ctx)
 	dir := host.cfg.Dir
 	out, err := Reclaim(ctx, dir)
 	if err != nil || !out.Confirmed {
 		return out, err
+	}
+	// The harness is gone, so its home is no longer being written to. If it
+	// refreshed the login, return that to the source now rather than leaving the
+	// next worker to rediscover an expired one.
+	if s.options.Engine == Codex && s.options.RuntimeHome != "" {
+		if shareErr := writeBackCredential(s.options.Home, s.options.RuntimeHome); shareErr != nil {
+			return out, shareErr
+		}
 	}
 	return out, clearLaunchRecord(dir)
 }

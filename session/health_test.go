@@ -224,6 +224,7 @@ func TestSilentlyDroppedToolServerClosesTheSession(t *testing.T) {
 // told what to change rather than seeing an empty session.
 func TestReservedToolServerNameIsRefused(t *testing.T) {
 	o := restrictedOptions(t, Claude)
+	o.Restriction = &Restriction{Tools: o.Restriction.Tools}
 	o.Restriction.Tools.Server = "workspace"
 	_, err := normalize(o)
 	var failure *CapabilityError
@@ -235,6 +236,7 @@ func TestReservedToolServerNameIsRefused(t *testing.T) {
 	}
 	// Codex has no such reservation, so the same name is fine there.
 	codex := restrictedOptions(t, Codex)
+	codex.Restriction = &Restriction{Tools: codex.Restriction.Tools}
 	codex.Restriction.Tools.Server = "workspace"
 	if _, err = normalize(codex); err != nil {
 		t.Fatalf("a Claude-only reservation was applied to Codex: %v", err)

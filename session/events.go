@@ -134,11 +134,18 @@ func (s *Session) observeClaudeInit(m map[string]json.RawMessage) bool {
 		s.recordRestriction(&CapabilityError{Engine: string(Claude), Code: CapabilityServerNotLoaded, Phase: BeforeFirstPrompt, Tools: []string{server}})
 		return true
 	}
-	observed := make([]string, 0, len(frame.Tools))
+	// Judged as identity, not as text: an advertised tool that did not arrive
+	// under this session's server prefix is a built-in that happens to share a
+	// name, and accepting it would be the whole point of the check undone.
+	surface := requestSurface{}
 	for _, name := range frame.Tools {
-		observed = append(observed, normalizeWireTool(name, server))
+		surface.tools = append(surface.tools, identify(name, server))
 	}
-	s.recordRestriction(compareTools(string(Claude), BeforeFirstPrompt, toolNames(s.options.Restriction.Tools.Tools), observed))
+	failure := judgeSurfaces(string(Claude), toolNames(s.options.Restriction.Tools.Tools), []requestSurface{surface}, false)
+	if failure != nil {
+		failure.Phase = BeforeFirstPrompt
+	}
+	s.recordRestriction(failure)
 	return true
 }
 

@@ -14,7 +14,7 @@ import (
 func restrictedOptions(t *testing.T, engine Engine) Options {
 	t.Helper()
 	return Options{
-		Engine: engine, Binary: "/usr/bin/true", WorkDir: t.TempDir(), Home: t.TempDir(), Model: "picked",
+		Engine: engine, Binary: "/usr/bin/true", WorkDir: t.TempDir(), Home: t.TempDir(), RuntimeHome: t.TempDir(), Model: "picked",
 		Restriction: &Restriction{Tools: ToolHost{
 			Server:  "agent_workspace",
 			Tools:   []ToolDefinition{{Name: "read_file", Schema: map[string]any{"type": "object"}}, {Name: "finish", Schema: map[string]any{"type": "object"}, Closing: true}},
@@ -158,29 +158,25 @@ func TestSurfaceJudgementUsesRealRequestShapes(t *testing.T) {
 		t.Fatal(err)
 	}
 	hosted := toolNames(o.Restriction.Tools.Tools)
-	index := map[string]bool{}
-	for _, name := range hosted {
-		index[name] = true
-	}
 	claude := func(names ...string) requestSurface {
 		tools := []map[string]any{}
 		for _, name := range names {
 			tools = append(tools, map[string]any{"name": name})
 		}
 		raw, _ := json.Marshal(map[string]any{"model": "picked", "tools": tools})
-		surface, ok := readSurface(raw, "agent_workspace", index)
+		surface, ok := readSurface(raw, "agent_workspace")
 		if !ok {
 			t.Fatal("request was unreadable")
 		}
 		return surface
 	}
 	full := claude("mcp__agent_workspace__read_file", "mcp__agent_workspace__finish")
-	if failure := judgeSurfaces(string(Claude), "agent_workspace", hosted, []requestSurface{full}, false); failure != nil {
+	if failure := judgeSurfaces(string(Claude), hosted, []requestSurface{full}, false); failure != nil {
 		t.Fatalf("exactly the hosted tools was rejected: %v", failure)
 	}
 	// A retained built-in is a disclosure path wherever it appears.
 	withBash := claude("mcp__agent_workspace__read_file", "mcp__agent_workspace__finish", "Bash")
-	failure := judgeSurfaces(string(Claude), "agent_workspace", hosted, []requestSurface{withBash}, false)
+	failure := judgeSurfaces(string(Claude), hosted, []requestSurface{withBash}, false)
 	if failure == nil || failure.Code != CapabilityNativeToolsPresent || failure.Tools[0] != "Bash" {
 		t.Fatalf("a retained native tool was not rejected: %v", failure)
 	}
@@ -195,11 +191,11 @@ func TestSurfaceJudgementUsesRealRequestShapes(t *testing.T) {
 	// makes a session-title request carrying no tools at all. It cannot disclose
 	// anything, and rejecting it would reject every correctly restricted session.
 	title := claude()
-	if failure = judgeSurfaces(string(Claude), "agent_workspace", hosted, []requestSurface{title, full}, false); failure != nil {
+	if failure = judgeSurfaces(string(Claude), hosted, []requestSurface{title, full}, false); failure != nil {
 		t.Fatalf("an auxiliary zero-tool request was treated as a missing surface: %v", failure)
 	}
 	// But a run that only ever made auxiliary requests has proven nothing.
-	failure = judgeSurfaces(string(Claude), "agent_workspace", hosted, []requestSurface{title}, false)
+	failure = judgeSurfaces(string(Claude), hosted, []requestSurface{title}, false)
 	if failure == nil || failure.Code != CapabilityHostedToolsMissing {
 		t.Fatalf("a run with no tooled request was accepted: %v", failure)
 	}
@@ -215,10 +211,6 @@ func TestCodexSurfaceAcceptsMediatedHelpersOnlyWithChannelEvidence(t *testing.T)
 		t.Fatal(err)
 	}
 	hosted := toolNames(o.Restriction.Tools.Tools)
-	index := map[string]bool{}
-	for _, name := range hosted {
-		index[name] = true
-	}
 	// The exact shape captured from codex 0.154.0.
 	raw, _ := json.Marshal(map[string]any{
 		"model":     "picked",
@@ -235,22 +227,22 @@ func TestCodexSurfaceAcceptsMediatedHelpersOnlyWithChannelEvidence(t *testing.T)
 			map[string]any{"type": "message", "role": "user", "content": "Capability check only."},
 		},
 	})
-	surface, ok := readSurface(raw, "agent_workspace", index)
+	surface, ok := readSurface(raw, "agent_workspace")
 	if !ok {
 		t.Fatal("the real Codex request shape was unreadable")
 	}
-	if len(surface.names) != 4 {
-		t.Fatalf("namespace was not flattened: %v", surface.names)
+	if len(surface.tools) != 4 {
+		t.Fatalf("namespace was not flattened: %+v", surface.tools)
 	}
-	if failure := judgeSurfaces(string(Codex), "agent_workspace", hosted, []requestSurface{surface}, false); failure == nil || failure.Code != CapabilityHostedToolsMissing {
+	if failure := judgeSurfaces(string(Codex), hosted, []requestSurface{surface}, false); failure == nil || failure.Code != CapabilityHostedToolsMissing {
 		t.Fatalf("a deferred surface with no channel evidence was accepted: %v", failure)
 	}
-	if failure := judgeSurfaces(string(Codex), "agent_workspace", hosted, []requestSurface{surface}, true); failure != nil {
+	if failure := judgeSurfaces(string(Codex), hosted, []requestSurface{surface}, true); failure != nil {
 		t.Fatalf("a deferred surface with channel evidence was rejected: %v", failure)
 	}
 	// The same helpers are not permitted on an engine that does not mediate
 	// through MCP, and a real execution tool is never permitted.
-	if failure := judgeSurfaces(string(Claude), "agent_workspace", hosted, []requestSurface{surface}, true); failure == nil {
+	if failure := judgeSurfaces(string(Claude), hosted, []requestSurface{surface}, true); failure == nil {
 		t.Fatal("Codex-only mediated helpers were accepted on Claude")
 	}
 	withExec, _ := json.Marshal(map[string]any{"input": []any{
@@ -261,8 +253,8 @@ func TestCodexSurfaceAcceptsMediatedHelpersOnlyWithChannelEvidence(t *testing.T)
 			}},
 		}},
 	}})
-	execSurface, _ := readSurface(withExec, "agent_workspace", index)
-	failure := judgeSurfaces(string(Codex), "agent_workspace", hosted, []requestSurface{execSurface}, true)
+	execSurface, _ := readSurface(withExec, "agent_workspace")
+	failure := judgeSurfaces(string(Codex), hosted, []requestSurface{execSurface}, true)
 	if failure == nil || failure.Code != CapabilityNativeToolsPresent {
 		t.Fatalf("a retained execution surface was accepted: %v", failure)
 	}
@@ -333,6 +325,9 @@ func TestFailedPreparationReleasesTheToolChannel(t *testing.T) {
 		t.Fatal(err)
 	}
 	o.Binary = filepath.Join(t.TempDir(), "absent-binary")
+	// The login is shared before the harness is consulted, so give this one a
+	// synthetic credential and let the failure be the missing binary.
+	putSynthetic(t, o.Home, codexCredentialFile, "synthetic-login")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	l, err := prepareLaunch(ctx, o)
@@ -376,17 +371,37 @@ func TestNormalizedCatalogKeepsTheHarnessCodingInstructions(t *testing.T) {
 	}
 }
 
-func TestNormalizeWireToolStripsEngineSpecificPrefixes(t *testing.T) {
-	for wire, want := range map[string]string{
-		"mcp__agent_workspace__read_file": "read_file",
-		"agent_workspace__read_file":      "read_file",
-		"agent_workspace.read_file":       "read_file",
-		"Bash":                            "Bash",
-		"mcp__other__read_file":           "mcp__other__read_file",
-		"read_file":                       "read_file",
+// A built-in that happens to share a hosted tool's name is not that tool. This
+// is the difference between judging identity and judging text.
+func TestBareToolNameNeverPassesAsAHostedTool(t *testing.T) {
+	for wire, want := range map[string]wireTool{
+		"mcp__agent_workspace__read_file": {name: "read_file", hosted: true},
+		"agent_workspace__read_file":      {name: "read_file", hosted: true},
+		"agent_workspace.read_file":       {name: "read_file", hosted: true},
+		"read_file":                       {name: "read_file"},
+		"Bash":                            {name: "Bash"},
+		"mcp__other__read_file":           {name: "mcp__other__read_file"},
 	} {
-		if got := normalizeWireTool(wire, "agent_workspace"); got != want {
-			t.Errorf("normalizeWireTool(%q) = %q, want %q", wire, got, want)
+		if got := identify(wire, "agent_workspace"); got != want {
+			t.Errorf("identify(%q) = %+v, want %+v", wire, got, want)
 		}
+	}
+	// And the judgement refuses it, rather than counting it as the hosted tool.
+	hosted := []string{"read_file", "finish"}
+	bare := requestSurface{tools: []wireTool{{name: "read_file"}, {name: "finish"}}}
+	failure := judgeSurfaces(string(Claude), hosted, []requestSurface{bare}, false)
+	if failure == nil || failure.Code != CapabilityNativeToolsPresent {
+		t.Fatalf("unprefixed built-ins sharing hosted names were accepted: %v", failure)
+	}
+	if len(failure.Tools) != 2 {
+		t.Errorf("refusal did not name both: %v", failure.Tools)
+	}
+	// A tool arriving under our prefix that we do not host is equally refused.
+	impostor := requestSurface{tools: []wireTool{
+		{name: "read_file", hosted: true}, {name: "finish", hosted: true}, {name: "exfiltrate", hosted: true},
+	}}
+	failure = judgeSurfaces(string(Claude), hosted, []requestSurface{impostor}, false)
+	if failure == nil || failure.Code != CapabilityNativeToolsPresent {
+		t.Fatalf("an unconfigured tool under our own prefix was accepted: %v", failure)
 	}
 }

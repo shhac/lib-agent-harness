@@ -125,6 +125,12 @@ func normalize(o Options) (Options, error) {
 			// missing surface and report it as a build problem.
 			return o, &CapabilityError{Engine: string(o.Engine), Code: CapabilityServerNameReserved, Phase: BeforeLaunch, Tools: []string{o.Restriction.Tools.Server}}
 		}
+		if o.RuntimeHome == "" {
+			return o, errors.New("a restricted session requires a durable private runtime home; set Options.RuntimeHome")
+		}
+		if o.RuntimeHome, err = filepath.Abs(o.RuntimeHome); err != nil {
+			return o, errors.New("invalid restricted session runtime home")
+		}
 		// Copy the whole restriction rather than writing through the caller's
 		// pointer: normalizing must not edit the value a caller still holds, and
 		// two launches sharing one Restriction must not see each other's defaults.
@@ -161,12 +167,16 @@ func reference(o Options, id string) Ref {
 	}{o.Binary, o.Model, o.Effort, o.Instructions, o.Policy, o.Policy.ClaudeTools != nil}
 	payload, _ := json.Marshal(legacy)
 	if o.Restriction != nil {
+		// The runtime home is part of a restricted session's identity: the native
+		// conversation lives in it, so resuming somewhere else is a different
+		// session wearing the same name.
 		payload, _ = json.Marshal(struct {
 			Legacy      any
 			Restricted  bool
 			ToolServer  string
+			RuntimeHome string
 			HostedTools []ToolDefinition
-		}{legacy, true, o.Restriction.Tools.Server, hostedTools(o)})
+		}{legacy, true, o.Restriction.Tools.Server, o.RuntimeHome, hostedTools(o)})
 	}
 	hash := sha256.Sum256(payload)
 	return Ref{Engine: o.Engine, ID: id, Home: o.Home, WorkDir: o.WorkDir, AccountIdentity: o.AccountIdentity, ConfigHash: hex.EncodeToString(hash[:])}
@@ -274,15 +284,22 @@ func environment(o Options) []string {
 		}
 		env = append(env, entry)
 	}
+	// A restricted session runs in its own home: the library wrote that home's
+	// configuration and shared the login into it, so nothing the operator keeps
+	// beside their credential comes along.
+	selected := o.Home
+	if o.Restriction != nil && o.RuntimeHome != "" && o.Engine == Codex {
+		selected = o.RuntimeHome
+	}
 	key := "CODEX_HOME"
 	if o.Engine == Claude {
 		key = "CLAUDE_CONFIG_DIR"
 		home, err := os.UserHomeDir()
-		if err == nil && filepath.Clean(o.Home) == filepath.Join(home, ".claude") {
+		if err == nil && filepath.Clean(selected) == filepath.Join(home, ".claude") {
 			return env
 		}
 	}
-	return append(env, key+"="+o.Home)
+	return append(env, key+"="+selected)
 }
 
 // reservedClaudeServer names tool-server names the installed harness keeps for

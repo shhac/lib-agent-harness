@@ -190,6 +190,9 @@ type toolHost struct {
 	probing bool
 	stopped bool
 	running int
+	// inflight maps a harness request identifier to the call it started, so a
+	// cancellation notification reaches exactly that call.
+	inflight map[string]context.CancelFunc
 	// listed records that a harness connected, authenticated and asked for this
 	// session's tools. Where a harness defers MCP tools and never puts them in a
 	// request, this is the positive evidence that they were actually offered.
@@ -219,7 +222,7 @@ func newToolHost(cfg ToolHost) (*toolHost, error) {
 		return nil, err
 	}
 	socket := filepath.Join(socketDir, "t.sock")
-	h := &toolHost{cfg: cfg, socket: socket, socketDir: socketDir, tools: map[string]ToolDefinition{}, gate: make(chan struct{}, 1), done: make(chan struct{})}
+	h := &toolHost{cfg: cfg, socket: socket, socketDir: socketDir, tools: map[string]ToolDefinition{}, inflight: map[string]context.CancelFunc{}, gate: make(chan struct{}, 1), done: make(chan struct{})}
 	// The assignment lease is taken before anything is launched, so a second
 	// process cannot drive this assignment during the window before a bridge
 	// exists. It is released when the host closes, or by the operating system if
@@ -417,7 +420,13 @@ func (h *toolHost) serve(conn net.Conn) {
 			return
 		}
 		if len(frame.ID) == 0 || string(frame.ID) == "null" {
-			continue // notification: nothing here requires acknowledgement
+			// A notification needs no reply, but it is not therefore uninteresting:
+			// a harness cancels a tool call this way, and ignoring it leaves work
+			// running after the turn that asked for it has been interrupted.
+			if frame.Method == "notifications/cancelled" {
+				h.cancelRequested(frame.Params)
+			}
+			continue
 		}
 		switch frame.Method {
 		case "initialize":
@@ -432,11 +441,20 @@ func (h *toolHost) serve(conn net.Conn) {
 		case "tools/call":
 			// Dispatched on its own goroutine so the connection keeps reading —
 			// execution itself is serialized inside dispatch, not here.
+			//
+			// The turn is sampled now, when the harness asked, rather than when
+			// the handler eventually runs. A call that waited behind another one
+			// belongs to the turn that requested it, and labelling it with a later
+			// turn would attribute work to the wrong piece of the conversation.
 			id, params := frame.ID, frame.Params
+			turn := ""
+			if h.activeTurn != nil {
+				turn = h.activeTurn()
+			}
 			pending.Add(1)
 			go func() {
 				defer pending.Done()
-				reply(rpcResult(id, h.dispatch(params)))
+				reply(rpcResult(id, h.dispatch(string(id), turn, params)))
 			}()
 		default:
 			// Every other method, including the resource methods a harness's own
@@ -515,7 +533,7 @@ func (h *toolHost) refuseLocked(tool, reason, text string) map[string]any {
 // whose arguments were rejected has not finished anything, and neither has one
 // whose handler refused it. Nothing is cancelled to make room for it, because a
 // half-executed write or test is not a state worth reporting evidence about.
-func (h *toolHost) dispatch(params json.RawMessage) map[string]any {
+func (h *toolHost) dispatch(request, turn string, params json.RawMessage) map[string]any {
 	var in struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments"`
@@ -559,10 +577,14 @@ func (h *toolHost) dispatch(params json.RawMessage) map[string]any {
 		case <-stopped:
 		}
 	}()
-	turn := ""
-	if h.activeTurn != nil {
-		turn = h.activeTurn()
-	}
+	h.mu.Lock()
+	h.inflight[request] = cancel
+	h.mu.Unlock()
+	defer func() {
+		h.mu.Lock()
+		delete(h.inflight, request)
+		h.mu.Unlock()
+	}()
 	result, err := h.cfg.Handler.CallTool(ctx, ToolCall{TurnID: turn, Name: in.Name, Arguments: in.Arguments})
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -593,6 +615,69 @@ func (h *toolHost) enter(name string) map[string]any {
 	h.running++
 	h.mu.Unlock()
 	return nil
+}
+
+// cancelRequested stops a call the harness has withdrawn. The effect already
+// produced cannot be undone; what this does is stop it going further, which is
+// what makes an interrupted turn's evidence describable.
+func (h *toolHost) cancelRequested(params json.RawMessage) {
+	var in struct {
+		RequestID json.RawMessage `json:"requestId"`
+	}
+	if json.Unmarshal(params, &in) != nil {
+		return
+	}
+	id := string(in.RequestID)
+	h.mu.Lock()
+	stop := h.inflight[id]
+	h.mu.Unlock()
+	if stop != nil {
+		stop()
+	}
+}
+
+// CancelTools stops every tool call in flight and refuses further ones until
+// the caller reopens the channel. Interrupting a native turn does not reach the
+// caller's tools — measured on both installed harnesses, where a terminal
+// interrupted result arrived while a hosted call was still running — so a
+// caller that has interrupted must settle its own tools before it may describe
+// the work as checkpointed.
+func (s *Session) CancelTools() {
+	s.mu.Lock()
+	host := s.tools
+	s.mu.Unlock()
+	if host == nil {
+		return
+	}
+	host.cancelAll()
+}
+
+func (h *toolHost) cancelAll() {
+	h.mu.Lock()
+	stops := make([]context.CancelFunc, 0, len(h.inflight))
+	for _, stop := range h.inflight {
+		stops = append(stops, stop)
+	}
+	h.mu.Unlock()
+	for _, stop := range stops {
+		stop()
+	}
+}
+
+// ToolsSettled reports that no hosted call is executing. After an interrupt a
+// caller waits for this before checkpointing: a turn can end while a tool is
+// still writing, and evidence collected in between describes a workspace that
+// was still moving.
+func (s *Session) ToolsSettled() bool {
+	s.mu.Lock()
+	host := s.tools
+	s.mu.Unlock()
+	if host == nil {
+		return true
+	}
+	host.mu.Lock()
+	defer host.mu.Unlock()
+	return host.running == 0
 }
 
 func (h *toolHost) leave() {
