@@ -65,6 +65,11 @@ var (
 	ErrClosed             = errors.New("harness session closed")
 	ErrBusy               = errors.New("harness turn already active")
 	ErrStaleTurn          = errors.New("harness turn does not match expected active turn")
+	// ErrToolsUnsettled reports an attempt to start work while a tool call from
+	// the previous turn is still outstanding. Cancelling a call asks its handler
+	// to stop; until the handler returns, what it did is unknown, and authorizing
+	// another turn on top of it would be building on a workspace still in motion.
+	ErrToolsUnsettled = errors.New("harness tool calls from the previous turn have not settled")
 	ErrIncompatibleResume = errors.New("harness resume configuration does not match reference")
 	ErrBackpressure       = errors.New("harness event buffer exhausted; consume Events while the turn runs")
 	ErrProtocol           = errors.New("invalid harness protocol response")

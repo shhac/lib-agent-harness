@@ -455,8 +455,15 @@ func (s *Session) startTurnScoped(lifetime, request context.Context, in Input) (
 		}
 	}
 	// Starting a turn is what authorizes tool work again after a pause. Anything
-	// queued from before is refused by the generation change. This takes only the
-	// host's own lock, so it is safe from inside the session's.
+	// queued from before is refused by the generation change, and anything still
+	// outstanding stops this turn from starting at all: a cancelled call is not a
+	// stopped one, and the next turn must not run against a workspace the previous
+	// one may still be writing to. Both take only the host's own lock, so they are
+	// safe from inside the session's.
+	if err := s.tools.readyForWork(); err != nil {
+		s.mu.Unlock()
+		return nil, err
+	}
 	s.tools.reopen()
 	t := &Turn{id: newID(), events: make(chan Event, s.options.EventBuffer), done: make(chan struct{})}
 	t.starting = s.options.Engine == Codex
@@ -618,10 +625,15 @@ func (s *Session) Steer(ctx context.Context, expected string, in Input, o SteerO
 		}
 		// The interrupted turn is over, but the caller's tools are not: both
 		// installed harnesses were observed reporting a terminal interrupted
-		// result while a hosted call was still running. Settle them before the
-		// replacement turn can ask for more, so the work that follows is not
-		// racing the work that was just stopped.
+		// result while a hosted call was still running. Cancelling them is a
+		// request, not an outcome, so the replacement turn waits for the handlers
+		// to actually return. If they do not within the caller's context, no
+		// replacement is started — continuing would be describing a workspace that
+		// is still moving as one that has stopped.
 		s.CancelTools()
+		if err = s.AwaitToolsSettled(ctx); err != nil {
+			return SteerResult{}, err
+		}
 		lifetime := s.lifetime
 		if lifetime == nil {
 			lifetime = context.Background()

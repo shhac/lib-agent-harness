@@ -202,6 +202,10 @@ type toolHost struct {
 	// connections numbers harness connections, because request identifiers are
 	// only unique within one.
 	connections uint64
+	// settled is closed exactly while nothing is outstanding. A caller that has
+	// paused the channel waits on it before describing the workspace, because a
+	// cancelled call is not a stopped one until its handler has actually returned.
+	settled chan struct{}
 	// listed records that a harness connected, authenticated and asked for this
 	// session's tools. Where a harness defers MCP tools and never puts them in a
 	// request, this is the positive evidence that they were actually offered.
@@ -231,7 +235,9 @@ func newToolHost(cfg ToolHost) (*toolHost, error) {
 		return nil, err
 	}
 	socket := filepath.Join(socketDir, "t.sock")
-	h := &toolHost{cfg: cfg, socket: socket, socketDir: socketDir, tools: map[string]ToolDefinition{}, pending: map[string]*hostedCall{}, gate: make(chan struct{}, 1), done: make(chan struct{})}
+	settled := make(chan struct{})
+	close(settled)
+	h := &toolHost{cfg: cfg, socket: socket, socketDir: socketDir, tools: map[string]ToolDefinition{}, pending: map[string]*hostedCall{}, gate: make(chan struct{}, 1), done: make(chan struct{}), settled: settled}
 	// The assignment lease is taken before anything is launched, so a second
 	// process cannot drive this assignment during the window before a bridge
 	// exists. It is released when the host closes, or by the operating system if
@@ -452,8 +458,11 @@ func (h *toolHost) serve(conn net.Conn) {
 			h.mu.Unlock()
 			reply(rpcResult(frame.ID, h.list()))
 		case "tools/call":
-			// Dispatched on its own goroutine so the connection keeps reading —
-			// execution itself is serialized inside dispatch, not here.
+			// Admitted here, in the order the harness sent it, and only then
+			// dispatched on its own goroutine so the connection keeps reading.
+			// Registering inside the goroutine would let a cancellation that
+			// arrives in the very next frame find nothing to cancel, and the call
+			// it named would run anyway.
 			//
 			// The turn is sampled now, when the harness asked, rather than when
 			// the handler eventually runs. A call that waited behind another one
@@ -464,10 +473,15 @@ func (h *toolHost) serve(conn net.Conn) {
 			if h.activeTurn != nil {
 				turn = h.activeTurn()
 			}
+			ready, refusal := h.prepare(callKey(connection, string(id)), params)
+			if refusal != nil {
+				reply(rpcResult(id, refusal))
+				continue
+			}
 			pending.Add(1)
 			go func() {
 				defer pending.Done()
-				reply(rpcResult(id, h.dispatch(callKey(connection, string(id)), turn, params)))
+				reply(rpcResult(id, h.execute(ready, turn)))
 			}()
 		default:
 			// Every other method, including the resource methods a harness's own
@@ -538,25 +552,33 @@ func (h *toolHost) refuseLocked(tool, reason, text string) map[string]any {
 	return toolPayload(text, true)
 }
 
-// dispatch admits a call, executes it and decides whether it ended the work.
+// admitted is a parsed, registered call waiting to execute.
+type admitted struct {
+	call       *hostedCall
+	definition ToolDefinition
+	name       string
+	arguments  json.RawMessage
+}
+
+// prepare validates a call and registers it, synchronously, in the order the
+// harness sent it. Everything after this point may take arbitrarily long; this
+// part may not, because the connection cannot read the next frame until it
+// returns, and one of those frames may be this call's cancellation.
 //
-// Execution is serialized: a call waits for the previous one to finish. That is
-// what makes "later" mean something. A closing tool then runs to completion like
-// any other, and the channel latches only if it actually succeeded — a finish
-// whose arguments were rejected has not finished anything, and neither has one
-// whose handler refused it. Nothing is cancelled to make room for it, because a
-// half-executed write or test is not a state worth reporting evidence about.
-func (h *toolHost) dispatch(request, turn string, params json.RawMessage) map[string]any {
+// Registering before it waits for anything is also what makes a queued call
+// real: it has to be cancellable, it has to count as unsettled, and it must not
+// slip through a barrier that went up while it was waiting.
+func (h *toolHost) prepare(request string, params json.RawMessage) (*admitted, map[string]any) {
 	var in struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments"`
 	}
 	if json.Unmarshal(params, &in) != nil {
-		return h.refuse("", "malformed", "tool call could not be parsed; nothing was executed")
+		return nil, h.refuse("", "malformed", "tool call could not be parsed; nothing was executed")
 	}
 	definition, hosted := h.tools[in.Name]
 	if !hosted {
-		return h.refuse(in.Name, "unknown", "tool "+quoteName(in.Name)+" is not available in this session; nothing was executed")
+		return nil, h.refuse(in.Name, "unknown", "tool "+quoteName(in.Name)+" is not available in this session; nothing was executed")
 	}
 	if len(in.Arguments) == 0 || string(in.Arguments) == "null" {
 		in.Arguments = json.RawMessage("{}")
@@ -566,29 +588,37 @@ func (h *toolHost) dispatch(request, turn string, params json.RawMessage) map[st
 	// leave every handler to rediscover that.
 	var arguments map[string]json.RawMessage
 	if json.Unmarshal(in.Arguments, &arguments) != nil || arguments == nil {
-		return h.refuse(in.Name, "malformed", "tool arguments must be a JSON object; nothing was executed")
+		return nil, h.refuse(in.Name, "malformed", "tool arguments must be a JSON object; nothing was executed")
 	}
-	// Registered before it waits for anything. A call queued behind another one
-	// is still a call this session is on the hook for: it has to be cancellable,
-	// it has to count as unsettled, and it must not slip through a barrier that
-	// went up while it was waiting.
 	call, refusal := h.admit(request, in.Name)
 	if refusal != nil {
-		return refusal
+		return nil, refusal
 	}
-	defer h.retire(call)
-	if refusal = h.acquire(call, in.Name); refusal != nil {
+	return &admitted{call: call, definition: definition, name: in.Name, arguments: in.Arguments}, nil
+}
+
+// execute runs an admitted call and decides whether it ended the work.
+//
+// Execution is serialized: a call waits for the previous one to finish. That is
+// what makes "later" mean something. A closing tool then runs to completion like
+// any other, and the channel latches only if it actually succeeded — a finish
+// whose arguments were rejected has not finished anything, and neither has one
+// whose handler refused it. Nothing is cancelled to make room for it, because a
+// half-executed write or test is not a state worth reporting evidence about.
+func (h *toolHost) execute(ready *admitted, turn string) map[string]any {
+	defer h.retire(ready.call)
+	if refusal := h.acquire(ready.call, ready.name); refusal != nil {
 		return refusal
 	}
 	defer h.release()
-	result, err := h.cfg.Handler.CallTool(call.ctx, ToolCall{TurnID: turn, Name: in.Name, Arguments: in.Arguments})
+	result, err := h.cfg.Handler.CallTool(ready.call.ctx, ToolCall{TurnID: turn, Name: ready.name, Arguments: ready.arguments})
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return toolPayload("tool execution was cancelled; its effect is unknown and must be established from evidence", true)
 		}
 		return toolPayload(bound(err.Error(), 2048), true)
 	}
-	if !result.IsError && (definition.Closing || result.Closes) {
+	if !result.IsError && (ready.definition.Closing || result.Closes) {
 		h.mu.Lock()
 		h.closed = true
 		h.mu.Unlock()
@@ -618,6 +648,7 @@ func (h *toolHost) admit(request, name string) (*hostedCall, map[string]any) {
 	}
 	call := &hostedCall{key: request, ctx: ctx, cancel: cancel, generation: h.generation}
 	h.pending[request] = call
+	h.trackSettlementLocked()
 	h.mu.Unlock()
 	// A stopping session ends everything it admitted.
 	go func() {
@@ -635,6 +666,7 @@ func (h *toolHost) retire(call *hostedCall) {
 	if existing, ok := h.pending[call.key]; ok && existing == call {
 		delete(h.pending, call.key)
 	}
+	h.trackSettlementLocked()
 	h.mu.Unlock()
 	call.cancel()
 }
@@ -642,7 +674,14 @@ func (h *toolHost) retire(call *hostedCall) {
 // acquire waits for the serialization gate, then checks the barrier again. A
 // call can be queued for a long time, and the thing it was waiting behind may
 // have finished the work, paused the channel or stopped the session.
+//
+// Cancellation is checked on both sides of the gate. A select whose gate is free
+// and whose call is already cancelled picks either case, so testing only the
+// gate's readiness lets a withdrawn call run about half the time.
 func (h *toolHost) acquire(call *hostedCall, name string) map[string]any {
+	if call.ctx.Err() != nil {
+		return h.refuse(name, "cancelled", "this call was withdrawn before it ran; nothing was executed")
+	}
 	select {
 	case h.gate <- struct{}{}:
 	case <-call.ctx.Done():
@@ -652,7 +691,13 @@ func (h *toolHost) acquire(call *hostedCall, name string) map[string]any {
 	}
 	h.mu.Lock()
 	refusal := h.barrierLocked(name)
-	if refusal == nil && call.generation != h.generation {
+	switch {
+	case refusal != nil:
+	case call.ctx.Err() != nil:
+		// Withdrawn while it waited, or withdrawn before it ever waited and this
+		// gate happened to be free.
+		refusal = h.refuseLocked(name, "cancelled", "this call was withdrawn before it ran; nothing was executed")
+	case call.generation != h.generation:
 		// The channel was paused and reopened for different work while this call
 		// waited. It belongs to the turn that is over.
 		refusal = h.refuseLocked(name, "superseded", "this call belongs to work that has already been stopped; nothing was executed")
@@ -663,6 +708,7 @@ func (h *toolHost) acquire(call *hostedCall, name string) map[string]any {
 		return refusal
 	}
 	h.running++
+	h.trackSettlementLocked()
 	h.mu.Unlock()
 	return nil
 }
@@ -670,8 +716,26 @@ func (h *toolHost) acquire(call *hostedCall, name string) map[string]any {
 func (h *toolHost) release() {
 	h.mu.Lock()
 	h.running--
+	h.trackSettlementLocked()
 	h.mu.Unlock()
 	<-h.gate
+}
+
+// trackSettlementLocked keeps the settled channel closed exactly while nothing
+// is outstanding, so a waiter is woken by the last call retiring rather than by
+// a poll that might sample between two of them.
+func (h *toolHost) trackSettlementLocked() {
+	idle := h.running == 0 && len(h.pending) == 0
+	select {
+	case <-h.settled:
+		if !idle {
+			h.settled = make(chan struct{})
+		}
+	default:
+		if idle {
+			close(h.settled)
+		}
+	}
 }
 
 // barrierLocked is every reason a call may not run, in one place.
@@ -759,6 +823,20 @@ func (s *Session) ResumeTools() {
 	host.reopen()
 }
 
+// readyForWork refuses to authorize a turn while anything admitted is still
+// outstanding. A nil host is the unrestricted case and hosts nothing.
+func (h *toolHost) readyForWork() error {
+	if h == nil {
+		return nil
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.running == 0 && len(h.pending) == 0 {
+		return nil
+	}
+	return ErrToolsUnsettled
+}
+
 // reopen takes only the host's own lock, so a caller already holding the
 // session's may use it. A nil host is the unrestricted case and does nothing.
 func (h *toolHost) reopen() {
@@ -788,6 +866,32 @@ func (s *Session) ToolsSettled() bool {
 	host.mu.Lock()
 	defer host.mu.Unlock()
 	return host.running == 0 && len(host.pending) == 0
+}
+
+// AwaitToolsSettled blocks until nothing is outstanding, or the context ends.
+//
+// Cancelling a tool asks its handler to stop; it does not establish that the
+// handler has stopped, and a handler that writes files may be mid-write when its
+// context is cancelled. This is the difference between the two, and it is what a
+// caller waits on after CancelTools before describing a workspace or starting
+// anything new. Call it with the channel paused: settlement observed while
+// admission is open says only that nothing was outstanding at that instant.
+func (s *Session) AwaitToolsSettled(ctx context.Context) error {
+	s.mu.Lock()
+	host := s.tools
+	s.mu.Unlock()
+	if host == nil {
+		return nil
+	}
+	host.mu.Lock()
+	settled := host.settled
+	host.mu.Unlock()
+	select {
+	case <-settled:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func quoteName(name string) string {
