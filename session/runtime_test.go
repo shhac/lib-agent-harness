@@ -15,13 +15,6 @@ import (
 // Every credential in these tests is a synthetic string in a temporary
 // directory. No native login is read, written or looked for.
 
-func putSynthetic(t *testing.T, dir, name, text string) {
-	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0600); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func credentialText(t *testing.T, dir string) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(dir, codexCredentialFile))

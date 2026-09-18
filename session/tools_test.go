@@ -13,11 +13,21 @@ import (
 	"time"
 )
 
+func putSynthetic(t *testing.T, dir, name, text string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // privateDir mirrors what an application supplies: a directory only its owner
 // can enter. Go's own temporary directories are group- and world-executable,
 // which the tool host deliberately refuses.
 func privateDir(t *testing.T) string {
 	t.Helper()
+	if !restrictedPlatform() {
+		t.Skip("restricted tool hosting requires Unix process containment")
+	}
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0700); err != nil {
 		t.Fatal(err)
