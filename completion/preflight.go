@@ -21,6 +21,13 @@ func preflightFailure(engine, code string) *RequestError {
 
 func (e *RequestError) diagnosticDetail() string {
 	switch e.Code {
+	case "unexpected_native_tool_catalog":
+		return "Claude advertised native tools during constrained completion; check CLI tool isolation before resuming"
+	case "unexpected_native_tool_call":
+		return "Claude emitted a native tool call without a verified unavailable-tool rejection; no application actions were accepted"
+	case "unexpected_native_tool":
+		return "Claude advertised or attempted an unexpected native tool; this older diagnostic does not distinguish the two"
+
 	case "executable_not_found":
 		if e.Engine == "claude" {
 			return "Claude executable not found; install Claude Code and sign in"

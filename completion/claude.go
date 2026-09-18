@@ -126,7 +126,8 @@ func parseClaude(data []byte, tools []Tool) (Message, Usage, error) {
 	if failure := claudeRequestFailure(data); failure != nil {
 		return Message{}, terminalUsage("claude", data), failure
 	}
-	var usage Usage
+	usage := terminalUsage("claude", data)
+	var boundary claudeToolBoundary
 	var result Message
 	completed := false
 	assistantError := ""
@@ -134,45 +135,18 @@ func parseClaude(data []byte, tools []Tool) (Message, Usage, error) {
 		if len(bytes.TrimSpace(line)) == 0 {
 			continue
 		}
-		var event struct {
-			Type    string   `json:"type"`
-			Subtype string   `json:"subtype"`
-			IsError bool     `json:"is_error"`
-			Reason  string   `json:"terminal_reason"`
-			Stop    string   `json:"stop_reason"`
-			Error   string   `json:"error"`
-			Tools   []string `json:"tools"`
-			Message struct {
-				Content []struct {
-					Type string `json:"type"`
-					Name string `json:"name"`
-				} `json:"content"`
-			} `json:"message"`
-			Structured json.RawMessage `json:"structured_output"`
-			Usage      *struct {
-				Input      int `json:"input_tokens"`
-				Output     int `json:"output_tokens"`
-				CacheRead  int `json:"cache_read_input_tokens"`
-				CacheWrite int `json:"cache_creation_input_tokens"`
-			} `json:"usage"`
-		}
+		var event claudeCompletionEvent
 		if json.Unmarshal(line, &event) != nil {
 			return Message{}, usage, &RequestError{Kind: ErrorUnknown, Engine: "claude", Phase: PhaseResponse, Code: "malformed_event_json"}
 		}
-		if event.Type == "system" && event.Subtype == "init" {
-			for _, tool := range event.Tools {
-				if tool != "StructuredOutput" {
-					return Message{}, usage, &RequestError{Kind: ErrorUnknown, Engine: "claude", Phase: PhaseResponse, Code: "unexpected_native_tool"}
-				}
-			}
+		if completed && (event.Type == "assistant" || event.Type == "user") {
+			return Message{}, usage, &RequestError{Kind: ErrorUnknown, Engine: "claude", Phase: PhaseResponse, Code: "unexpected_native_tool_call"}
+		}
+		if code := boundary.observe(event); code != "" {
+			return Message{}, usage, &RequestError{Kind: ErrorUnknown, Engine: "claude", Phase: PhaseResponse, Code: code}
 		}
 		if event.Type == "assistant" {
 			assistantError = claudeErrorCode(event.Error)
-			for _, block := range event.Message.Content {
-				if block.Type == "tool_use" && block.Name != "StructuredOutput" {
-					return Message{}, usage, &RequestError{Kind: ErrorUnknown, Engine: "claude", Phase: PhaseResponse, Code: "unexpected_native_tool"}
-				}
-			}
 		}
 		if event.Type != "result" {
 			continue
@@ -188,6 +162,9 @@ func parseClaude(data []byte, tools []Tool) (Message, Usage, error) {
 		if err != nil {
 			return Message{}, usage, &RequestError{Kind: ErrorUnknown, Engine: "claude", Phase: PhaseResponse, Code: "invalid_action_envelope"}
 		}
+	}
+	if len(boundary.pending) != 0 {
+		return Message{}, usage, &RequestError{Kind: ErrorUnknown, Engine: "claude", Phase: PhaseResponse, Code: "unexpected_native_tool_call"}
 	}
 	if !completed {
 		return Message{}, usage, &RequestError{Kind: ErrorUnknown, Engine: "claude", Phase: PhaseResponse, Code: "missing_terminal_result"}

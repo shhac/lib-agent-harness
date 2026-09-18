@@ -25,7 +25,14 @@ invocation, which is the unit this library controls; a CLI or provider may make
 more than one upstream request inside it, so this is not a per-provider-request
 gate. Failures are not retried, since usage and external effects can be
 uncertain. CLI diagnostics are not included in returned errors. The output
-stream is bounded and unexpected native tool events or malformed structured
+stream is bounded. Claude may invent a tool that is not available and then
+recover after the CLI rejects it. Recovery is accepted only with a restricted
+initial tool catalog, unique call IDs, exact matching CLI “No such tool available”
+receipts, and a valid final structured response. Generic errors, unacknowledged
+calls, duplicate receipts, and calls after completion fail closed; no application
+proposal from a rejected response is returned. Terminal usage is retained even
+when response validation fails. Unexpected native tool catalogs/calls have
+separate diagnostics. Other unexpected native tool events or malformed structured
 responses are rejected.
 
 Usage comes from one definition for every invocation, successful or not, so the
