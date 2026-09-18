@@ -102,7 +102,7 @@ func normalize(o Options) (Options, error) {
 	}
 	if o.Restriction != nil {
 		if !restrictedPlatform() {
-			return o, &CapabilityError{Engine: string(o.Engine), Code: CapabilityUnsupportedPlatform}
+			return o, &CapabilityError{Engine: string(o.Engine), Code: CapabilityUnsupportedPlatform, Phase: BeforeLaunch}
 		}
 		// Two tool policies would silently disagree about what this session may
 		// do. The restriction owns the surface, so the other one has to be absent.

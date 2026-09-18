@@ -124,15 +124,30 @@ s, err := session.Start(ctx, session.Options{
 })
 ```
 
-The restriction is proved before your login is ever used. The library launches
-the same binary with the same restricted arguments, a disposable home, a dummy
-credential and a loopback provider that refuses every request, drives one
-synthetic turn, and requires the outbound request to carry exactly your tools —
-none missing, nothing else present. A rejecting provider performs no inference,
-so no agent loop and no tool call can happen during the check. A failure returns
-`*CapabilityError` with a fixed reason code and the disagreeing tool names, and
-nothing is launched. Where a harness also advertises its tools at startup, the
-same comparison runs again before the first prompt.
+The restriction is proved before your login is ever used, and there is no option
+to skip that. The library launches the same binary with *the same arguments the
+real session will use*, differing only in a disposable home, a dummy credential
+and a loopback provider that refuses every request; it drives one synthetic turn
+and requires the outbound request to carry exactly your tools — none missing,
+nothing else present. Equivalence matters: a check run with a different
+permission mode or different instructions would establish something about a
+configuration nobody is going to launch. A rejecting provider performs no
+inference, so no agent loop and no tool call can happen during the check, and
+the tool host refuses calls for its duration regardless. The check ends shortly
+after the harness's first request rather than sitting out its timeout.
+
+A failure returns `*CapabilityError` with a fixed reason code, the disagreeing
+tool names and the phase it happened in, and nothing is launched. Where a harness
+also advertises its tools at startup, the same comparison runs again before the
+first prompt; that one reports `BeforeFirstPrompt`, and says the session was
+closed rather than claiming it never started.
+
+Repeating the check is avoided only by a process-local record of the same binary
+— by path, size and modification time — with the same arguments and the same
+tool identifiers. That is evidence about the thing the probe proved, not a
+caller's assertion that evidence was unnecessary. Nothing is persisted: a
+restart re-proves, which is exactly when an installed CLI is most likely to have
+changed underneath.
 
 Restricting writes is not what this does. A tool that can read is a disclosure
 path whatever it may write, so the restriction is the removal of the tools; a
@@ -140,26 +155,52 @@ sandbox mode and a working directory are neither claimed nor relied on as one.
 
 Your bridge command is your own binary re-executed as the harness's tool server.
 Its whole implementation is `session.RunBridge(ctx, os.Stdin, os.Stdout)`, which
-relays the protocol and holds a lock for the session's life. The channel lives
-on an owner-only local socket; its credential sits in an owner-only file and
-never appears in arguments, environment values, references or tool results.
+relays the protocol and holds a lock naming the launch it belongs to. The
+listener lives in a short owner-only runtime directory, because an application
+state path is longer than a local socket address may be; the durable files — the
+channel credential and that lock — stay in the `Dir` you supplied, which is where
+recovery looks for them. The credential sits in an owner-only file and never
+appears in arguments, environment values, references or tool results. `Dir` also
+carries an assignment lease, taken before anything is launched, so a second
+process cannot drive the same assignment even before a bridge exists.
 
-A tool declared `Closing` — reporting completion, asking for a decision —
-latches the channel shut *when it is admitted*, so a call issued in parallel in
-the same turn is refused rather than racing it, and work already running is
-cancelled. `Session.ToolsClosed` reports that state.
+Tool calls execute one at a time. A native turn will ask for several at once,
+and running them concurrently would make "after the work was reported" an
+ambiguous claim — a write or a test could still be in flight when a closing tool
+decides the assignment is finished, and cancelling it afterwards does not undo
+it. A tool declared `Closing`, or a result with `Closes` set, therefore runs with
+nothing else in flight and latches the channel only if it actually succeeded: a
+finish whose arguments the handler rejected has not finished anything.
+Everything queued behind it is refused without executing. `Session.ToolsClosed`
+reports that state.
 
 If the launching process dies, the harness does not: it keeps its provider
-connection and keeps spending. `session.Reclaim(ctx, dir)` observes the bridge
-lock in that session's private directory — free means nothing survived, held
-means a subtree is alive — terminates the group the live holder recorded, and
-confirms the lock is free before reporting success. Anything else is
-`ErrUnreclaimed`, which means hold the work for inspection rather than start a
-second one.
+connection and keeps spending. `session.Reclaim(ctx, dir)` answers two separate
+questions and never confuses them. Whether anything survives is answered by the
+recorded process group, because a free bridge lock proves only that no bridge is
+running — a harness can outlive its tool server, restart it, or sit in inference
+with none running. Whether that group is *yours* is answered by a live bridge
+naming the same launch, because process and group identifiers are reused and a
+stored integer is never grounds for signalling. Only then is the group
+terminated, and only a group that has actually become empty is reported as
+`Confirmed`. Anything else is `ErrUnreclaimed`: hold the work for inspection
+rather than start a second one.
+
+Per-engine, the restriction is built from provider mechanics rather than from a
+permission setting. Claude is launched with no setting sources, hooks disabled, a
+strict MCP configuration holding only your server, slash commands disabled, an
+empty built-in tool list and an explicit allowance for your tool identifiers.
+Codex is launched with the shared restricted model catalog — shell type
+disabled, apply-patch dropped, an empty experimental tool set — alongside the
+feature switches that turn off shell, unified exec, apps, plugins, hooks,
+subagents, browser, computer use and image surfaces, with user configuration,
+rules and project documents ignored. Codex overrides are emitted as dotted-key
+TOML, which is what it parses.
 
 Restricted sessions require process-group containment and a releasable advisory
 lock, so they are available on macOS and Linux and fail closed elsewhere with
-`restricted_session_unsupported_platform`.
+`restricted_session_unsupported_platform`. Ordinary sessions are unaffected on
+every platform.
 
 ## Steering and capabilities
 

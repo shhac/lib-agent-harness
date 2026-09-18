@@ -47,14 +47,14 @@ type streamWire struct {
 	diagnose  func(Diagnostic)
 }
 
-func newProcessWire(ctx context.Context, o Options, nativeID string, resuming bool, l *launch, event func(map[string]json.RawMessage), ended func(error)) (*streamWire, error) {
-	return newProcessWireArgs(ctx, o, commandArgs(o, nativeID, resuming, l), nil, event, ended)
+func newProcessWire(ctx context.Context, o Options, nativeID string, resuming bool, l *launch, onStart func(int), event func(map[string]json.RawMessage), ended func(error)) (*streamWire, error) {
+	return newProcessWireArgs(ctx, o, commandArgs(o, nativeID, resuming, l), nil, onStart, event, ended)
 }
 
 // newProcessWireArgs launches a contained harness. env overrides the session's
 // own environment; a capability probe uses that to run with a disposable home
 // and a dummy credential instead of the caller's login.
-func newProcessWireArgs(ctx context.Context, o Options, args, env []string, event func(map[string]json.RawMessage), ended func(error)) (*streamWire, error) {
+func newProcessWireArgs(ctx context.Context, o Options, args, env []string, onStart func(int), event func(map[string]json.RawMessage), ended func(error)) (*streamWire, error) {
 	runCtx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(runCtx, o.Binary, args...)
 	cmd.Dir = o.WorkDir
@@ -82,6 +82,9 @@ func newProcessWireArgs(ctx context.Context, o Options, args, env []string, even
 		writer.Close()
 		cancel()
 		return nil, ErrTransport
+	}
+	if onStart != nil {
+		p.Notify(onStart)
 	}
 	cmd.Cancel = func() error { p.Stop(); return nil }
 	w := &streamWire{engine: o.Engine, stdin: stdin, stdout: reader, pending: map[string]chan response{}, done: make(chan struct{}), reaped: make(chan struct{}), writeGate: make(chan struct{}, 1), event: event, ended: ended, stderr: stderr, diagnose: o.OnDiagnostic}

@@ -34,15 +34,33 @@ Shared local Codex/Claude CLI harness transport for Go applications.
   Publish usage as it is observed and mark whether it is one response or a
   turn's accounting. A failed turn's observations are evidence, never a
   measurement. Health describes a process; it never means work finished.
-- A harness outlives the process that launched it. Contain it in its own group,
-  anchor liveness on the bridge lock, and confirm termination before calling a
-  run recoverable. Provider text and captured output stay out of error values.
+- A harness outlives the process that launched it. Contain it in its own group.
+  Absence is established from the process group; a free bridge lock proves only
+  that no bridge is running. Identity is established from something alive, never
+  from a stored identifier, and nothing is signalled without it. Unconfirmed is
+  reserved work, not permission to start a second one. Provider text and
+  captured output stay out of error values.
+- Verification has no bypass. Skipping a repeat requires a record of the same
+  binary and arguments, never a caller's assertion. Probe with the arguments the
+  real launch will use, or the check is about a different configuration.
+- Provider configuration must be encoded in the form that provider parses: Codex
+  overrides are TOML, not JSON. A fixture that echoes a flag back cannot prove an
+  installed CLI accepts it; where that is untested, say so.
   Publish usage as it is observed and mark whether it is one response or a
   turn's accounting. A failed turn's observations are evidence, never a
   measurement. Health describes a process; it never means work finished.
-- A harness outlives the process that launched it. Contain it in its own group,
-  anchor liveness on the bridge lock, and confirm termination before calling a
-  run recoverable. Provider text and captured output stay out of error values.
+- A harness outlives the process that launched it. Contain it in its own group.
+  Absence is established from the process group; a free bridge lock proves only
+  that no bridge is running. Identity is established from something alive, never
+  from a stored identifier, and nothing is signalled without it. Unconfirmed is
+  reserved work, not permission to start a second one. Provider text and
+  captured output stay out of error values.
+- Verification has no bypass. Skipping a repeat requires a record of the same
+  binary and arguments, never a caller's assertion. Probe with the arguments the
+  real launch will use, or the check is about a different configuration.
+- Provider configuration must be encoded in the form that provider parses: Codex
+  overrides are TOML, not JSON. A fixture that echoes a flag back cannot prove an
+  installed CLI accepts it; where that is untested, say so.
 - Tests use fake transports, synthetic CLI fixtures, and temporary directories.
   No real models, accounts, credentials, or external mutations in automated tests.
 - Run go test -race ./... and go vet ./...; cross-compile Windows packages.

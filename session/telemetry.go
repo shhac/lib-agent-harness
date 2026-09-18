@@ -37,7 +37,7 @@ func Inspect(ctx context.Context, o Options) (Inspection, error) {
 		args = []string{"--safe-mode", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"}
 	}
 	s.mu.Lock()
-	w, err := newProcessWireArgs(ctx, o, args, nil, s.notification, s.fail)
+	w, err := newProcessWireArgs(ctx, o, args, nil, nil, s.notification, s.fail)
 	s.transport = w
 	s.mu.Unlock()
 	if err != nil {

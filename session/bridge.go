@@ -7,74 +7,120 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
 
-// owner records who holds a session's bridge lock. It is written by the live
-// bridge rather than predicted before launch, so recovery acts on what is
-// actually running rather than on what was once intended.
+// Recovering from a crash of the process that launched a harness is a question
+// about two different things, and conflating them is how a second worker gets
+// started against a live account.
+//
+//   - Is the harness subtree still running? Only the operating system can
+//     answer that, and it answers it about a process group.
+//   - Is that group ours? A recorded integer is not an answer: process and
+//     group identifiers are reused. Something alive has to say so.
+//
+// So absence is established from the group, and identity is established from a
+// live bridge that names the launch it belongs to. Anything else is unresolved,
+// and unresolved means hold the work, not start another one.
+
+// launchRecord is written by the library at launch, before the harness can do
+// anything, and read back by a later process that has to clean up after a crash.
+type launchRecord struct {
+	Engine  string    `json:"engine"`
+	PID     int       `json:"pid"`
+	Group   int       `json:"group"`
+	Launch  string    `json:"launch"`
+	Started time.Time `json:"started"`
+}
+
+// owner is what a live bridge writes into the lock it holds. Launch ties it to
+// one specific launch record; a bridge from some other session, or a stale file
+// left by one, will not match.
 type owner struct {
 	Group  int       `json:"group"`
 	PID    int       `json:"pid"`
 	Parent int       `json:"parent"`
+	Launch string    `json:"launch"`
 	HeldAt time.Time `json:"held_at"`
 }
 
-// Reclamation describes what a recovery attempt established.
+// Reclamation describes what a recovery attempt established. Confirmed is the
+// only field that authorizes starting work for this assignment again.
 type Reclamation struct {
-	// Found reports that a surviving harness subtree was observed.
+	// Found reports that a process group from the recorded launch still exists.
 	Found bool
-	// Reclaimed reports that it is now gone, confirmed by the lock being free.
-	Reclaimed bool
-	// Group is the process group that was terminated, when one was recorded.
+	// Confirmed reports positive evidence that nothing from the launch remains:
+	// either no group was ever recorded, or the group no longer exists.
+	Confirmed bool
+	// Terminated reports that this call signalled the group.
+	Terminated bool
+	// Group is the recorded process group, when there was one.
 	Group int
 }
 
-// ErrUnreclaimed reports a harness subtree that was observed and could not be
-// confirmed gone. Treat the work as still reserved: starting another worker for
-// the same assignment would leave two of them spending the same account.
+// ErrUnreclaimed reports a harness that could not be confirmed gone. Treat the
+// work as reserved and needing inspection: this is not permission to start
+// another worker, and it is not permission to signal a process whose identity
+// was never established.
 var ErrUnreclaimed = errors.New("harness subtree could not be confirmed terminated")
 
-// Reclaim ends a harness subtree orphaned by a crash of the process that
-// launched it. Stopping whatever a session was operating on does not establish
-// that the harness itself stopped: it keeps its provider connection and keeps
-// spending. dir is the tool host's private directory from the interrupted run.
+// Reclaim establishes whether a harness launched from dir is still running, and
+// ends it when it can prove the process group is the one it launched.
 //
-// A free lock means nothing survived. A held lock names the group that holds
-// it; that group is terminated and the lock re-checked, and only a lock that
-// has become free is reported as reclaimed.
+// A free bridge lock proves only that no bridge holds it. A harness can outlive
+// its tool server, restart it, or sit in inference with none running, so the
+// lock is never read as absence. Absence comes from the process group itself.
+// Identity, which is what makes signalling safe, comes from a live bridge that
+// names the same launch as the recorded one.
 func Reclaim(ctx context.Context, dir string) (Reclamation, error) {
 	var out Reclamation
 	if !restrictedPlatform() {
-		return out, &CapabilityError{Code: CapabilityUnsupportedPlatform}
+		return out, &CapabilityError{Code: CapabilityUnsupportedPlatform, Phase: BeforeLaunch}
 	}
-	path := lockPath(dir)
-	held, err := readBridgeLock(path)
+	record, err := readLaunchRecord(dir)
 	if err != nil {
 		return out, err
 	}
-	if held == nil {
+	if record == nil {
+		// Nothing was ever launched here. That is positive evidence, not a guess.
+		out.Confirmed = true
 		return out, nil
 	}
-	out.Found, out.Group = true, held.Group
-	if held.Group <= 1 {
-		return out, ErrUnreclaimed
-	}
-	if err = terminateGroup(held.Group); err != nil {
+	out.Group = record.Group
+	alive, err := groupAlive(record.Group)
+	if err != nil {
 		return out, errors.Join(ErrUnreclaimed, err)
 	}
-	// A signalled group takes a moment to be reaped. Re-read rather than assume.
+	if !alive {
+		out.Confirmed = true
+		return out, nil
+	}
+	out.Found = true
+	// Something occupies the recorded group. Before signalling it, require a
+	// living bridge to identify it as this launch; a reused group identifier
+	// belonging to unrelated work must never be killed on a stored integer.
+	held, err := readBridgeLock(lockPath(dir))
+	if err != nil {
+		return out, errors.Join(ErrUnreclaimed, err)
+	}
+	if held == nil || held.Launch == "" || held.Launch != record.Launch || held.Group != record.Group {
+		return out, ErrUnreclaimed
+	}
+	if err = terminateGroup(record.Group, record.PID); err != nil {
+		return out, errors.Join(ErrUnreclaimed, err)
+	}
+	out.Terminated = true
+	// A signalled group takes a moment to be reaped. Confirm from the group, not
+	// from the lock.
 	for attempt := 0; attempt < 50; attempt++ {
-		if ctx.Err() != nil {
-			return out, ctx.Err()
+		alive, err = groupAlive(record.Group)
+		if err != nil {
+			return out, errors.Join(ErrUnreclaimed, err)
 		}
-		remaining, readErr := readBridgeLock(path)
-		if readErr != nil {
-			return out, errors.Join(ErrUnreclaimed, readErr)
-		}
-		if remaining == nil {
-			out.Reclaimed = true
+		if !alive {
+			out.Confirmed = true
 			return out, nil
 		}
 		select {
@@ -86,12 +132,44 @@ func Reclaim(ctx context.Context, dir string) (Reclamation, error) {
 	return out, ErrUnreclaimed
 }
 
-func lockPath(dir string) string { return dir + string(os.PathSeparator) + "bridge.lock" }
+func lockPath(dir string) string   { return filepath.Join(dir, "bridge.lock") }
+func launchPath(dir string) string { return filepath.Join(dir, "harness.launch") }
+
+// recordLaunch persists what was started, before it can produce any effect. A
+// crash between this write and the process starting leaves a record for a group
+// that never existed, which recovery reports as confirmed-absent — the safe way
+// round.
+func recordLaunch(dir string, r launchRecord) error {
+	raw, err := json.Marshal(r)
+	if err != nil {
+		return errors.New("harness launch record could not be encoded")
+	}
+	return writePrivate(launchPath(dir), raw)
+}
+
+func readLaunchRecord(dir string) (*launchRecord, error) {
+	raw, err := os.ReadFile(launchPath(dir))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, errors.New("harness launch record could not be read")
+	}
+	var record launchRecord
+	if json.Unmarshal(raw, &record) != nil {
+		return nil, errors.New("harness launch record is unreadable")
+	}
+	if record.Group <= 1 {
+		// An unusable record is not a licence to signal anything.
+		return nil, errors.New("harness launch record does not identify a contained group")
+	}
+	return &record, nil
+}
 
 // RunBridge relays one harness's tool protocol to the session that configured
-// it, and holds the lock that makes an orphaned subtree discoverable. It is the
-// whole implementation a caller's bridge command needs; it carries no policy,
-// executes nothing and interprets nothing it relays.
+// it, and holds the lock that lets recovery identify the launch it belongs to.
+// It is the whole implementation a caller's bridge command needs; it carries no
+// policy, executes nothing and interprets nothing it relays.
 //
 // The channel, its credential and the lock are named by the environment
 // variables the session set for this process. The credential is read from an
@@ -104,7 +182,7 @@ func RunBridge(ctx context.Context, in io.Reader, out io.Writer) error {
 	if socket == "" || secretFile == "" || lockFile == "" {
 		return errors.New("bridge must be started by a harness session")
 	}
-	lock, err := holdBridgeLock(lockFile)
+	lock, err := holdBridgeLock(lockFile, filepath.Dir(socket))
 	if err != nil {
 		return err
 	}

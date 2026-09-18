@@ -74,7 +74,7 @@ func TestRestrictedClaudeArgumentsDisableInheritedSurfaces(t *testing.T) {
 	}
 	defer host.close()
 	args := strings.Join(commandArgs(o, "session-1", false, &launch{host: host, extra: claudeRestrictedArgs(host)}), "\n")
-	for _, required := range []string{"--setting-sources=", `--settings={"disableAllHooks":true}`, "--strict-mcp-config", "--disable-slash-commands", "--no-chrome", "--tools=mcp__workspace__read_file,mcp__workspace__finish"} {
+	for _, required := range []string{"--setting-sources=", `--settings={"disableAllHooks":true}`, "--strict-mcp-config", "--disable-slash-commands", "--no-chrome", "--tools=", "--allowedTools=mcp__workspace__read_file,mcp__workspace__finish"} {
 		if !strings.Contains(args, required) {
 			t.Errorf("missing %q in\n%s", required, args)
 		}
@@ -121,14 +121,31 @@ func TestRestrictedCodexArgumentsRemoveNativeToolSurfaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer host.close()
-	args := strings.Join(commandArgs(o, "thread", false, &launch{host: host, extra: codexRestrictedArgs(host, "/tmp/catalog.json")}), "\n")
-	for _, required := range []string{"--ignore-user-config", "--ignore-rules", `model_catalog_json="/tmp/catalog.json"`, "features.shell_tool=false", "features.unified_exec=false", "features.hooks=false", "project_doc_max_bytes=0", `approval_policy="never"`, "mcp_servers.workspace="} {
+	extra, err := codexRestrictedArgs(host, "/tmp/catalog.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Join(commandArgs(o, "thread", false, &launch{host: host, extra: extra}), "\n")
+	for _, required := range []string{"--ignore-user-config", "--ignore-rules", `model_catalog_json="/tmp/catalog.json"`, "features.shell_tool=false", "features.unified_exec=false", "features.hooks=false", "project_doc_max_bytes=0", `approval_policy="never"`, `mcp_servers.workspace.command="/usr/bin/true"`, `mcp_servers.workspace.args=["tool-bridge"]`} {
 		if !strings.Contains(args, required) {
 			t.Errorf("missing %q in\n%s", required, args)
 		}
 	}
 	if strings.Contains(args, string(host.secret)) {
 		t.Fatal("the channel credential reached the harness command line")
+	}
+	// Codex parses these as TOML. JSON would be rejected or misread.
+	for _, arg := range extra {
+		if !strings.HasPrefix(arg, "mcp_servers.") {
+			continue
+		}
+		key, value, _ := strings.Cut(arg, "=")
+		if strings.Contains(key, `"`) || strings.Contains(key, ":") {
+			t.Errorf("MCP override is not a dotted TOML key: %s", arg)
+		}
+		if strings.HasPrefix(value, "{") {
+			t.Errorf("MCP override embeds a JSON object rather than TOML: %s", arg)
+		}
 	}
 }
 
@@ -153,6 +170,13 @@ func TestProbeJudgesTheOutboundToolSurface(t *testing.T) {
 	failure := inspectProbeRequest(o, request("mcp__workspace__read_file", "mcp__workspace__finish", "Bash"))
 	if failure == nil || failure.Code != CapabilityNativeToolsPresent || failure.Tools[0] != "Bash" {
 		t.Fatalf("a retained native tool was not rejected: %v", failure)
+	}
+	if failure.Phase != BeforeLaunch || !strings.Contains(failure.Error(), "no session was started") {
+		t.Errorf("a pre-launch refusal did not say nothing was launched: %+v %s", failure, failure)
+	}
+	started := &CapabilityError{Engine: "claude", Code: CapabilityNativeToolsPresent, Phase: BeforeFirstPrompt}
+	if strings.Contains(started.Error(), "no session was started") {
+		t.Errorf("a post-start mismatch claimed nothing was launched: %s", started)
 	}
 	failure = inspectProbeRequest(o, request("mcp__workspace__read_file"))
 	if failure == nil || failure.Code != CapabilityHostedToolsMissing || failure.Tools[0] != "finish" {

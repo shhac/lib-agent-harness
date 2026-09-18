@@ -74,6 +74,10 @@ var (
 	ErrOutputLimit = errors.New("harness output exceeded its bounded frame or text limit")
 	ErrTransport   = errors.New("harness transport failed")
 	ErrTurnFailed  = errors.New("harness turn failed")
+	// ErrLeaseHeld reports that another process already holds this session's
+	// assignment lease. Two processes driving one assignment would spend the
+	// same account twice; the second one stops instead.
+	ErrLeaseHeld = errors.New("another process holds this session's assignment lease")
 )
 
 type UnsupportedError struct {

@@ -71,10 +71,23 @@ func open(ctx context.Context, o Options, r *Ref) (*Session, error) {
 	} else if o.Engine == Claude {
 		s.ref.ID = newID()
 	}
+	// A restricted session records what it launched the moment the harness is
+	// running and contained, so a process that dies later leaves behind an
+	// identity its successor can act on. Recording it any earlier would name a
+	// group that does not exist; any later leaves a window with no record at all.
+	var onStart func(int)
+	if l != nil {
+		onStart = func(pid int) {
+			record := launchRecord{Engine: string(o.Engine), PID: pid, Group: pid, Launch: l.host.socketDir, Started: time.Now().UTC()}
+			if err := recordLaunch(l.host.cfg.Dir, record); err != nil {
+				s.fail(err)
+			}
+		}
+	}
 	// Reader callbacks may fire before startup returns; the transport assignment
 	// is protected so an early process failure cannot race Close.
 	s.mu.Lock()
-	w, err := newProcessWire(ctx, o, s.ref.ID, r != nil, l, s.notification, s.fail)
+	w, err := newProcessWire(ctx, o, s.ref.ID, r != nil, l, onStart, s.notification, s.fail)
 	s.transport = w
 	s.mu.Unlock()
 	if err != nil {

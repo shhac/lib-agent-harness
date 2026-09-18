@@ -17,13 +17,16 @@ import (
 	"time"
 )
 
-// holdLockEnv makes the test binary re-execute itself as a stand-in for a
+// These env names make the test binary re-execute itself as a stand-in for a
 // bridge running under a harness: it takes the lock and waits to be killed.
-const holdLockEnv = "AGENT_HARNESS_TEST_HOLD_LOCK"
+const (
+	holdLockEnv   = "AGENT_HARNESS_TEST_HOLD_LOCK"
+	holdLaunchEnv = "AGENT_HARNESS_TEST_HOLD_LAUNCH"
+)
 
 func TestMain(m *testing.M) {
 	if path := os.Getenv(holdLockEnv); path != "" {
-		lock, err := holdBridgeLock(path)
+		lock, err := holdBridgeLock(path, os.Getenv(holdLaunchEnv))
 		if err != nil {
 			os.Exit(2)
 		}
@@ -61,11 +64,14 @@ func TestRunBridgeRelaysAuthenticatedTraffic(t *testing.T) {
 	if !strings.Contains(scanner.Text(), `\"path\":\"a.go\"`) {
 		t.Fatalf("bridge did not relay the tool result: %s", scanner.Text())
 	}
-	// The lock is held for the bridge's whole life, which is what makes an
-	// orphaned harness discoverable after a crash.
-	held, err := readBridgeLock(filepath.Join(h.cfg.Dir, "bridge.lock"))
+	held, err := readBridgeLock(lockPath(h.cfg.Dir))
 	if err != nil || held == nil {
 		t.Fatalf("a running bridge did not hold its lock: %v %v", held, err)
+	}
+	// The launch identity is what lets recovery tell this bridge apart from an
+	// unrelated process that inherited the same group number.
+	if held.Launch != h.socketDir {
+		t.Errorf("bridge did not record the launch it belongs to: %+v", held)
 	}
 	cancel()
 	select {
@@ -84,28 +90,105 @@ func TestRunBridgeRefusesWithoutASession(t *testing.T) {
 	}
 }
 
-func TestReclaimReportsNothingWhenNoSubtreeSurvived(t *testing.T) {
-	dir := privateDir(t)
-	out, err := Reclaim(context.Background(), dir)
-	if err != nil || out.Found || out.Reclaimed {
-		t.Fatalf("an absent lock was not reported as nothing to reclaim: %+v %v", out, err)
-	}
-	// A lock file that exists but is free is equally positive evidence.
-	if err = os.WriteFile(filepath.Join(dir, "bridge.lock"), []byte(`{"group":424242}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if out, err = Reclaim(context.Background(), dir); err != nil || out.Found {
-		t.Fatalf("a free lock was treated as a surviving subtree: %+v %v", out, err)
+func TestReclaimReportsNothingWhenNothingWasLaunched(t *testing.T) {
+	out, err := Reclaim(context.Background(), privateDir(t))
+	if err != nil || out.Found || !out.Confirmed {
+		t.Fatalf("an absent launch record was not reported as nothing to reclaim: %+v %v", out, err)
 	}
 }
 
-// Stopping whatever a session operated on does not establish that the harness
-// stopped. Reclaim ends the surviving group and confirms it is gone.
-func TestReclaimTerminatesAnOrphanedSubtree(t *testing.T) {
+// A free bridge lock is not evidence of anything. A harness can outlive its tool
+// server, restart it, or sit in inference with none running, so absence has to
+// come from the process group and identity from a live bridge.
+func TestFreeBridgeLockIsNotProofTheHarnessIsGone(t *testing.T) {
 	dir := privateDir(t)
-	lock := filepath.Join(dir, "bridge.lock")
-	cmd := exec.Command(os.Args[0], "-test.run=TestReclaimTerminatesAnOrphanedSubtree")
-	cmd.Env = append(os.Environ(), holdLockEnv+"="+lock)
+	group, err := syscall.Getpgid(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A recorded group that is certainly alive — this test's own — with no bridge
+	// holding the lock.
+	if err = recordLaunch(dir, launchRecord{Engine: "claude", PID: os.Getpid(), Group: group, Launch: "/tmp/absent"}); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(lockPath(dir), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := Reclaim(context.Background(), dir)
+	if !errors.Is(err, ErrUnreclaimed) {
+		t.Fatalf("a free lock over a live group was read as absence: %+v %v", out, err)
+	}
+	if !out.Found || out.Confirmed || out.Terminated {
+		t.Fatalf("unresolved recovery was reported as settled: %+v", out)
+	}
+}
+
+// A group with no members is the one thing that does establish absence.
+func TestReclaimConfirmsAbsenceFromTheProcessGroup(t *testing.T) {
+	dir := privateDir(t)
+	cmd := exec.Command(os.Args[0], "-test.run=TestReclaimConfirmsAbsenceFromTheProcessGroup")
+	cmd.Env = append(os.Environ(), holdLockEnv+"="+filepath.Join(privateDir(t), "unused.lock"))
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	pid := cmd.Process.Pid
+	_ = cmd.Process.Kill()
+	_ = cmd.Wait()
+	if err := recordLaunch(dir, launchRecord{Engine: "claude", PID: pid, Group: pid, Launch: "/tmp/gone"}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := Reclaim(context.Background(), dir)
+	if err != nil || out.Found || !out.Confirmed {
+		t.Fatalf("a dead group was not confirmed absent: %+v %v", out, err)
+	}
+}
+
+// A live group whose bridge names the same launch is provably ours, so it can be
+// signalled — and termination is confirmed from the group, not from the lock.
+func TestReclaimTerminatesAnIdentifiedOrphan(t *testing.T) {
+	dir := privateDir(t)
+	launch := filepath.Join(privateDir(t), "launch")
+	cmd := exec.Command(os.Args[0], "-test.run=TestReclaimTerminatesAnIdentifiedOrphan")
+	cmd.Env = append(os.Environ(), holdLockEnv+"="+lockPath(dir), holdLaunchEnv+"="+launch)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	// Reap as soon as it dies. In the situation this models, the process that
+	// started the harness is gone and init reaps it; here the test is still its
+	// parent, and an unreaped child stays visible to a liveness probe.
+	reaped := make(chan struct{})
+	go func() { defer close(reaped); _ = cmd.Wait() }()
+	defer func() { _ = cmd.Process.Kill(); <-reaped }()
+	ready := bufio.NewScanner(stdout)
+	if !ready.Scan() || ready.Text() != "held" {
+		t.Fatalf("stand-in bridge did not take the lock: %v", ready.Err())
+	}
+	if err = recordLaunch(dir, launchRecord{Engine: "claude", PID: cmd.Process.Pid, Group: cmd.Process.Pid, Launch: launch}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := Reclaim(ctx, dir)
+	if err != nil {
+		t.Fatalf("reclaim failed: %v", err)
+	}
+	if !out.Found || !out.Terminated || !out.Confirmed || out.Group != cmd.Process.Pid {
+		t.Fatalf("identified orphan was not reclaimed: %+v", out)
+	}
+}
+
+// A live group whose bridge belongs to a different launch must never be
+// signalled: that is exactly the identifier-reuse case.
+func TestReclaimRefusesAnUnidentifiedLiveGroup(t *testing.T) {
+	dir := privateDir(t)
+	cmd := exec.Command(os.Args[0], "-test.run=TestReclaimRefusesAnUnidentifiedLiveGroup")
+	cmd.Env = append(os.Environ(), holdLockEnv+"="+lockPath(dir), holdLaunchEnv+"=/tmp/some-other-launch")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -119,42 +202,64 @@ func TestReclaimTerminatesAnOrphanedSubtree(t *testing.T) {
 	if !ready.Scan() || ready.Text() != "held" {
 		t.Fatalf("stand-in bridge did not take the lock: %v", ready.Err())
 	}
-	held, err := readBridgeLock(lock)
-	if err != nil || held == nil || held.Group != cmd.Process.Pid {
-		t.Fatalf("lock does not name the live holder's group: %+v %v", held, err)
+	if err = recordLaunch(dir, launchRecord{Engine: "claude", PID: cmd.Process.Pid, Group: cmd.Process.Pid, Launch: "/tmp/our-launch"}); err != nil {
+		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	out, err := Reclaim(ctx, dir)
-	if err != nil {
-		t.Fatalf("reclaim failed: %v", err)
+	out, err := Reclaim(context.Background(), dir)
+	if !errors.Is(err, ErrUnreclaimed) {
+		t.Fatalf("a group with foreign identity was accepted: %+v %v", out, err)
 	}
-	if !out.Found || !out.Reclaimed || out.Group != cmd.Process.Pid {
-		t.Fatalf("orphan was not reclaimed: %+v", out)
+	if out.Terminated {
+		t.Fatal("a process group was signalled without identity proof")
 	}
-	if held, err = readBridgeLock(lock); err != nil || held != nil {
-		t.Fatalf("lock still held after reclamation: %+v %v", held, err)
+	if cmd.Process.Signal(syscall.Signal(0)) != nil {
+		t.Fatal("the unidentified process was killed")
 	}
 }
 
-// Recovery must never signal the group it is running in, and must never treat
-// an unusable record as a licence to kill something.
-func TestReclaimRefusesToSignalItsOwnGroup(t *testing.T) {
-	dir := privateDir(t)
-	lock := filepath.Join(dir, "bridge.lock")
-	held, err := holdBridgeLock(lock)
+// Recovery must never signal the group it is running in, and must never treat an
+// unusable record as a licence to kill something.
+func TestRecoveryNeverSignalsImplausibleGroups(t *testing.T) {
+	if terminateGroup(0, 0) == nil || terminateGroup(1, 0) == nil {
+		t.Error("an implausible process group was accepted for termination")
+	}
+	own, err := syscall.Getpgid(0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer held.Close()
-	out, err := Reclaim(context.Background(), dir)
-	if !errors.Is(err, ErrUnreclaimed) {
-		t.Fatalf("reclaiming this process's own group was not refused: %+v %v", out, err)
+	if terminateGroup(own, 0) == nil {
+		t.Error("this process's own group was accepted for termination")
 	}
-	if !out.Found {
-		t.Error("a held lock was not reported as a surviving subtree")
+	if _, err = groupAlive(1); err == nil {
+		t.Error("an implausible group was probed rather than refused")
 	}
-	if terminateGroup(0) == nil || terminateGroup(1) == nil {
-		t.Error("an implausible process group was accepted for termination")
+	dir := privateDir(t)
+	unusable, _ := json.Marshal(launchRecord{Engine: "claude", Group: 0})
+	if err = os.WriteFile(launchPath(dir), unusable, 0600); err != nil {
+		t.Fatal(err)
 	}
+	if _, err = Reclaim(context.Background(), dir); err == nil {
+		t.Error("an unusable launch record was accepted")
+	}
+}
+
+// Two processes must not drive one assignment, including before any bridge has
+// started.
+func TestAssignmentLeaseExcludesASecondHolder(t *testing.T) {
+	path := filepath.Join(privateDir(t), "session.lease")
+	first, err := holdLease(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = holdLease(path); !errors.Is(err, ErrLeaseHeld) {
+		t.Fatalf("a second holder took the assignment lease: %v", err)
+	}
+	if err = first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	second, err := holdLease(path)
+	if err != nil {
+		t.Fatalf("lease was not released: %v", err)
+	}
+	_ = second.Close()
 }

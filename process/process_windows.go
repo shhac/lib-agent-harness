@@ -22,7 +22,12 @@ type Process struct {
 	mu      sync.Mutex
 	job     windows.Handle
 	stopped bool
+	onStart func(int)
 }
+
+// Notify registers a callback invoked once, after the child is running and
+// contained, with its process ID. Set it before Run.
+func (p *Process) Notify(fn func(int)) { p.onStart = fn }
 
 func New(cmd *exec.Cmd) (*Process, error) {
 	job, err := windows.CreateJobObject(nil, nil)
@@ -69,7 +74,12 @@ func (p *Process) Run() error {
 	if setupErr != nil {
 		p.stopLocked()
 	}
+	pid := p.cmd.Process.Pid
+	notify := p.onStart
 	p.mu.Unlock()
+	if setupErr == nil && notify != nil {
+		notify(pid)
+	}
 	waitErr := p.cmd.Wait()
 	if setupErr != nil {
 		return setupErr

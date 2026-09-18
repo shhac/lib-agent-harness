@@ -95,10 +95,8 @@ func (c *client) receive(t *testing.T) map[string]any {
 	return frame
 }
 
-func (c *client) call(t *testing.T, name string, args map[string]any) (string, bool) {
+func readResult(t *testing.T, frame map[string]any) (string, bool) {
 	t.Helper()
-	c.send(t, "tools/call", map[string]any{"name": name, "arguments": args})
-	frame := c.receive(t)
 	result, ok := frame["result"].(map[string]any)
 	if !ok {
 		t.Fatalf("no result: %v", frame)
@@ -111,6 +109,12 @@ func (c *client) call(t *testing.T, name string, args map[string]any) (string, b
 	}
 	isError, _ := result["isError"].(bool)
 	return text, isError
+}
+
+func (c *client) call(t *testing.T, name string, args map[string]any) (string, bool) {
+	t.Helper()
+	c.send(t, "tools/call", map[string]any{"name": name, "arguments": args})
+	return readResult(t, c.receive(t))
 }
 
 func echoHandler(t *testing.T) ToolHandler {
@@ -194,10 +198,11 @@ func TestToolHostRefusesUnknownAndMalformedCalls(t *testing.T) {
 	}
 }
 
-// A closing tool has to shut the channel the moment it is admitted. Native
-// turns issue several calls at once, so latching on return would let work
-// continue after the session has already reported that it finished.
-func TestClosingToolRefusesLaterCallsImmediately(t *testing.T) {
+// Work issued while a closing tool is running must never execute. Serializing
+// is what makes that statement true: the later call waits, and by the time it
+// could run the channel has closed. Cancelling it mid-write instead would leave
+// an effect nobody can describe in the evidence.
+func TestWorkQueuedBehindAClosingToolNeverRuns(t *testing.T) {
 	running := make(chan struct{})
 	release := make(chan struct{})
 	executed := make(chan string, 8)
@@ -222,15 +227,20 @@ func TestClosingToolRefusesLaterCallsImmediately(t *testing.T) {
 	}()
 	<-running
 
-	// Arrives while the closing tool is still executing: it must not run.
 	parallel := dial(t, h, string(h.secret))
-	text, isError := parallel.call(t, "write_file", map[string]any{"path": "x"})
-	if !isError || !strings.Contains(text, "nothing was executed") {
-		t.Fatalf("a parallel call ran after the channel closed: %q %v", text, isError)
-	}
+	queued := make(chan struct{})
+	go func() {
+		defer close(queued)
+		_ = parallel.post("tools/call", map[string]any{"name": "write_file", "arguments": map[string]any{"path": "x"}})
+	}()
+	<-queued
 	close(release)
 	if frame := finisher.receive(t); frame["result"] == nil {
 		t.Fatalf("closing tool did not complete: %v", frame)
+	}
+	text, isError := readResult(t, parallel.receive(t))
+	if !isError || !strings.Contains(text, "nothing was executed") {
+		t.Fatalf("a queued call ran after the channel closed: %q %v", text, isError)
 	}
 	if _, isError = parallel.call(t, "write_file", map[string]any{"path": "y"}); !isError {
 		t.Error("a later call ran after the channel closed")
@@ -248,46 +258,70 @@ func TestClosingToolRefusesLaterCallsImmediately(t *testing.T) {
 	}
 }
 
-// Admitting a closing tool cancels work already running. An effect cannot be
-// undone, but it can be stopped from continuing.
-func TestClosingToolCancelsConcurrentWork(t *testing.T) {
-	started := make(chan struct{})
-	cancelled := make(chan struct{})
+// A closing tool that refuses its own arguments has not closed anything. The
+// decision belongs to the handler, after it has validated the call.
+func TestRejectedClosingToolLeavesTheChannelOpen(t *testing.T) {
 	h := testHost(t,
-		ToolHandlerFunc(func(ctx context.Context, c ToolCall) (ToolResult, error) {
-			if c.Name == "run_command" {
-				close(started)
-				<-ctx.Done()
-				close(cancelled)
-				return ToolResult{}, ctx.Err()
+		ToolHandlerFunc(func(_ context.Context, c ToolCall) (ToolResult, error) {
+			if c.Name == "finish" && !strings.Contains(string(c.Arguments), "summary") {
+				return ToolResult{Content: "finish requires an acceptance summary", IsError: true}, nil
 			}
-			return ToolResult{Content: "reported"}, nil
+			return ToolResult{Content: "ok"}, nil
 		}),
-		ToolDefinition{Name: "run_command", Schema: map[string]any{"type": "object"}},
-		ToolDefinition{Name: "ask_decision", Schema: map[string]any{"type": "object"}, Closing: true},
+		ToolDefinition{Name: "finish", Schema: map[string]any{"type": "object"}, Closing: true},
+		ToolDefinition{Name: "write_file", Schema: map[string]any{"type": "object"}},
 	)
-	slow := dial(t, h, string(h.secret))
-	go func() {
-		_ = slow.post("tools/call", map[string]any{"name": "run_command", "arguments": map[string]any{}})
-	}()
-	<-started
-	closer := dial(t, h, string(h.secret))
-	if _, isError := closer.call(t, "ask_decision", map[string]any{}); isError {
-		t.Fatal("closing tool was refused")
+	c := dial(t, h, string(h.secret))
+	if _, isError := c.call(t, "finish", map[string]any{}); !isError {
+		t.Fatal("an invalid finish was accepted")
 	}
-	select {
-	case <-cancelled:
-	case <-time.After(3 * time.Second):
-		t.Fatal("concurrent work was not cancelled")
+	if h.channelClosed() {
+		t.Fatal("a refused closing tool closed the channel")
 	}
-	text, isError := "", false
-	result := slow.receive(t)["result"].(map[string]any)
-	if content, _ := result["content"].([]any); len(content) > 0 {
-		text, _ = content[0].(map[string]any)["text"].(string)
+	if _, isError := c.call(t, "write_file", map[string]any{"path": "x"}); isError {
+		t.Error("work was refused after a finish that did not finish anything")
 	}
-	isError, _ = result["isError"].(bool)
-	if !isError || !strings.Contains(text, "effect is unknown") {
-		t.Errorf("cancelled work did not report uncertainty: %q", text)
+	if _, isError := c.call(t, "finish", map[string]any{"summary": "done"}); isError {
+		t.Fatal("a valid finish was refused")
+	}
+	if !h.channelClosed() {
+		t.Error("a successful finish did not close the channel")
+	}
+}
+
+// Serialized execution is the property the closing boundary rests on, so it is
+// worth asserting directly rather than inferring it.
+func TestToolCallsExecuteOneAtATime(t *testing.T) {
+	var mu sync.Mutex
+	concurrent, peak := 0, 0
+	h := testHost(t, ToolHandlerFunc(func(context.Context, ToolCall) (ToolResult, error) {
+		mu.Lock()
+		concurrent++
+		if concurrent > peak {
+			peak = concurrent
+		}
+		mu.Unlock()
+		time.Sleep(20 * time.Millisecond)
+		mu.Lock()
+		concurrent--
+		mu.Unlock()
+		return ToolResult{Content: "ok"}, nil
+	}))
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c := dial(t, h, string(h.secret))
+			c.send(t, "tools/call", map[string]any{"name": "read_file", "arguments": map[string]any{}})
+			c.receive(t)
+		}()
+	}
+	wg.Wait()
+	mu.Lock()
+	defer mu.Unlock()
+	if peak != 1 {
+		t.Fatalf("%d tool calls executed at once; the closing boundary needs exactly one", peak)
 	}
 }
 

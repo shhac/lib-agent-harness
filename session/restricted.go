@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -28,15 +27,17 @@ import (
 type Restriction struct {
 	// Tools is the session's entire tool surface.
 	Tools ToolHost
-	// Probe bounds the pre-launch capability check. Default 60s.
+	// Probe bounds the pre-launch capability check. Default 60s. The check ends
+	// as soon as the harness has sent a request and a short settling window has
+	// passed, so this bound is a ceiling for a harness that never sends one.
 	Probe time.Duration
-	// SkipProbe runs a restricted session without proving the restriction first.
-	// It exists for callers that have already proved this exact configuration in
-	// this process, and for tests. It is not a way to run an unverified harness:
-	// the post-startup check still applies, and a caller that sets this is
-	// asserting the verification happened elsewhere.
-	SkipProbe bool
 }
+
+// There is deliberately no option to skip verification. A caller's assertion
+// that a build is safe is not evidence, and an exported switch for it would
+// become the thing every awkward deployment reaches for. Repeat launches avoid
+// the cost through a process-local cache keyed by the exact binary and the
+// exact arguments, which is evidence about the same thing the probe proved.
 
 // Capability failure codes. They are fixed library constants: no provider text,
 // path or credential ever enters one.
@@ -55,13 +56,26 @@ const (
 	CapabilityCatalogRestriction  = "model_catalog_restriction_failed"
 )
 
+// Capability check phases. The distinction matters to an operator: one of these
+// happened before the harness existed, the other after it started but still
+// before it was given anything to do.
+const (
+	// BeforeLaunch: the check ran against a disposable home and a provider that
+	// refuses inference. No credentialed process was started.
+	BeforeLaunch = "before_launch"
+	// BeforeFirstPrompt: the harness had started and advertised a surface that
+	// disagreed with the session's. No prompt was sent; the session was closed.
+	BeforeFirstPrompt = "before_first_prompt"
+)
+
 // CapabilityError reports that a restricted session could not be established.
-// Nothing was launched with the caller's login. Tools names, when present, are
-// the ones the check disagreed about, and they come from the caller's own
-// configuration or from a fixed native-name comparison — never from free text.
+// Tool names, when present, are the ones the check disagreed about, and they
+// come from the caller's own configuration or from a fixed native-name
+// comparison — never from free text.
 type CapabilityError struct {
 	Engine string
 	Code   string
+	Phase  string
 	Tools  []string
 }
 
@@ -87,14 +101,22 @@ func (e *CapabilityError) Error() string {
 	if len(e.Tools) > 0 {
 		out += " (" + strings.Join(e.Tools, ", ") + ")"
 	}
-	return out + "; no session was started"
+	// Say what actually happened rather than one reassuring phrase for both: a
+	// session that started and was closed is a different fact to report than one
+	// that was never launched.
+	switch e.Phase {
+	case BeforeFirstPrompt:
+		return out + "; the session was closed before any prompt was sent"
+	default:
+		return out + "; no session was started"
+	}
 }
 func (e *CapabilityError) Unwrap() error { return ErrUnsupported }
 
 // compareTools is the whole capability judgement: exactly the configured tools,
 // nothing else. Extra tools are a disclosure path; missing tools mean the
 // session cannot do its work and would improvise with whatever remained.
-func compareTools(engine string, expected, actual []string) *CapabilityError {
+func compareTools(engine, phase string, expected, actual []string) *CapabilityError {
 	want := map[string]bool{}
 	for _, name := range expected {
 		want[name] = true
@@ -117,53 +139,71 @@ func compareTools(engine string, expected, actual []string) *CapabilityError {
 	sort.Strings(extra)
 	sort.Strings(missing)
 	if len(extra) > 0 {
-		return &CapabilityError{Engine: engine, Code: CapabilityNativeToolsPresent, Tools: extra}
+		return &CapabilityError{Engine: engine, Code: CapabilityNativeToolsPresent, Phase: phase, Tools: extra}
 	}
 	if len(missing) > 0 {
-		return &CapabilityError{Engine: engine, Code: CapabilityHostedToolsMissing, Tools: missing}
+		return &CapabilityError{Engine: engine, Code: CapabilityHostedToolsMissing, Phase: phase, Tools: missing}
 	}
 	return nil
 }
 
-// mcpServers is the configuration both engines receive: one server, the
-// caller's bridge, and the paths naming this session's private channel.
-func mcpServers(h *toolHost) map[string]any {
-	env := map[string]any{}
-	for key, value := range h.environment() {
-		env[key] = value
-	}
-	args := h.cfg.Bridge.Args
-	if args == nil {
-		args = []string{}
-	}
-	return map[string]any{h.cfg.Server: map[string]any{
-		"type": "stdio", "command": h.cfg.Bridge.Path, "args": args, "env": env,
-	}}
-}
-
 // claudeRestrictedArgs disables every inherited customization surface and
-// allows exactly the hosted tools.
+// leaves the caller's tools as the only ones available.
+//
+// Two flags, because they answer two different questions and the installed
+// build decides which one matters. `--tools=` with an empty list removes the
+// built-in tool surface, which is the part that would otherwise read the host.
+// `--allowedTools` grants permission to exactly the hosted identifiers, which
+// is how an MCP tool becomes usable without a prompt. Putting the hosted names
+// in `--tools` instead would be a guess about a built-in-tool flag; this way,
+// whichever flag the build applies to MCP tools, the outcome is the same set.
+// If a build disagrees, the pre-launch probe sees the wrong surface and refuses
+// to start the session rather than proceeding on the assumption.
 func claudeRestrictedArgs(h *toolHost) []string {
-	config, _ := json.Marshal(map[string]any{"mcpServers": mcpServers(h)})
+	config, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{
+		h.cfg.Server: map[string]any{
+			"type": "stdio", "command": h.cfg.Bridge.Path,
+			"args": bridgeArgs(h), "env": h.environment(),
+		},
+	}})
 	return []string{
 		"--setting-sources=", `--settings={"disableAllHooks":true}`,
 		"--strict-mcp-config", "--mcp-config=" + string(config),
 		"--disable-slash-commands", "--no-chrome",
-		"--tools=" + strings.Join(h.cfg.Qualified(), ","),
+		"--tools=",
+		"--allowedTools=" + strings.Join(h.cfg.Qualified(), ","),
 	}
+}
+
+func bridgeArgs(h *toolHost) []string {
+	if h.cfg.Bridge.Args == nil {
+		return []string{}
+	}
+	return h.cfg.Bridge.Args
 }
 
 // codexRestrictedArgs pairs the shared catalog restriction with the settings
 // that suppress inherited configuration, rules and project documents.
-func codexRestrictedArgs(h *toolHost, catalogPath string) []string {
+//
+// Every override here is TOML, because that is what Codex parses. The MCP
+// server is registered as dotted-key leaves rather than one nested value, so
+// quoting stays local to each string.
+func codexRestrictedArgs(h *toolHost, catalogPath string) ([]string, error) {
+	catalog, err := restrict.TOMLString(catalogPath)
+	if err != nil {
+		return nil, err
+	}
+	settings := append([]string{"model_catalog_json=" + catalog}, restrict.CodexSettings()...)
+	server, err := restrict.CodexMCPServer(h.cfg.Server, h.cfg.Bridge.Path, bridgeArgs(h), h.environment())
+	if err != nil {
+		return nil, err
+	}
+	settings = append(settings, server...)
 	args := []string{"--ignore-user-config", "--ignore-rules"}
-	settings := append([]string{"model_catalog_json=" + strconv.Quote(catalogPath)}, restrict.CodexSettings()...)
-	server, _ := json.Marshal(mcpServers(h)[h.cfg.Server])
-	settings = append(settings, "mcp_servers."+h.cfg.Server+"="+string(server))
 	for _, setting := range settings {
 		args = append(args, "-c", setting)
 	}
-	return args
+	return args, nil
 }
 
 // restrictedCatalogFor narrows an installed catalog to the selected model with
@@ -173,11 +213,11 @@ func codexRestrictedArgs(h *toolHost, catalogPath string) []string {
 // than by replacing the base prompt.
 func restrictedCatalogFor(catalog []byte, model, effort string) ([]byte, error) {
 	if len(catalog) == 0 {
-		return nil, &CapabilityError{Engine: string(Codex), Code: CapabilityCatalogUnavailable}
+		return nil, &CapabilityError{Engine: string(Codex), Code: CapabilityCatalogUnavailable, Phase: BeforeLaunch}
 	}
 	out, err := restrict.CodexCatalog(catalog, model, effort, nil)
 	if err != nil {
-		return nil, &CapabilityError{Engine: string(Codex), Code: CapabilityCatalogRestriction, Tools: reasonOf(err)}
+		return nil, &CapabilityError{Engine: string(Codex), Code: CapabilityCatalogRestriction, Phase: BeforeLaunch, Tools: reasonOf(err)}
 	}
 	return out, nil
 }

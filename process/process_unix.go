@@ -17,7 +17,14 @@ type Process struct {
 	started  bool
 	finished bool
 	stopped  bool
+	onStart  func(int)
 }
+
+// Notify registers a callback invoked once, after the child is running and
+// contained, with its process ID. A caller that has to record what it launched
+// before it can safely recover from a crash needs that identity, and needs it
+// only when containment actually took effect. Set it before Run.
+func (p *Process) Notify(fn func(int)) { p.onStart = fn }
 
 // New prepares containment before any child starts.
 func New(cmd *exec.Cmd) (*Process, error) {
@@ -34,9 +41,17 @@ func (p *Process) Run() error {
 	}
 	err := p.cmd.Start()
 	p.started = err == nil
+	pid := 0
+	if err == nil {
+		pid = p.cmd.Process.Pid
+	}
+	notify := p.onStart
 	p.mu.Unlock()
 	if err != nil {
 		return err
+	}
+	if notify != nil {
+		notify(pid)
 	}
 	err = p.cmd.Wait()
 	p.mu.Lock()

@@ -92,7 +92,7 @@ func (s *Session) Health() Health {
 	out := Health{State: Running, LastEventAt: last}
 	if host != nil {
 		host.mu.Lock()
-		out.ActiveTools = len(host.inflight)
+		out.ActiveTools = host.running
 		host.mu.Unlock()
 	}
 	if t != nil {

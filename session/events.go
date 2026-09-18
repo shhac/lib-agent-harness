@@ -111,7 +111,7 @@ func (s *Session) observeClaudeInit(m map[string]json.RawMessage) bool {
 		Tools []string `json:"tools"`
 	}
 	if json.Unmarshal(mustMarshal(m), &frame) != nil {
-		s.recordRestriction(&CapabilityError{Engine: string(Claude), Code: CapabilityProbeUnreadable})
+		s.recordRestriction(&CapabilityError{Engine: string(Claude), Code: CapabilityProbeUnreadable, Phase: BeforeFirstPrompt})
 		return true
 	}
 	server := s.options.Restriction.Tools.Server
@@ -119,7 +119,7 @@ func (s *Session) observeClaudeInit(m map[string]json.RawMessage) bool {
 	for _, name := range frame.Tools {
 		observed = append(observed, normalizeWireTool(name, server))
 	}
-	s.recordRestriction(compareTools(string(Claude), toolNames(s.options.Restriction.Tools.Tools), observed))
+	s.recordRestriction(compareTools(string(Claude), BeforeFirstPrompt, toolNames(s.options.Restriction.Tools.Tools), observed))
 	return true
 }
 

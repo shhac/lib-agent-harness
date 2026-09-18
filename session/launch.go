@@ -3,6 +3,8 @@ package session
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net"
@@ -52,9 +54,18 @@ func prepareLaunch(ctx context.Context, o Options) (*launch, error) {
 		if err = writePrivate(l.catalog, restricted); err != nil {
 			return fail(err)
 		}
-		l.extra = codexRestrictedArgs(host, l.catalog)
+		if l.extra, err = codexRestrictedArgs(host, l.catalog); err != nil {
+			return fail(err)
+		}
 	}
-	if o.Restriction.SkipProbe {
+	// The probe is unconditional. What can be skipped is repeating it for a
+	// binary and an argument set already proved in this process — which is a
+	// record of evidence, not an assertion that evidence was unnecessary.
+	key, err := verificationKey(o, l)
+	if err != nil {
+		return fail(err)
+	}
+	if verified.holds(key) {
 		return l, nil
 	}
 	host.setProbing(true)
@@ -63,7 +74,65 @@ func prepareLaunch(ctx context.Context, o Options) (*launch, error) {
 	if err != nil {
 		return fail(err)
 	}
+	verified.record(key)
 	return l, nil
+}
+
+// verificationKey identifies exactly what a probe established: this binary, as
+// it is on disk right now, launched with these arguments. Anything else — a
+// different binary, an upgraded one, a changed tool surface — is a different
+// question and gets asked again.
+//
+// The channel's ephemeral paths are excluded, because they change per launch
+// and are not part of what the probe judged. The tool identifiers are included,
+// because they are.
+func verificationKey(o Options, l *launch) (string, error) {
+	info, err := os.Stat(o.Binary)
+	if err != nil {
+		return "", &CapabilityError{Engine: string(o.Engine), Code: CapabilityProbeFailed, Phase: BeforeLaunch}
+	}
+	stable := make([]string, 0, len(l.extra))
+	for _, arg := range l.extra {
+		if strings.Contains(arg, l.host.socketDir) || strings.Contains(arg, l.host.cfg.Dir) {
+			continue
+		}
+		stable = append(stable, arg)
+	}
+	payload, _ := json.Marshal(struct {
+		Engine                Engine
+		Binary, Model, Effort string
+		Size                  int64
+		Modified              time.Time
+		Args, Tools           []string
+		Instructions          Instructions
+		Policy                Policy
+	}{o.Engine, o.Binary, o.Model, o.Effort, info.Size(), info.ModTime(), stable, o.Restriction.Tools.Qualified(), o.Instructions, o.Policy})
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+// verified remembers capability checks for this process only. Nothing is
+// written to disk: a restart re-proves, because a restart is exactly when an
+// installed CLI is most likely to have changed underneath.
+var verified = &verificationCache{seen: map[string]bool{}}
+
+type verificationCache struct {
+	mu   sync.Mutex
+	seen map[string]bool
+}
+
+func (c *verificationCache) holds(key string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.seen[key]
+}
+func (c *verificationCache) record(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.seen) > 64 {
+		c.seen = map[string]bool{}
+	}
+	c.seen[key] = true
 }
 
 // readCodexCatalog reads the installed model catalog with a disposable home and
@@ -71,14 +140,14 @@ func prepareLaunch(ctx context.Context, o Options) (*launch, error) {
 func readCodexCatalog(ctx context.Context, o Options) ([]byte, error) {
 	dir, err := os.MkdirTemp("", "agent-harness-catalog-")
 	if err != nil {
-		return nil, &CapabilityError{Engine: string(Codex), Code: CapabilityCatalogUnavailable}
+		return nil, &CapabilityError{Engine: string(Codex), Code: CapabilityCatalogUnavailable, Phase: BeforeLaunch}
 	}
 	defer os.RemoveAll(dir)
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	out, err := runOnce(ctx, o.Binary, []string{"debug", "models", "--bundled"}, dir, disposableEnvironment(o, dir))
 	if err != nil {
-		return nil, &CapabilityError{Engine: string(Codex), Code: CapabilityCatalogUnavailable}
+		return nil, &CapabilityError{Engine: string(Codex), Code: CapabilityCatalogUnavailable, Phase: BeforeLaunch}
 	}
 	return out, nil
 }
@@ -142,10 +211,11 @@ func (b *boundedBuffer) Bytes() []byte { return b.buf.Bytes() }
 func probeRestriction(ctx context.Context, o Options, l *launch) error {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return &CapabilityError{Engine: string(o.Engine), Code: CapabilityProbeFailed}
+		return &CapabilityError{Engine: string(o.Engine), Code: CapabilityProbeFailed, Phase: BeforeLaunch}
 	}
 	var mu sync.Mutex
 	captured := [][]byte{}
+	arrived := make(chan struct{}, 1)
 	server := &http.Server{ReadHeaderTimeout: 5 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodHead {
 			w.WriteHeader(http.StatusNotFound)
@@ -159,6 +229,10 @@ func probeRestriction(ctx context.Context, o Options, l *launch) error {
 			captured = append(captured, nil)
 		}
 		mu.Unlock()
+		select {
+		case arrived <- struct{}{}:
+		default:
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = io.WriteString(w, `{"error":{"message":"local capability check; no inference performed"}}`)
@@ -169,11 +243,25 @@ func probeRestriction(ctx context.Context, o Options, l *launch) error {
 
 	dir, err := os.MkdirTemp("", "agent-harness-probe-")
 	if err != nil {
-		return &CapabilityError{Engine: string(o.Engine), Code: CapabilityProbeFailed}
+		return &CapabilityError{Engine: string(o.Engine), Code: CapabilityProbeFailed, Phase: BeforeLaunch}
 	}
 	defer os.RemoveAll(dir)
 	probeCtx, cancel := context.WithTimeout(ctx, o.Restriction.Probe)
 	defer cancel()
+	// The question is answered the moment a request arrives. Wait a short while
+	// afterwards in case the harness retries with a different surface, then stop:
+	// a proved configuration should not sit out the whole timeout.
+	go func() {
+		select {
+		case <-arrived:
+			select {
+			case <-time.After(probeSettle):
+			case <-probeCtx.Done():
+			}
+			cancel()
+		case <-probeCtx.Done():
+		}
+	}()
 	runErr := driveProbe(probeCtx, o, l, dir, listener.Addr().String())
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -183,18 +271,18 @@ func probeRestriction(ctx context.Context, o Options, l *launch) error {
 	mu.Unlock()
 	if len(requests) == 0 {
 		if probeCtx.Err() != nil {
-			return &CapabilityError{Engine: string(o.Engine), Code: CapabilityProbeTimeout}
+			return &CapabilityError{Engine: string(o.Engine), Code: CapabilityProbeTimeout, Phase: BeforeLaunch}
 		}
 		if runErr != nil {
-			return &CapabilityError{Engine: string(o.Engine), Code: CapabilityProbeFailed}
+			return &CapabilityError{Engine: string(o.Engine), Code: CapabilityProbeFailed, Phase: BeforeLaunch}
 		}
-		return &CapabilityError{Engine: string(o.Engine), Code: CapabilityProbeNoRequest}
+		return &CapabilityError{Engine: string(o.Engine), Code: CapabilityProbeNoRequest, Phase: BeforeLaunch}
 	}
 	// Every request has to prove the same surface: a harness that retries with a
 	// different one has not established anything.
 	for _, body := range requests {
 		if body == nil {
-			return &CapabilityError{Engine: string(o.Engine), Code: CapabilityProbeUnreadable}
+			return &CapabilityError{Engine: string(o.Engine), Code: CapabilityProbeUnreadable, Phase: BeforeLaunch}
 		}
 		if failure := inspectProbeRequest(o, body); failure != nil {
 			return failure
@@ -203,33 +291,30 @@ func probeRestriction(ctx context.Context, o Options, l *launch) error {
 	return nil
 }
 
-// driveProbe starts the harness exactly as the real session would, with the
-// probe's disposable home and rejecting provider, and asks it for one turn.
+// probeSettle is how long the check keeps listening after the harness's first
+// request, in case it retries with a different surface.
+const probeSettle = 1500 * time.Millisecond
+
+// driveProbe starts the harness with exactly the arguments the real session
+// would use, and asks it for one turn. Equivalence is the whole point: a check
+// run with different permission modes, instructions or inputs would establish
+// something about a configuration nobody is going to launch. Only the home, the
+// credential and the provider endpoint differ, and all three are the reason the
+// check is safe to run.
 func driveProbe(ctx context.Context, o Options, l *launch, dir, endpoint string) error {
 	env := disposableEnvironment(o, dir)
-	args := append([]string{}, l.extra...)
+	id := newID()
+	args := commandArgs(o, id, false, l)
 	if o.Engine == Claude {
 		env = append(env, "ANTHROPIC_API_KEY=agent-harness-local-probe", "ANTHROPIC_BASE_URL=http://"+endpoint, "MAX_RETRIES=0", "DISABLE_AUTOUPDATER=1", "DISABLE_TELEMETRY=1")
-		return driveClaudeProbe(ctx, o, args, dir, env)
+		return driveClaudeProbe(ctx, o, args, id, dir, env)
 	}
 	provider := `model_providers.harness_probe={name="Harness capability check",base_url="http://` + endpoint + `/v1",wire_api="responses",request_max_retries=0,stream_max_retries=0,env_key="HARNESS_PROBE_KEY"}`
 	args = append(args, "-c", `model_provider="harness_probe"`, "-c", provider)
 	return driveCodexProbe(ctx, o, args, dir, append(env, "HARNESS_PROBE_KEY=local-dummy-value"))
 }
 
-func driveClaudeProbe(ctx context.Context, o Options, extra []string, dir string, env []string) error {
-	id := newID()
-	args := []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--session-id", id}
-	if o.Model != "" {
-		args = append(args, "--model", o.Model)
-	}
-	if o.Effort != "" {
-		args = append(args, "--effort", o.Effort)
-	}
-	if o.Instructions.Mode == Append {
-		args = append(args, "--append-system-prompt", o.Instructions.Text)
-	}
-	args = append(args, extra...)
+func driveClaudeProbe(ctx context.Context, o Options, args []string, id, dir string, env []string) error {
 	prompt, _ := json.Marshal(map[string]any{"type": "user", "session_id": id, "parent_tool_use_id": nil, "message": map[string]any{"role": "user", "content": "Capability check only."}})
 	cmd := exec.CommandContext(ctx, o.Binary, args...)
 	cmd.Dir = dir
@@ -250,9 +335,8 @@ func driveClaudeProbe(ctx context.Context, o Options, extra []string, dir string
 // driveCodexProbe speaks the app-server protocol the real session uses, so the
 // surface it proves is the one the session will run with. The turn it starts is
 // expected to fail: the provider refuses it. Only what was sent matters.
-func driveCodexProbe(ctx context.Context, o Options, extra []string, dir string, env []string) error {
-	args := append([]string{"app-server", "--listen", "stdio://"}, extra...)
-	w, err := newProcessWireArgs(ctx, o, args, env, func(map[string]json.RawMessage) {}, func(error) {})
+func driveCodexProbe(ctx context.Context, o Options, args []string, dir string, env []string) error {
+	w, err := newProcessWireArgs(ctx, o, args, env, nil, func(map[string]json.RawMessage) {}, func(error) {})
 	if err != nil {
 		return err
 	}
@@ -302,7 +386,7 @@ func inspectProbeRequest(o Options, body []byte) *CapabilityError {
 		} `json:"reasoning"`
 	}
 	if json.Unmarshal(body, &request) != nil {
-		return &CapabilityError{Engine: engine, Code: CapabilityProbeUnreadable}
+		return &CapabilityError{Engine: engine, Code: CapabilityProbeUnreadable, Phase: BeforeLaunch}
 	}
 	names := make([]string, 0, len(request.Tools))
 	for _, tool := range request.Tools {
@@ -317,18 +401,18 @@ func inspectProbeRequest(o Options, body []byte) *CapabilityError {
 	for _, tool := range o.Restriction.Tools.Tools {
 		hosted = append(hosted, tool.Name)
 	}
-	if failure := compareTools(engine, hosted, names); failure != nil {
+	if failure := compareTools(engine, BeforeLaunch, hosted, names); failure != nil {
 		return failure
 	}
 	if o.Engine == Codex {
 		if request.Model != o.Model {
-			return &CapabilityError{Engine: engine, Code: CapabilityChangedModel}
+			return &CapabilityError{Engine: engine, Code: CapabilityChangedModel, Phase: BeforeLaunch}
 		}
 		if o.Effort != "" && request.Reasoning.Effort != o.Effort {
-			return &CapabilityError{Engine: engine, Code: CapabilityChangedEffort}
+			return &CapabilityError{Engine: engine, Code: CapabilityChangedEffort, Phase: BeforeLaunch}
 		}
 		if bytes.Contains(body, []byte("# AGENTS.md instructions")) {
-			return &CapabilityError{Engine: engine, Code: CapabilityInstructionsMerged}
+			return &CapabilityError{Engine: engine, Code: CapabilityInstructionsMerged, Phase: BeforeLaunch}
 		}
 	}
 	return nil

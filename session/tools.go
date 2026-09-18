@@ -47,9 +47,10 @@ var (
 // Schema object describing the tool's arguments.
 //
 // Closing marks a tool that ends the session's work — reporting completion,
-// asking for a decision, handing off to another party. Admitting one closes the
-// channel before its handler runs, so no further call is admitted, and any call
-// executing concurrently has its context cancelled.
+// asking for a decision, handing off to another party. Because calls execute
+// one at a time, a closing tool runs with nothing else in flight, and the
+// channel latches shut only if the call actually succeeded: a rejected finish
+// has not finished anything.
 type ToolDefinition struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
@@ -66,8 +67,10 @@ type ToolCall struct {
 }
 
 // ToolResult is what the model sees. Content is truncated to the host's limit
-// with an explicit marker. Closes latches the channel shut on return, for a
-// tool whose closing behaviour depends on its arguments rather than its name.
+// with an explicit marker. Closes latches the channel shut for a tool whose
+// closing behaviour depends on its arguments rather than its name. Neither
+// Closes nor a Closing definition latches when IsError is set: a refusal is not
+// a completion.
 type ToolResult struct {
 	Content string
 	IsError bool
@@ -103,8 +106,6 @@ type ToolHost struct {
 	Dir            string
 	Bridge         Bridge
 	MaxResultBytes int
-	// MaxConcurrent bounds simultaneous tool calls. Default 8.
-	MaxConcurrent int
 }
 
 // Qualified returns the identifiers a harness exposes these tools under. They
@@ -165,23 +166,30 @@ func (h ToolHost) validate() error {
 	return nil
 }
 
-// toolHost owns the private listener. Its channel state is the authority on
-// whether a call may execute: a closing tool latches it shut on admission, not
-// on completion, so a concurrent call cannot slip past the boundary.
+// toolHost owns the private listener and the tool channel's lifetime.
+//
+// Calls execute one at a time. A native turn will happily ask for several at
+// once, and running them concurrently would make "after the work was reported"
+// an ambiguous claim: a write or a test could still be in flight when a closing
+// tool decides the assignment is finished, and cancelling it afterwards does not
+// undo it. Serializing costs some parallelism and buys a boundary the caller can
+// actually rely on, including for the evidence it collects.
 type toolHost struct {
 	cfg       ToolHost
 	listener  net.Listener
 	socket    string
 	socketDir string
 	secret    []byte
+	lease     *os.File
 	tools     map[string]ToolDefinition
+	// gate serializes execution across every connection.
+	gate chan struct{}
 
-	mu       sync.Mutex
-	closed   bool
-	probing  bool
-	stopped  bool
-	inflight map[int]context.CancelFunc
-	nextCall int
+	mu      sync.Mutex
+	closed  bool
+	probing bool
+	stopped bool
+	running int
 
 	// Wiring supplied by the session that owns this host. Both are nil for a
 	// host serving a capability probe, which has no session and no turn.
@@ -198,9 +206,6 @@ func newToolHost(cfg ToolHost) (*toolHost, error) {
 	if cfg.MaxResultBytes <= 0 {
 		cfg.MaxResultBytes = 64 << 10
 	}
-	if cfg.MaxConcurrent <= 0 {
-		cfg.MaxConcurrent = 8
-	}
 	// A local socket path has a hard length limit far below what an ordinary
 	// application state directory reaches, so the listener gets its own short
 	// owner-only directory. The durable files — the channel credential and the
@@ -210,7 +215,15 @@ func newToolHost(cfg ToolHost) (*toolHost, error) {
 		return nil, err
 	}
 	socket := filepath.Join(socketDir, "t.sock")
-	h := &toolHost{cfg: cfg, socket: socket, socketDir: socketDir, tools: map[string]ToolDefinition{}, inflight: map[int]context.CancelFunc{}, done: make(chan struct{})}
+	h := &toolHost{cfg: cfg, socket: socket, socketDir: socketDir, tools: map[string]ToolDefinition{}, gate: make(chan struct{}, 1), done: make(chan struct{})}
+	// The assignment lease is taken before anything is launched, so a second
+	// process cannot drive this assignment during the window before a bridge
+	// exists. It is released when the host closes, or by the operating system if
+	// this process dies.
+	if h.lease, err = holdLease(filepath.Join(cfg.Dir, "session.lease")); err != nil {
+		_ = os.RemoveAll(socketDir)
+		return nil, err
+	}
 	for _, t := range cfg.Tools {
 		h.tools[t.Name] = t
 	}
@@ -297,13 +310,15 @@ func (h *toolHost) close() {
 		return
 	}
 	h.stopped = true
-	for _, cancel := range h.inflight {
-		cancel()
-	}
+	lease := h.lease
+	h.lease = nil
 	h.mu.Unlock()
 	close(h.done)
 	_ = h.listener.Close()
 	h.wg.Wait()
+	if lease != nil {
+		_ = lease.Close()
+	}
 	_ = os.RemoveAll(h.socketDir)
 }
 
@@ -377,7 +392,6 @@ func (h *toolHost) serve(conn net.Conn) {
 		defer writeMu.Unlock()
 		_, _ = conn.Write(append(raw, '\n'))
 	}
-	calls := make(chan struct{}, h.cfg.MaxConcurrent)
 	var pending sync.WaitGroup
 	defer pending.Wait()
 	for scanner.Scan() {
@@ -401,17 +415,12 @@ func (h *toolHost) serve(conn net.Conn) {
 		case "tools/list":
 			reply(rpcResult(frame.ID, h.list()))
 		case "tools/call":
-			select {
-			case calls <- struct{}{}:
-			default:
-				reply(rpcResult(frame.ID, toolPayload("tool host concurrency limit reached; nothing was executed", true)))
-				continue
-			}
+			// Dispatched on its own goroutine so the connection keeps reading —
+			// execution itself is serialized inside dispatch, not here.
 			id, params := frame.ID, frame.Params
 			pending.Add(1)
 			go func() {
 				defer pending.Done()
-				defer func() { <-calls }()
 				reply(rpcResult(id, h.dispatch(params)))
 			}()
 		default:
@@ -470,9 +479,23 @@ func (h *toolHost) refuse(tool, reason, text string) map[string]any {
 	return toolPayload(text, true)
 }
 
-// dispatch admits or refuses a call, then runs the caller's handler. Admission
-// is where the closing boundary is enforced: the latch is taken before the
-// handler starts, and taking it cancels whatever is already running.
+// refuseLocked is refuse from inside the host's own lock. The notification runs
+// after the lock is released so a caller's observer cannot deadlock the channel.
+func (h *toolHost) refuseLocked(tool, reason, text string) map[string]any {
+	if notify := h.onRefusal; notify != nil {
+		go notify(tool, reason)
+	}
+	return toolPayload(text, true)
+}
+
+// dispatch admits a call, executes it and decides whether it ended the work.
+//
+// Execution is serialized: a call waits for the previous one to finish. That is
+// what makes "later" mean something. A closing tool then runs to completion like
+// any other, and the channel latches only if it actually succeeded — a finish
+// whose arguments were rejected has not finished anything, and neither has one
+// whose handler refused it. Nothing is cancelled to make room for it, because a
+// half-executed write or test is not a state worth reporting evidence about.
 func (h *toolHost) dispatch(params json.RawMessage) map[string]any {
 	var in struct {
 		Name      string          `json:"name"`
@@ -495,51 +518,83 @@ func (h *toolHost) dispatch(params json.RawMessage) map[string]any {
 	if json.Unmarshal(in.Arguments, &arguments) != nil || arguments == nil {
 		return h.refuse(in.Name, "malformed", "tool arguments must be a JSON object; nothing was executed")
 	}
+	if refusal := h.enter(in.Name); refusal != nil {
+		return refusal
+	}
+	defer h.leave()
+	// Re-read the channel state now that this call holds the gate: a closing
+	// tool may have completed while this one was queued behind it.
+	if refusal := h.admitted(in.Name); refusal != nil {
+		return refusal
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	h.mu.Lock()
-	switch {
-	case h.stopped:
-		h.mu.Unlock()
-		return h.refuse(in.Name, "stopped", "this session has stopped; nothing was executed")
-	case h.probing:
-		h.mu.Unlock()
-		return h.refuse(in.Name, "probing", "tool calls are refused during a capability check; nothing was executed")
-	case h.closed:
-		h.mu.Unlock()
-		return h.refuse(in.Name, "channel_closed", "work has already been reported or handed over; nothing was executed")
-	}
-	if definition.Closing {
-		// Close before running, so a call arriving in parallel is refused rather
-		// than racing this one, and cancel what is already running: an effect
-		// cannot be undone, but it can be stopped from continuing.
-		h.closed = true
-		for _, stop := range h.inflight {
-			stop()
+	// A stopping session cancels work in progress; the caller reports its effect
+	// as uncertain rather than as done.
+	stopped := make(chan struct{})
+	defer close(stopped)
+	go func() {
+		select {
+		case <-h.done:
+			cancel()
+		case <-stopped:
 		}
-	}
-	h.nextCall++
-	slot := h.nextCall
-	h.inflight[slot] = cancel
-	h.mu.Unlock()
+	}()
 	turn := ""
 	if h.activeTurn != nil {
 		turn = h.activeTurn()
 	}
 	result, err := h.cfg.Handler.CallTool(ctx, ToolCall{TurnID: turn, Name: in.Name, Arguments: in.Arguments})
-	h.mu.Lock()
-	delete(h.inflight, slot)
-	if err == nil && result.Closes {
-		h.closed = true
-	}
-	h.mu.Unlock()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return toolPayload("tool execution was cancelled; its effect is unknown and must be established from evidence", true)
 		}
 		return toolPayload(bound(err.Error(), 2048), true)
 	}
+	if !result.IsError && (definition.Closing || result.Closes) {
+		h.mu.Lock()
+		h.closed = true
+		h.mu.Unlock()
+	}
 	return toolPayload(bound(result.Content, h.cfg.MaxResultBytes), result.IsError)
+}
+
+// enter takes the serialization gate, refusing rather than queueing when the
+// channel is already finished or the session is stopping.
+func (h *toolHost) enter(name string) map[string]any {
+	if refusal := h.admitted(name); refusal != nil {
+		return refusal
+	}
+	select {
+	case h.gate <- struct{}{}:
+	case <-h.done:
+		return h.refuse(name, "stopped", "this session has stopped; nothing was executed")
+	}
+	h.mu.Lock()
+	h.running++
+	h.mu.Unlock()
+	return nil
+}
+
+func (h *toolHost) leave() {
+	h.mu.Lock()
+	h.running--
+	h.mu.Unlock()
+	<-h.gate
+}
+
+func (h *toolHost) admitted(name string) map[string]any {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	switch {
+	case h.stopped:
+		return h.refuseLocked(name, "stopped", "this session has stopped; nothing was executed")
+	case h.probing:
+		return h.refuseLocked(name, "probing", "tool calls are refused during a capability check; nothing was executed")
+	case h.closed:
+		return h.refuseLocked(name, "channel_closed", "work has already been reported or handed over; nothing was executed")
+	}
+	return nil
 }
 
 func quoteName(name string) string {
