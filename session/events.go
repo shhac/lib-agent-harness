@@ -95,11 +95,16 @@ func (s *Session) text(t *Turn, item, text string, replace bool) {
 }
 func mustMarshal(v any) []byte { b, _ := json.Marshal(v); return b }
 
-// observeClaudeInit cross-checks the tool surface the harness says it enabled,
-// on the frame it emits at startup and therefore before any prompt. The
-// pre-launch probe is what establishes the restriction; this catches a harness
-// whose behaviour differs between a probe and a credentialed run, still without
-// any inference having happened.
+// observeClaudeInit cross-checks what the harness says it enabled, on the frame
+// it emits at startup and therefore before any prompt. The pre-launch probe is
+// what establishes the restriction; this catches a harness whose behaviour
+// differs between a probe and a credentialed run, still without any inference.
+//
+// It checks two things, because the installed CLI can fail either way. A tool
+// set that is not exactly the hosted one is a disclosure path. And a tool server
+// that did not load leaves a session with no tools at all — observed for real
+// with a name the harness reserves, where the server was accepted, silently
+// dropped, and the session reported success with nothing to work with.
 func (s *Session) observeClaudeInit(m map[string]json.RawMessage) bool {
 	if str(m, "type") != "system" || str(m, "subtype") != "init" {
 		return false
@@ -108,13 +113,27 @@ func (s *Session) observeClaudeInit(m map[string]json.RawMessage) bool {
 		return false
 	}
 	var frame struct {
-		Tools []string `json:"tools"`
+		Tools   []string `json:"tools"`
+		Servers []struct {
+			Name   string `json:"name"`
+			Status string `json:"status"`
+		} `json:"mcp_servers"`
 	}
 	if json.Unmarshal(mustMarshal(m), &frame) != nil {
 		s.recordRestriction(&CapabilityError{Engine: string(Claude), Code: CapabilityProbeUnreadable, Phase: BeforeFirstPrompt})
 		return true
 	}
 	server := s.options.Restriction.Tools.Server
+	loaded := false
+	for _, advertised := range frame.Servers {
+		if advertised.Name == server && advertised.Status == "connected" {
+			loaded = true
+		}
+	}
+	if !loaded {
+		s.recordRestriction(&CapabilityError{Engine: string(Claude), Code: CapabilityServerNotLoaded, Phase: BeforeFirstPrompt, Tools: []string{server}})
+		return true
+	}
 	observed := make([]string, 0, len(frame.Tools))
 	for _, name := range frame.Tools {
 		observed = append(observed, normalizeWireTool(name, server))

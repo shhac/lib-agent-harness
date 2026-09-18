@@ -2,6 +2,7 @@ package session
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -181,8 +182,8 @@ func TestUsageAccumulationRefusesToWrap(t *testing.T) {
 // prompt, so a mismatch still precedes inference — and it ends the session.
 func TestAdvertisedToolMismatchClosesTheSession(t *testing.T) {
 	s, _ := fakeSession(t, Claude)
-	s.options.Restriction = &Restriction{Tools: ToolHost{Server: "workspace", Tools: []ToolDefinition{{Name: "read_file"}}}}
-	notify(s, `{"type":"system","subtype":"init","session_id":"session-1","tools":["mcp__workspace__read_file","Bash"]}`)
+	s.options.Restriction = &Restriction{Tools: ToolHost{Server: "agent_workspace", Tools: []ToolDefinition{{Name: "read_file"}}}}
+	notify(s, `{"type":"system","subtype":"init","session_id":"session-1","mcp_servers":[{"name":"agent_workspace","status":"connected"}],"tools":["mcp__agent_workspace__read_file","Bash"]}`)
 	if s.Health().State != Exited && s.Health().State != Failed {
 		t.Fatalf("session survived an unauthorized tool surface: %+v", s.Health())
 	}
@@ -193,13 +194,50 @@ func TestAdvertisedToolMismatchClosesTheSession(t *testing.T) {
 
 func TestAdvertisedToolMatchRecordsTheCapability(t *testing.T) {
 	s, _ := fakeSession(t, Claude)
-	s.options.Restriction = &Restriction{Tools: ToolHost{Server: "workspace", Tools: []ToolDefinition{{Name: "read_file"}, {Name: "finish"}}}}
-	notify(s, `{"type":"system","subtype":"init","session_id":"session-1","tools":["mcp__workspace__finish","mcp__workspace__read_file"]}`)
+	s.options.Restriction = &Restriction{Tools: ToolHost{Server: "agent_workspace", Tools: []ToolDefinition{{Name: "read_file"}, {Name: "finish"}}}}
+	notify(s, `{"type":"system","subtype":"init","session_id":"session-1","mcp_servers":[{"name":"agent_workspace","source":"dynamic","status":"connected"}],"tools":["mcp__agent_workspace__finish","mcp__agent_workspace__read_file"]}`)
 	if s.Capabilities().RestrictTools.Availability != Native {
 		t.Fatalf("a matching surface was not recorded: %+v", s.Capabilities().RestrictTools)
 	}
 	if s.Health().State == Exited || s.Health().State == Failed {
 		t.Fatal("a matching surface closed the session")
+	}
+}
+
+// Observed for real against the installed CLI with a reserved server name: the
+// server is accepted, silently not loaded, and the session runs with no tools
+// while reporting success. A session with nothing to work with is not a working
+// session, so this ends it too.
+func TestSilentlyDroppedToolServerClosesTheSession(t *testing.T) {
+	s, _ := fakeSession(t, Claude)
+	s.options.Restriction = &Restriction{Tools: ToolHost{Server: "agent_workspace", Tools: []ToolDefinition{{Name: "read_file"}}}}
+	notify(s, `{"type":"system","subtype":"init","session_id":"session-1","mcp_servers":[],"tools":[]}`)
+	if s.Health().State != Exited && s.Health().State != Failed {
+		t.Fatalf("session survived without its tool server: %+v", s.Health())
+	}
+	if s.Capabilities().RestrictTools.Availability != Unsupported {
+		t.Fatalf("a dropped server was not recorded as unsupported: %+v", s.Capabilities().RestrictTools)
+	}
+}
+
+// A reserved name is refused before anything is launched, so an operator is
+// told what to change rather than seeing an empty session.
+func TestReservedToolServerNameIsRefused(t *testing.T) {
+	o := restrictedOptions(t, Claude)
+	o.Restriction.Tools.Server = "workspace"
+	_, err := normalize(o)
+	var failure *CapabilityError
+	if !errors.As(err, &failure) || failure.Code != CapabilityServerNameReserved {
+		t.Fatalf("a reserved tool server name was accepted: %v", err)
+	}
+	if len(failure.Tools) != 1 || failure.Tools[0] != "workspace" {
+		t.Errorf("refusal did not name the server: %v", failure.Tools)
+	}
+	// Codex has no such reservation, so the same name is fine there.
+	codex := restrictedOptions(t, Codex)
+	codex.Restriction.Tools.Server = "workspace"
+	if _, err = normalize(codex); err != nil {
+		t.Fatalf("a Claude-only reservation was applied to Codex: %v", err)
 	}
 }
 

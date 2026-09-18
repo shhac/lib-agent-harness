@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"sort"
@@ -39,6 +40,31 @@ type Restriction struct {
 // the cost through a process-local cache keyed by the exact binary and the
 // exact arguments, which is evidence about the same thing the probe proved.
 
+// VerifyRestriction runs the capability check for a restricted configuration
+// without opening a session. It is what an application should call when setting
+// a worker up, so an operator learns that an installed CLI cannot be restricted
+// at the point they are configuring it rather than when work is commissioned.
+//
+// It starts no credentialed process: the check uses a disposable home, a dummy
+// credential and a provider that refuses every request. A nil return means this
+// exact binary and configuration were proved, and a later Start skips repeating
+// the same check in this process.
+func VerifyRestriction(ctx context.Context, o Options) error {
+	if o.Restriction == nil {
+		return errors.New("verification applies to a restricted session; set Options.Restriction")
+	}
+	normalized, err := normalize(o)
+	if err != nil {
+		return err
+	}
+	l, err := prepareLaunch(ctx, normalized)
+	if err != nil {
+		return err
+	}
+	l.host.close()
+	return nil
+}
+
 // Capability failure codes. They are fixed library constants: no provider text,
 // path or credential ever enters one.
 const (
@@ -54,6 +80,9 @@ const (
 	CapabilityProbeFailed         = "probe_could_not_run"
 	CapabilityCatalogUnavailable  = "model_catalog_unavailable"
 	CapabilityCatalogRestriction  = "model_catalog_restriction_failed"
+	CapabilityServerNotLoaded     = "tool_server_not_loaded"
+	CapabilityServerNameReserved  = "tool_server_name_reserved"
+	CapabilityInheritedConfig     = "inherited_configuration_present"
 )
 
 // Capability check phases. The distinction matters to an operator: one of these
@@ -93,6 +122,9 @@ func (e *CapabilityError) Error() string {
 		CapabilityProbeFailed:         "the capability check could not be run",
 		CapabilityCatalogUnavailable:  "the installed harness did not supply a model catalog to restrict",
 		CapabilityCatalogRestriction:  "the selected model could not be restricted in the installed harness catalog",
+		CapabilityServerNotLoaded:     "the installed harness did not load this session's tool server",
+		CapabilityServerNameReserved:  "the installed harness reserves this tool server name; choose another",
+		CapabilityInheritedConfig:     "the selected harness home declares configuration that would add capabilities this session did not configure",
 	}[e.Code]
 	if message == "" {
 		message = "the restricted session configuration could not be established"
@@ -150,15 +182,12 @@ func compareTools(engine, phase string, expected, actual []string) *CapabilityEr
 // claudeRestrictedArgs disables every inherited customization surface and
 // leaves the caller's tools as the only ones available.
 //
-// Two flags, because they answer two different questions and the installed
-// build decides which one matters. `--tools=` with an empty list removes the
-// built-in tool surface, which is the part that would otherwise read the host.
-// `--allowedTools` grants permission to exactly the hosted identifiers, which
-// is how an MCP tool becomes usable without a prompt. Putting the hosted names
-// in `--tools` instead would be a guess about a built-in-tool flag; this way,
-// whichever flag the build applies to MCP tools, the outcome is the same set.
-// If a build disagrees, the pre-launch probe sees the wrong surface and refuses
-// to start the session rather than proceeding on the assumption.
+// Two flags, because they answer two different questions. `--tools=` with an
+// empty list removes the built-in tool surface, which is the part that would
+// otherwise read the host. `--allowedTools` grants permission to exactly the
+// hosted identifiers, which is how an MCP tool becomes usable without a prompt.
+// Checked against the installed CLI: with both, its initialization reports
+// `tools: ["mcp__<server>__<tool>"]` and no built-ins.
 func claudeRestrictedArgs(h *toolHost) []string {
 	config, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{
 		h.cfg.Server: map[string]any{
@@ -183,11 +212,18 @@ func bridgeArgs(h *toolHost) []string {
 }
 
 // codexRestrictedArgs pairs the shared catalog restriction with the settings
-// that suppress inherited configuration, rules and project documents.
+// that suppress project documents and the surfaces a worker must not have.
 //
-// Every override here is TOML, because that is what Codex parses. The MCP
-// server is registered as dotted-key leaves rather than one nested value, so
-// quoting stays local to each string.
+// There are deliberately no `--ignore-user-config` or `--ignore-rules` flags
+// here. The installed CLI does not accept them on `app-server` at any argument
+// position — they belong to `exec` — so passing them is not a stricter launch,
+// it is a launch that fails to start. Inherited configuration is handled where
+// it can actually be handled: the selected home is inspected before launch and
+// refused if it declares tool-bearing configuration.
+//
+// Every override is TOML, because that is what Codex parses. The MCP server is
+// registered as dotted-key leaves rather than one nested value, so quoting
+// stays local to each string.
 func codexRestrictedArgs(h *toolHost, catalogPath string) ([]string, error) {
 	catalog, err := restrict.TOMLString(catalogPath)
 	if err != nil {
@@ -199,7 +235,7 @@ func codexRestrictedArgs(h *toolHost, catalogPath string) ([]string, error) {
 		return nil, err
 	}
 	settings = append(settings, server...)
-	args := []string{"--ignore-user-config", "--ignore-rules"}
+	args := make([]string, 0, len(settings)*2)
 	for _, setting := range settings {
 		args = append(args, "-c", setting)
 	}

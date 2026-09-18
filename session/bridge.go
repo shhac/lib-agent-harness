@@ -25,8 +25,15 @@ import (
 // live bridge that names the launch it belongs to. Anything else is unresolved,
 // and unresolved means hold the work, not start another one.
 
-// launchRecord is written by the library at launch, before the harness can do
-// anything, and read back by a later process that has to clean up after a crash.
+// launchRecord is written twice: once before the harness is spawned, naming no
+// process, and again once it is running and contained, naming its group.
+//
+// The first write is the one that matters for safety. A record created after
+// the spawn has a window — however short — in which a process exists and
+// nothing on disk says so, and a crash inside that window would look exactly
+// like an assignment that never started. So the marker goes down first, and a
+// marker with no process identity means "a harness may exist and its identity
+// was never recorded", which is a state to hold rather than to resume past.
 type launchRecord struct {
 	Engine  string    `json:"engine"`
 	PID     int       `json:"pid"`
@@ -34,6 +41,14 @@ type launchRecord struct {
 	Launch  string    `json:"launch"`
 	Started time.Time `json:"started"`
 }
+
+// identified reports whether this record names a process that can be checked.
+func (r launchRecord) identified() bool { return r.Group > 1 && r.PID > 1 }
+
+// ErrUncertainLaunch reports a launch marker with no recorded process identity.
+// A harness may or may not have started, and nothing can establish which; the
+// assignment is reserved for inspection rather than resumed or restarted.
+var ErrUncertainLaunch = errors.New("harness launch was recorded without a process identity")
 
 // owner is what a live bridge writes into the lock it holds. Launch ties it to
 // one specific launch record; a bridge from some other session, or a stale file
@@ -87,6 +102,12 @@ func Reclaim(ctx context.Context, dir string) (Reclamation, error) {
 		// Nothing was ever launched here. That is positive evidence, not a guess.
 		out.Confirmed = true
 		return out, nil
+	}
+	if !record.identified() {
+		// The marker was written and the identity never was. Something may be
+		// running; this cannot tell. Reserve it.
+		out.Found = true
+		return out, errors.Join(ErrUnreclaimed, ErrUncertainLaunch)
 	}
 	out.Group = record.Group
 	alive, err := groupAlive(record.Group)
@@ -159,11 +180,18 @@ func readLaunchRecord(dir string) (*launchRecord, error) {
 	if json.Unmarshal(raw, &record) != nil {
 		return nil, errors.New("harness launch record is unreadable")
 	}
-	if record.Group <= 1 {
-		// An unusable record is not a licence to signal anything.
-		return nil, errors.New("harness launch record does not identify a contained group")
-	}
 	return &record, nil
+}
+
+// clearLaunchRecord removes the marker once a session has been closed cleanly
+// and its harness is known to be gone. Leaving it behind would make the next
+// run reserve itself against a process that ended normally.
+func clearLaunchRecord(dir string) error {
+	err := os.Remove(launchPath(dir))
+	if err == nil || errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return errors.New("harness launch record could not be cleared")
 }
 
 // RunBridge relays one harness's tool protocol to the session that configured

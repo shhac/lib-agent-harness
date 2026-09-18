@@ -118,50 +118,102 @@ func normalize(o Options) (Options, error) {
 		if err = o.Restriction.Tools.validate(); err != nil {
 			return o, err
 		}
-		if o.Restriction.Probe <= 0 {
-			o.Restriction.Probe = 60 * time.Second
+		if o.Engine == Claude && reservedClaudeServer(o.Restriction.Tools.Server) {
+			// Checked against the installed CLI: this name is accepted and then
+			// silently not loaded, leaving a session with no tools at all. Refusing
+			// it here says so, rather than letting the launch check discover a
+			// missing surface and report it as a build problem.
+			return o, &CapabilityError{Engine: string(o.Engine), Code: CapabilityServerNameReserved, Phase: BeforeLaunch, Tools: []string{o.Restriction.Tools.Server}}
 		}
-		o.Restriction.Tools.Tools = append([]ToolDefinition(nil), o.Restriction.Tools.Tools...)
+		// Copy the whole restriction rather than writing through the caller's
+		// pointer: normalizing must not edit the value a caller still holds, and
+		// two launches sharing one Restriction must not see each other's defaults.
+		frozen := *o.Restriction
+		if frozen.Probe <= 0 {
+			frozen.Probe = 60 * time.Second
+		}
+		frozen.Tools.Tools = freezeTools(frozen.Tools.Tools)
+		o.Restriction = &frozen
 	}
 	return o, nil
 }
 
-// reference digests the stable contract a resume has to match. The tool channel
-// contributes its surface — the server name and every tool's name and schema —
-// and deliberately not its endpoint: the listener path and the per-launch
-// channel credential change every time the owning process restarts, and
-// including them would invalidate every stored reference on each restart while
-// proving nothing about what the session can do. The credential never reaches a
-// reference in any form.
+// reference digests the stable contract a resume has to match.
+//
+// An ordinary session hashes exactly the fields it always hashed, in exactly
+// the same shape. References persisted before restricted sessions existed have
+// to keep resuming, and adding fields "that are empty anyway" would still have
+// changed every one of those digests — an empty field is still a field.
+//
+// A restricted session hashes the same things plus its tool surface: the server
+// name and every tool's name and schema. It deliberately excludes the channel's
+// endpoint. The listener path and the per-launch credential change every time
+// the owning process restarts, so including them would invalidate every stored
+// reference on each restart while proving nothing about what the session can
+// do. The credential never reaches a reference in any form.
 func reference(o Options, id string) Ref {
 	// Include nil versus empty tool lists: they have different permission meaning.
-	payload, _ := json.Marshal(struct {
+	legacy := struct {
 		Binary, Model, Effort string
 		Instructions          Instructions
 		Policy                Policy
 		ToolsSpecified        bool
-		Restricted            bool
-		ToolServer            string
-		HostedTools           []ToolDefinition
-	}{o.Binary, o.Model, o.Effort, o.Instructions, o.Policy, o.Policy.ClaudeTools != nil, o.Restriction != nil, toolServerName(o), hostedTools(o)})
+	}{o.Binary, o.Model, o.Effort, o.Instructions, o.Policy, o.Policy.ClaudeTools != nil}
+	payload, _ := json.Marshal(legacy)
+	if o.Restriction != nil {
+		payload, _ = json.Marshal(struct {
+			Legacy      any
+			Restricted  bool
+			ToolServer  string
+			HostedTools []ToolDefinition
+		}{legacy, true, o.Restriction.Tools.Server, hostedTools(o)})
+	}
 	hash := sha256.Sum256(payload)
 	return Ref{Engine: o.Engine, ID: id, Home: o.Home, WorkDir: o.WorkDir, AccountIdentity: o.AccountIdentity, ConfigHash: hex.EncodeToString(hash[:])}
-}
-
-func toolServerName(o Options) string {
-	if o.Restriction == nil {
-		return ""
-	}
-	return o.Restriction.Tools.Server
 }
 
 func hostedTools(o Options) []ToolDefinition {
 	if o.Restriction == nil {
 		return nil
 	}
-	tools := append([]ToolDefinition(nil), o.Restriction.Tools.Tools...)
+	tools := freezeTools(o.Restriction.Tools.Tools)
 	sort.Slice(tools, func(i, j int) bool { return tools[i].Name < tools[j].Name })
 	return tools
+}
+
+// freezeTools takes a deep copy, schemas included. A caller keeps its own
+// definitions and may reuse or edit them between launches; a session that held
+// references into them could have its tool surface changed underneath it after
+// the check that approved it, and two concurrent launches could edit each
+// other's.
+func freezeTools(tools []ToolDefinition) []ToolDefinition {
+	out := make([]ToolDefinition, 0, len(tools))
+	for _, tool := range tools {
+		tool.Schema = freezeValue(tool.Schema).(map[string]any)
+		out = append(out, tool)
+	}
+	return out
+}
+
+func freezeValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, nested := range typed {
+			out[key] = freezeValue(nested)
+		}
+		return out
+	case []any:
+		out := make([]any, 0, len(typed))
+		for _, nested := range typed {
+			out = append(out, freezeValue(nested))
+		}
+		return out
+	case []string:
+		return append([]string(nil), typed...)
+	default:
+		return value
+	}
 }
 func compatible(o Options, r Ref) bool {
 	expected := reference(o, r.ID)
@@ -231,4 +283,15 @@ func environment(o Options) []string {
 		}
 	}
 	return append(env, key+"="+o.Home)
+}
+
+// reservedClaudeServer names tool-server names the installed harness keeps for
+// itself. A reserved name is not rejected at launch; it is accepted and then
+// not loaded, which is why it is worth naming here.
+func reservedClaudeServer(name string) bool {
+	switch name {
+	case "workspace", "claude", "anthropic":
+		return true
+	}
+	return false
 }

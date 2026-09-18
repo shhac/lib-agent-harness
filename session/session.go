@@ -24,7 +24,10 @@ type Session struct {
 	failure   error
 	lastEvent time.Time
 	tools     *toolHost
-	done      chan struct{}
+	// identified carries the outcome of durably recording the running harness's
+	// identity. A restricted session waits for it before its first inference.
+	identified chan error
+	done       chan struct{}
 }
 
 // Start opens a persistent native CLI. ctx owns its lifetime; cancelling it
@@ -71,15 +74,24 @@ func open(ctx context.Context, o Options, r *Ref) (*Session, error) {
 	} else if o.Engine == Claude {
 		s.ref.ID = newID()
 	}
-	// A restricted session records what it launched the moment the harness is
-	// running and contained, so a process that dies later leaves behind an
-	// identity its successor can act on. Recording it any earlier would name a
-	// group that does not exist; any later leaves a window with no record at all.
+	// A restricted session marks the attempt before the harness exists, then
+	// names the process once it is running and contained. Doing only the second
+	// would leave a window where a harness is alive and nothing on disk says so.
+	// Doing only the first would leave nothing to signal. Both, in that order,
+	// mean a crash at any point is either "no process" or "a process, reserved".
 	var onStart func(int)
 	if l != nil {
+		if err = recordLaunch(l.host.cfg.Dir, launchRecord{Engine: string(o.Engine), Launch: l.host.socketDir, Started: time.Now().UTC()}); err != nil {
+			s.releaseTools()
+			return nil, err
+		}
+		identified := make(chan error, 1)
+		s.identified = identified
 		onStart = func(pid int) {
 			record := launchRecord{Engine: string(o.Engine), PID: pid, Group: pid, Launch: l.host.socketDir, Started: time.Now().UTC()}
-			if err := recordLaunch(l.host.cfg.Dir, record); err != nil {
+			err := recordLaunch(l.host.cfg.Dir, record)
+			identified <- err
+			if err != nil {
 				s.fail(err)
 			}
 		}
@@ -94,11 +106,47 @@ func open(ctx context.Context, o Options, r *Ref) (*Session, error) {
 		s.releaseTools()
 		return nil, err
 	}
+	// Nothing is asked of this session until its identity is durably recorded.
+	// A harness whose identity could not be written is one a later process could
+	// not find, so it is stopped here rather than allowed to start work.
+	if err = s.awaitIdentity(ctx); err != nil {
+		s.fail(err)
+		return nil, err
+	}
 	if err = s.initialize(ctx, r != nil); err != nil {
 		s.fail(err)
 		return nil, err
 	}
 	return s, nil
+}
+
+// awaitIdentity waits for the launch record to name the running harness. It is
+// bounded by the caller's context and by the transport failing, so a harness
+// that never starts does not hang the open.
+func (s *Session) awaitIdentity(ctx context.Context) error {
+	s.mu.Lock()
+	identified := s.identified
+	s.mu.Unlock()
+	if identified == nil {
+		return nil
+	}
+	select {
+	case err := <-identified:
+		return err
+	case <-s.done:
+		return s.transportFailure()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *Session) transportFailure() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.failure != nil {
+		return s.failure
+	}
+	return ErrClosed
 }
 
 // releaseTools shuts the private tool channel. It is safe before a session has
@@ -214,7 +262,33 @@ func (s *Session) Ref() Ref                   { s.mu.Lock(); defer s.mu.Unlock()
 func (s *Session) Capabilities() Capabilities { s.mu.Lock(); defer s.mu.Unlock(); return s.caps }
 
 // Close terminates the harness and its subprocess tree. It is idempotent.
-func (s *Session) Close()         { s.fail(ErrClosed) }
+//
+// Close does not clear the launch marker: a terminated process tree is not the
+// same fact as a confirmed-gone one, and this is the path a crashing caller
+// never reaches anyway. Release is for a caller that has finished with an
+// assignment and wants recovery to stop reserving against it.
+func (s *Session) Close() { s.fail(ErrClosed) }
+
+// Release closes the session and, once its harness is confirmed gone, removes
+// the launch marker recovery would otherwise reserve against. It returns the
+// reclamation outcome: a marker is only cleared on positive evidence, so a
+// harness that cannot be confirmed terminated keeps its marker and its
+// ErrUnreclaimed, which is what tells a later run to hold.
+func (s *Session) Release(ctx context.Context) (Reclamation, error) {
+	s.mu.Lock()
+	host := s.tools
+	s.mu.Unlock()
+	s.Close()
+	if host == nil {
+		return Reclamation{Confirmed: true}, nil
+	}
+	dir := host.cfg.Dir
+	out, err := Reclaim(ctx, dir)
+	if err != nil || !out.Confirmed {
+		return out, err
+	}
+	return out, clearLaunchRecord(dir)
+}
 func (s *Session) fail(err error) { s.failTurn(nil, err) }
 func (s *Session) failTurn(expected *Turn, err error) {
 	s.mu.Lock()

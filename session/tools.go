@@ -190,6 +190,10 @@ type toolHost struct {
 	probing bool
 	stopped bool
 	running int
+	// listed records that a harness connected, authenticated and asked for this
+	// session's tools. Where a harness defers MCP tools and never puts them in a
+	// request, this is the positive evidence that they were actually offered.
+	listed bool
 
 	// Wiring supplied by the session that owns this host. Both are nil for a
 	// host serving a capability probe, which has no session and no turn.
@@ -331,6 +335,14 @@ func (h *toolHost) setProbing(on bool) {
 	h.mu.Unlock()
 }
 
+// served reports that the tool channel has handed this session's tools to a
+// harness. It says the surface exists and was reachable, nothing more.
+func (h *toolHost) served() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.listed
+}
+
 func (h *toolHost) channelClosed() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -413,6 +425,9 @@ func (h *toolHost) serve(conn net.Conn) {
 		case "ping":
 			reply(rpcResult(frame.ID, map[string]any{}))
 		case "tools/list":
+			h.mu.Lock()
+			h.listed = true
+			h.mu.Unlock()
 			reply(rpcResult(frame.ID, h.list()))
 		case "tools/call":
 			// Dispatched on its own goroutine so the connection keeps reading —
@@ -424,6 +439,10 @@ func (h *toolHost) serve(conn net.Conn) {
 				reply(rpcResult(id, h.dispatch(params)))
 			}()
 		default:
+			// Every other method, including the resource methods a harness's own
+			// MCP helpers use, is refused. A restricted session hosts tools and
+			// nothing else, so those helpers have nothing here to enumerate or
+			// read even on a harness that offers them.
 			reply(rpcError(frame.ID, -32601, "method not supported"))
 		}
 	}

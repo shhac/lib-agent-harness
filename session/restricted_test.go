@@ -16,7 +16,7 @@ func restrictedOptions(t *testing.T, engine Engine) Options {
 	return Options{
 		Engine: engine, Binary: "/usr/bin/true", WorkDir: t.TempDir(), Home: t.TempDir(), Model: "picked",
 		Restriction: &Restriction{Tools: ToolHost{
-			Server:  "workspace",
+			Server:  "agent_workspace",
 			Tools:   []ToolDefinition{{Name: "read_file", Schema: map[string]any{"type": "object"}}, {Name: "finish", Schema: map[string]any{"type": "object"}, Closing: true}},
 			Handler: echoHandler(t), Dir: privateDir(t), Bridge: Bridge{Path: "/usr/bin/true", Args: []string{"tool-bridge"}},
 		}},
@@ -74,7 +74,7 @@ func TestRestrictedClaudeArgumentsDisableInheritedSurfaces(t *testing.T) {
 	}
 	defer host.close()
 	args := strings.Join(commandArgs(o, "session-1", false, &launch{host: host, extra: claudeRestrictedArgs(host)}), "\n")
-	for _, required := range []string{"--setting-sources=", `--settings={"disableAllHooks":true}`, "--strict-mcp-config", "--disable-slash-commands", "--no-chrome", "--tools=", "--allowedTools=mcp__workspace__read_file,mcp__workspace__finish"} {
+	for _, required := range []string{"--setting-sources=", `--settings={"disableAllHooks":true}`, "--strict-mcp-config", "--disable-slash-commands", "--no-chrome", "--tools=", "--allowedTools=mcp__agent_workspace__read_file,mcp__agent_workspace__finish"} {
 		if !strings.Contains(args, required) {
 			t.Errorf("missing %q in\n%s", required, args)
 		}
@@ -98,7 +98,7 @@ func TestRestrictedClaudeArgumentsDisableInheritedSurfaces(t *testing.T) {
 	if json.Unmarshal([]byte(config), &parsed) != nil || len(parsed.Servers) != 1 {
 		t.Fatalf("exactly one MCP server must be configured: %s", config)
 	}
-	server := parsed.Servers["workspace"]
+	server := parsed.Servers["agent_workspace"]
 	if server.Command != "/usr/bin/true" || len(server.Args) != 1 {
 		t.Fatalf("bridge command was not configured: %+v", server)
 	}
@@ -126,7 +126,7 @@ func TestRestrictedCodexArgumentsRemoveNativeToolSurfaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	args := strings.Join(commandArgs(o, "thread", false, &launch{host: host, extra: extra}), "\n")
-	for _, required := range []string{"--ignore-user-config", "--ignore-rules", `model_catalog_json="/tmp/catalog.json"`, "features.shell_tool=false", "features.unified_exec=false", "features.hooks=false", "project_doc_max_bytes=0", `approval_policy="never"`, `mcp_servers.workspace.command="/usr/bin/true"`, `mcp_servers.workspace.args=["tool-bridge"]`} {
+	for _, required := range []string{`model_catalog_json="/tmp/catalog.json"`, "features.shell_tool=false", "features.unified_exec=false", "features.hooks=false", "project_doc_max_bytes=0", `approval_policy="never"`, `mcp_servers.agent_workspace.command="/usr/bin/true"`, `mcp_servers.agent_workspace.args=["tool-bridge"]`} {
 		if !strings.Contains(args, required) {
 			t.Errorf("missing %q in\n%s", required, args)
 		}
@@ -149,48 +149,125 @@ func TestRestrictedCodexArgumentsRemoveNativeToolSurfaces(t *testing.T) {
 	}
 }
 
-// A restricted session must never be launched with a tool surface it did not
-// configure, and must never be launched missing the tools it needs.
-func TestProbeJudgesTheOutboundToolSurface(t *testing.T) {
+// The surface judgement, against the request shapes the installed CLIs actually
+// send. Claude puts hosted tools in top-level `tools`; Codex puts definitions
+// under input[additional_tools] and groups some into namespaces.
+func TestSurfaceJudgementUsesRealRequestShapes(t *testing.T) {
 	o, err := normalize(restrictedOptions(t, Claude))
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := func(names ...string) []byte {
+	hosted := toolNames(o.Restriction.Tools.Tools)
+	index := map[string]bool{}
+	for _, name := range hosted {
+		index[name] = true
+	}
+	claude := func(names ...string) requestSurface {
 		tools := []map[string]any{}
 		for _, name := range names {
 			tools = append(tools, map[string]any{"name": name})
 		}
 		raw, _ := json.Marshal(map[string]any{"model": "picked", "tools": tools})
-		return raw
+		surface, ok := readSurface(raw, "agent_workspace", index)
+		if !ok {
+			t.Fatal("request was unreadable")
+		}
+		return surface
 	}
-	if failure := inspectProbeRequest(o, request("mcp__workspace__read_file", "mcp__workspace__finish")); failure != nil {
+	full := claude("mcp__agent_workspace__read_file", "mcp__agent_workspace__finish")
+	if failure := judgeSurfaces(string(Claude), "agent_workspace", hosted, []requestSurface{full}, false); failure != nil {
 		t.Fatalf("exactly the hosted tools was rejected: %v", failure)
 	}
-	failure := inspectProbeRequest(o, request("mcp__workspace__read_file", "mcp__workspace__finish", "Bash"))
+	// A retained built-in is a disclosure path wherever it appears.
+	withBash := claude("mcp__agent_workspace__read_file", "mcp__agent_workspace__finish", "Bash")
+	failure := judgeSurfaces(string(Claude), "agent_workspace", hosted, []requestSurface{withBash}, false)
 	if failure == nil || failure.Code != CapabilityNativeToolsPresent || failure.Tools[0] != "Bash" {
 		t.Fatalf("a retained native tool was not rejected: %v", failure)
 	}
 	if failure.Phase != BeforeLaunch || !strings.Contains(failure.Error(), "no session was started") {
-		t.Errorf("a pre-launch refusal did not say nothing was launched: %+v %s", failure, failure)
+		t.Errorf("a pre-launch refusal did not say nothing was launched: %s", failure)
 	}
 	started := &CapabilityError{Engine: "claude", Code: CapabilityNativeToolsPresent, Phase: BeforeFirstPrompt}
 	if strings.Contains(started.Error(), "no session was started") {
 		t.Errorf("a post-start mismatch claimed nothing was launched: %s", started)
 	}
-	failure = inspectProbeRequest(o, request("mcp__workspace__read_file"))
-	if failure == nil || failure.Code != CapabilityHostedToolsMissing || failure.Tools[0] != "finish" {
-		t.Fatalf("a missing hosted tool was not rejected: %v", failure)
+	// Verified against the installed CLI: alongside the task request, Claude
+	// makes a session-title request carrying no tools at all. It cannot disclose
+	// anything, and rejecting it would reject every correctly restricted session.
+	title := claude()
+	if failure = judgeSurfaces(string(Claude), "agent_workspace", hosted, []requestSurface{title, full}, false); failure != nil {
+		t.Fatalf("an auxiliary zero-tool request was treated as a missing surface: %v", failure)
 	}
-	failure = inspectProbeRequest(o, []byte("not json"))
-	if failure == nil || failure.Code != CapabilityProbeUnreadable {
-		t.Fatalf("an unreadable request was not rejected: %v", failure)
+	// But a run that only ever made auxiliary requests has proven nothing.
+	failure = judgeSurfaces(string(Claude), "agent_workspace", hosted, []requestSurface{title}, false)
+	if failure == nil || failure.Code != CapabilityHostedToolsMissing {
+		t.Fatalf("a run with no tooled request was accepted: %v", failure)
 	}
-	if !errors.Is(failure, ErrUnsupported) {
-		t.Error("a capability failure must be recognizable as an unsupported operation")
+}
+
+// Codex defers MCP tools behind tool_search and never puts them in a request —
+// verified against the installed CLI — so the channel's own record is what
+// proves the surface, and the mediated helpers are permitted because they can
+// reach nothing but the one configured server.
+func TestCodexSurfaceAcceptsMediatedHelpersOnlyWithChannelEvidence(t *testing.T) {
+	o, err := normalize(restrictedOptions(t, Codex))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(failure.Error(), "no session was started") {
-		t.Errorf("capability failure does not say nothing was launched: %s", failure)
+	hosted := toolNames(o.Restriction.Tools.Tools)
+	index := map[string]bool{}
+	for _, name := range hosted {
+		index[name] = true
+	}
+	// The exact shape captured from codex 0.154.0.
+	raw, _ := json.Marshal(map[string]any{
+		"model":     "picked",
+		"reasoning": map[string]any{"effort": "high"},
+		"input": []any{
+			map[string]any{"type": "additional_tools", "role": "system", "tools": []any{
+				map[string]any{"type": "namespace", "name": "functions", "tools": []any{
+					map[string]any{"type": "function", "name": "list_mcp_resources"},
+					map[string]any{"type": "function", "name": "list_mcp_resource_templates"},
+					map[string]any{"type": "function", "name": "read_mcp_resource"},
+				}},
+				map[string]any{"type": "tool_search"},
+			}},
+			map[string]any{"type": "message", "role": "user", "content": "Capability check only."},
+		},
+	})
+	surface, ok := readSurface(raw, "agent_workspace", index)
+	if !ok {
+		t.Fatal("the real Codex request shape was unreadable")
+	}
+	if len(surface.names) != 4 {
+		t.Fatalf("namespace was not flattened: %v", surface.names)
+	}
+	if failure := judgeSurfaces(string(Codex), "agent_workspace", hosted, []requestSurface{surface}, false); failure == nil || failure.Code != CapabilityHostedToolsMissing {
+		t.Fatalf("a deferred surface with no channel evidence was accepted: %v", failure)
+	}
+	if failure := judgeSurfaces(string(Codex), "agent_workspace", hosted, []requestSurface{surface}, true); failure != nil {
+		t.Fatalf("a deferred surface with channel evidence was rejected: %v", failure)
+	}
+	// The same helpers are not permitted on an engine that does not mediate
+	// through MCP, and a real execution tool is never permitted.
+	if failure := judgeSurfaces(string(Claude), "agent_workspace", hosted, []requestSurface{surface}, true); failure == nil {
+		t.Fatal("Codex-only mediated helpers were accepted on Claude")
+	}
+	withExec, _ := json.Marshal(map[string]any{"input": []any{
+		map[string]any{"type": "additional_tools", "tools": []any{
+			map[string]any{"type": "namespace", "name": "functions", "tools": []any{
+				map[string]any{"type": "function", "name": "exec"},
+				map[string]any{"type": "function", "name": "wait"},
+			}},
+		}},
+	}})
+	execSurface, _ := readSurface(withExec, "agent_workspace", index)
+	failure := judgeSurfaces(string(Codex), "agent_workspace", hosted, []requestSurface{execSurface}, true)
+	if failure == nil || failure.Code != CapabilityNativeToolsPresent {
+		t.Fatalf("a retained execution surface was accepted: %v", failure)
+	}
+	if len(failure.Tools) != 2 || failure.Tools[0] != "exec" {
+		t.Errorf("refusal did not name the retained tools: %v", failure.Tools)
 	}
 }
 
@@ -202,23 +279,25 @@ func TestProbeChecksCodexIdentityAndInheritedInstructions(t *testing.T) {
 	o.Effort = "high"
 	body := func(model, effort, extra string) []byte {
 		raw, _ := json.Marshal(map[string]any{
-			"model": model, "reasoning": map[string]any{"effort": effort},
-			"tools": []map[string]any{{"name": "workspace__read_file"}, {"name": "workspace__finish"}},
-			"input": extra,
+			"model": model, "reasoning": map[string]any{"effort": effort}, "input": extra,
 		})
 		return raw
 	}
-	if failure := inspectProbeRequest(o, body("picked", "high", "")); failure != nil {
+	if failure := inspectRequestIdentity(o, body("picked", "high", "")); failure != nil {
 		t.Fatalf("a correct Codex request was rejected: %v", failure)
 	}
-	if failure := inspectProbeRequest(o, body("other", "high", "")); failure == nil || failure.Code != CapabilityChangedModel {
+	if failure := inspectRequestIdentity(o, body("other", "high", "")); failure == nil || failure.Code != CapabilityChangedModel {
 		t.Fatalf("a substituted model was not rejected: %v", failure)
 	}
-	if failure := inspectProbeRequest(o, body("picked", "low", "")); failure == nil || failure.Code != CapabilityChangedEffort {
+	if failure := inspectRequestIdentity(o, body("picked", "low", "")); failure == nil || failure.Code != CapabilityChangedEffort {
 		t.Fatalf("a changed effort was not rejected: %v", failure)
 	}
-	if failure := inspectProbeRequest(o, body("picked", "high", "# AGENTS.md instructions")); failure == nil || failure.Code != CapabilityInstructionsMerged {
+	if failure := inspectRequestIdentity(o, body("picked", "high", "# AGENTS.md instructions")); failure == nil || failure.Code != CapabilityInstructionsMerged {
 		t.Fatalf("merged global instructions were not rejected: %v", failure)
+	}
+	// An auxiliary request that names neither is not evidence about either.
+	if failure := inspectRequestIdentity(o, body("", "", "")); failure != nil {
+		t.Fatalf("an auxiliary request was judged as a task request: %v", failure)
 	}
 }
 
@@ -299,13 +378,14 @@ func TestNormalizedCatalogKeepsTheHarnessCodingInstructions(t *testing.T) {
 
 func TestNormalizeWireToolStripsEngineSpecificPrefixes(t *testing.T) {
 	for wire, want := range map[string]string{
-		"mcp__workspace__read_file": "read_file",
-		"workspace__read_file":      "read_file",
-		"workspace.read_file":       "read_file",
-		"Bash":                      "Bash",
-		"mcp__other__read_file":     "mcp__other__read_file",
+		"mcp__agent_workspace__read_file": "read_file",
+		"agent_workspace__read_file":      "read_file",
+		"agent_workspace.read_file":       "read_file",
+		"Bash":                            "Bash",
+		"mcp__other__read_file":           "mcp__other__read_file",
+		"read_file":                       "read_file",
 	} {
-		if got := normalizeWireTool(wire, "workspace"); got != want {
+		if got := normalizeWireTool(wire, "agent_workspace"); got != want {
 			t.Errorf("normalizeWireTool(%q) = %q, want %q", wire, got, want)
 		}
 	}

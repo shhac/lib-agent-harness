@@ -115,7 +115,7 @@ s, err := session.Start(ctx, session.Options{
     Model:  "haiku",
     Instructions: session.Instructions{Mode: session.Append, Text: scopedTask},
     Restriction: &session.Restriction{Tools: session.ToolHost{
-        Server:  "workspace",
+        Server:  "agent_workspace",           // some names are reserved by the harness
         Dir:     runPrivateDir,                  // owner-only, in your own state
         Bridge:  session.Bridge{Path: exe, Args: []string{"tool-bridge"}},
         Tools:   []session.ToolDefinition{{Name: "read_file", Schema: schema}, {Name: "finish", Schema: schema, Closing: true}},
@@ -128,13 +128,30 @@ The restriction is proved before your login is ever used, and there is no option
 to skip that. The library launches the same binary with *the same arguments the
 real session will use*, differing only in a disposable home, a dummy credential
 and a loopback provider that refuses every request; it drives one synthetic turn
-and requires the outbound request to carry exactly your tools — none missing,
-nothing else present. Equivalence matters: a check run with a different
-permission mode or different instructions would establish something about a
-configuration nobody is going to launch. A rejecting provider performs no
-inference, so no agent loop and no tool call can happen during the check, and
-the tool host refuses calls for its duration regardless. The check ends shortly
-after the harness's first request rather than sitting out its timeout.
+and reads what the harness actually sent. Equivalence matters: a check run with a
+different permission mode or different instructions would establish something
+about a configuration nobody is going to launch. A rejecting provider performs no
+inference, so no agent loop and no tool call can happen during the check, and the
+tool host refuses calls for its duration regardless. The check ends shortly after
+the harness's first request rather than sitting out its timeout.
+
+The judgement is in two parts, because installed harnesses differ in ways that
+were measured rather than assumed:
+
+- **Nothing unauthorized, anywhere.** No request may carry a tool outside your
+  hosted set. A harness makes auxiliary requests — naming the session, for one —
+  and those carry no tools at all; requiring every request to carry your set
+  would reject a correctly restricted session, while a request carrying a
+  built-in is refused wherever it appears.
+- **Your tools, positively proven.** Usually a request carries them. Where a
+  harness defers MCP tools behind a discovery tool and never puts them in a
+  request at all, the proof is the tool channel's own record of having served
+  them, which is direct evidence that the surface loaded and was reachable.
+
+`session.VerifyRestriction(ctx, options)` runs exactly this check without opening
+a session, so an application can tell an operator that their installed CLI cannot
+be restricted while they are configuring it, rather than when work is
+commissioned.
 
 A failure returns `*CapabilityError` with a fixed reason code, the disagreeing
 tool names and the phase it happened in, and nothing is launched. Where a harness
@@ -187,15 +204,37 @@ terminated, and only a group that has actually become empty is reported as
 rather than start a second one.
 
 Per-engine, the restriction is built from provider mechanics rather than from a
-permission setting. Claude is launched with no setting sources, hooks disabled, a
-strict MCP configuration holding only your server, slash commands disabled, an
-empty built-in tool list and an explicit allowance for your tool identifiers.
-Codex is launched with the shared restricted model catalog — shell type
+permission setting, and each part of it was checked against an installed CLI.
+
+**Claude** is launched with no setting sources, hooks disabled, a strict MCP
+configuration holding only your server, slash commands disabled, an empty
+built-in tool list and an explicit allowance for your tool identifiers. Its
+initialization then reports `tools: ["mcp__<server>__<tool>"]` and no built-ins.
+Some server names are reserved: a reserved one is accepted and then silently not
+loaded, leaving a session with no tools while reporting success, so the library
+refuses those names up front and separately verifies from the initialization
+frame that your server actually connected.
+
+**Codex** is launched with the shared restricted model catalog — shell type
 disabled, apply-patch dropped, an empty experimental tool set — alongside the
-feature switches that turn off shell, unified exec, apps, plugins, hooks,
-subagents, browser, computer use and image surfaces, with user configuration,
-rules and project documents ignored. Codex overrides are emitted as dotted-key
-TOML, which is what it parses.
+feature switches that turn off apps, plugins, hooks, subagents, browser, computer
+use, image and goal surfaces. The catalog is the load-bearing part: the feature
+switches alone leave `exec` and `wait` in place. Overrides are dotted-key TOML,
+which is what Codex parses.
+
+Two things about Codex are worth stating plainly rather than implying otherwise.
+Its remaining surface includes MCP-mediated helpers (`tool_search`,
+`list_mcp_resources`, `list_mcp_resource_templates`, `read_mcp_resource`); they
+are permitted because they can address nothing but configured MCP servers, a
+restricted session configures exactly one, and this library's tool host answers
+every resource method with method-not-supported. And `app-server` has no
+`--ignore-user-config` or `--ignore-rules` — those belong to `exec`, and
+overriding the server table with `-c mcp_servers={}` does not clear entries
+already declared in `config.toml`, which were observed starting. Inherited
+configuration is therefore handled the one way that works without moving a
+credential: the selected home is inspected before launch and refused if it
+declares MCP servers, hooks, plugins or other tool-bearing tables. Your login
+stays exactly where it is.
 
 Restricted sessions require process-group containment and a releasable advisory
 lock, so they are available on macOS and Linux and fail closed elsewhere with

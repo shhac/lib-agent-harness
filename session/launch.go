@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -39,6 +40,15 @@ func prepareLaunch(ctx context.Context, o Options) (*launch, error) {
 	if o.Engine == Claude {
 		l.extra = claudeRestrictedArgs(host)
 	} else {
+		if inherited := restrict.InspectCodexHome(o.Home); inherited != nil {
+			var named *restrict.InheritedConfig
+			code := CapabilityInheritedConfig
+			tools := []string{}
+			if errors.As(inherited, &named) {
+				tools = append(tools, named.Key)
+			}
+			return fail(&CapabilityError{Engine: string(Codex), Code: code, Phase: BeforeLaunch, Tools: tools})
+		}
 		catalog, readErr := readCodexCatalog(ctx, o)
 		if readErr != nil {
 			return fail(readErr)
@@ -278,15 +288,62 @@ func probeRestriction(ctx context.Context, o Options, l *launch) error {
 		}
 		return &CapabilityError{Engine: string(o.Engine), Code: CapabilityProbeNoRequest, Phase: BeforeLaunch}
 	}
-	// Every request has to prove the same surface: a harness that retries with a
-	// different one has not established anything.
+	hosted := toolNames(o.Restriction.Tools.Tools)
+	index := map[string]bool{}
+	for _, name := range hosted {
+		index[name] = true
+	}
+	var surfaces []requestSurface
 	for _, body := range requests {
 		if body == nil {
 			return &CapabilityError{Engine: string(o.Engine), Code: CapabilityProbeUnreadable, Phase: BeforeLaunch}
 		}
-		if failure := inspectProbeRequest(o, body); failure != nil {
+		surface, ok := readSurface(body, o.Restriction.Tools.Server, index)
+		if !ok {
+			return &CapabilityError{Engine: string(o.Engine), Code: CapabilityProbeUnreadable, Phase: BeforeLaunch}
+		}
+		surfaces = append(surfaces, surface)
+		if failure := inspectRequestIdentity(o, body); failure != nil {
 			return failure
 		}
+	}
+	// A harness that defers its MCP tools never puts them in a request, so the
+	// tool channel's own record of having served them is the positive evidence.
+	//
+	// Assign before returning: a typed nil pointer returned straight into an
+	// error result is not nil, and every passing check would read as a failure.
+	if failure := judgeSurfaces(string(o.Engine), o.Restriction.Tools.Server, hosted, surfaces, l.host.served()); failure != nil {
+		return failure
+	}
+	return nil
+}
+
+// inspectRequestIdentity checks the things that are about the request rather
+// than its tool surface: that the selected model and effort survived, and that
+// no inherited instruction material was merged in.
+func inspectRequestIdentity(o Options, body []byte) *CapabilityError {
+	if o.Engine != Codex {
+		return nil
+	}
+	var request struct {
+		Model     string `json:"model"`
+		Reasoning struct {
+			Effort string `json:"effort"`
+		} `json:"reasoning"`
+	}
+	if json.Unmarshal(body, &request) != nil {
+		return &CapabilityError{Engine: string(o.Engine), Code: CapabilityProbeUnreadable, Phase: BeforeLaunch}
+	}
+	// Auxiliary requests need not name the model; only a request that does is
+	// evidence about it.
+	if request.Model != "" && request.Model != o.Model {
+		return &CapabilityError{Engine: string(o.Engine), Code: CapabilityChangedModel, Phase: BeforeLaunch}
+	}
+	if o.Effort != "" && request.Reasoning.Effort != "" && request.Reasoning.Effort != o.Effort {
+		return &CapabilityError{Engine: string(o.Engine), Code: CapabilityChangedEffort, Phase: BeforeLaunch}
+	}
+	if bytes.Contains(body, []byte("# AGENTS.md instructions")) {
+		return &CapabilityError{Engine: string(o.Engine), Code: CapabilityInstructionsMerged, Phase: BeforeLaunch}
 	}
 	return nil
 }
@@ -367,68 +424,13 @@ func driveCodexProbe(ctx context.Context, o Options, args []string, dir string, 
 	if o.Effort != "" {
 		turn["effort"] = o.Effort
 	}
-	_, _ = w.request(ctx, "turn/start", turn)
+	// turn/start is acknowledged before the harness contacts its provider, so
+	// returning here would close the transport during the very request the check
+	// exists to read. Wait instead: the caller cancels this context as soon as a
+	// request has been captured, or when the check's own bound expires.
+	go func() { _, _ = w.request(ctx, "turn/start", turn) }()
+	<-ctx.Done()
 	return nil
-}
-
-// inspectProbeRequest is the capability judgement. It reads one actual outbound
-// request and requires the tool surface to be exactly the hosted one.
-func inspectProbeRequest(o Options, body []byte) *CapabilityError {
-	engine := string(o.Engine)
-	var request struct {
-		Model string `json:"model"`
-		Tools []struct {
-			Name string `json:"name"`
-			Type string `json:"type"`
-		} `json:"tools"`
-		Reasoning struct {
-			Effort string `json:"effort"`
-		} `json:"reasoning"`
-	}
-	if json.Unmarshal(body, &request) != nil {
-		return &CapabilityError{Engine: engine, Code: CapabilityProbeUnreadable, Phase: BeforeLaunch}
-	}
-	names := make([]string, 0, len(request.Tools))
-	for _, tool := range request.Tools {
-		name := tool.Name
-		if name == "" {
-			// A tool with no name is a built-in surface named by its type.
-			name = tool.Type
-		}
-		names = append(names, normalizeWireTool(name, o.Restriction.Tools.Server))
-	}
-	hosted := make([]string, 0, len(o.Restriction.Tools.Tools))
-	for _, tool := range o.Restriction.Tools.Tools {
-		hosted = append(hosted, tool.Name)
-	}
-	if failure := compareTools(engine, BeforeLaunch, hosted, names); failure != nil {
-		return failure
-	}
-	if o.Engine == Codex {
-		if request.Model != o.Model {
-			return &CapabilityError{Engine: engine, Code: CapabilityChangedModel, Phase: BeforeLaunch}
-		}
-		if o.Effort != "" && request.Reasoning.Effort != o.Effort {
-			return &CapabilityError{Engine: engine, Code: CapabilityChangedEffort, Phase: BeforeLaunch}
-		}
-		if bytes.Contains(body, []byte("# AGENTS.md instructions")) {
-			return &CapabilityError{Engine: engine, Code: CapabilityInstructionsMerged, Phase: BeforeLaunch}
-		}
-	}
-	return nil
-}
-
-// normalizeWireTool strips whichever server prefix an engine applies to a
-// hosted tool, so the comparison is about which tools exist rather than about
-// a naming convention. A name that carries no recognized prefix is returned
-// unchanged and therefore counts as an extra tool.
-func normalizeWireTool(name, server string) string {
-	for _, prefix := range []string{"mcp__" + server + "__", server + "__", "mcp__" + server + ".", server + "."} {
-		if strings.HasPrefix(name, prefix) {
-			return strings.TrimPrefix(name, prefix)
-		}
-	}
-	return name
 }
 
 func toolNames(tools []ToolDefinition) []string {

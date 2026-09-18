@@ -45,7 +45,13 @@ Shared local Codex/Claude CLI harness transport for Go applications.
   real launch will use, or the check is about a different configuration.
 - Provider configuration must be encoded in the form that provider parses: Codex
   overrides are TOML, not JSON. A fixture that echoes a flag back cannot prove an
-  installed CLI accepts it; where that is untested, say so.
+  installed CLI accepts it. Check flags, names and request shapes against the
+  installed binary with a disposable home and a provider that rejects everything,
+  and encode what was measured — not what the documentation implies.
+- Restriction is judged on two separate questions: nothing unauthorized in any
+  request, and the hosted surface positively proven. A harness that defers its
+  MCP tools will never show them in a request; the tool channel's own record is
+  the evidence there. Do not relax the first question to satisfy the second.
   Publish usage as it is observed and mark whether it is one response or a
   turn's accounting. A failed turn's observations are evidence, never a
   measurement. Health describes a process; it never means work finished.
@@ -60,7 +66,13 @@ Shared local Codex/Claude CLI harness transport for Go applications.
   real launch will use, or the check is about a different configuration.
 - Provider configuration must be encoded in the form that provider parses: Codex
   overrides are TOML, not JSON. A fixture that echoes a flag back cannot prove an
-  installed CLI accepts it; where that is untested, say so.
+  installed CLI accepts it. Check flags, names and request shapes against the
+  installed binary with a disposable home and a provider that rejects everything,
+  and encode what was measured — not what the documentation implies.
+- Restriction is judged on two separate questions: nothing unauthorized in any
+  request, and the hosted surface positively proven. A harness that defers its
+  MCP tools will never show them in a request; the tool channel's own record is
+  the evidence there. Do not relax the first question to satisfy the second.
 - Tests use fake transports, synthetic CLI fixtures, and temporary directories.
   No real models, accounts, credentials, or external mutations in automated tests.
 - Run go test -race ./... and go vet ./...; cross-compile Windows packages.
