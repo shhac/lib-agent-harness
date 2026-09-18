@@ -465,7 +465,8 @@ func (s *Session) startTurnScoped(lifetime, request context.Context, in Input) (
 		return nil, err
 	}
 	s.tools.reopen()
-	t := &Turn{id: newID(), events: make(chan Event, s.options.EventBuffer), done: make(chan struct{})}
+	host := s.tools
+	t := &Turn{id: newID(), events: make(chan Event, s.options.EventBuffer), done: make(chan struct{}), closeTools: host.closeAdmission}
 	t.starting = s.options.Engine == Codex
 	s.active = t
 	invalidate(&s.telemetry.Context.Observation, "conversation is changing; awaiting a fresh observation")

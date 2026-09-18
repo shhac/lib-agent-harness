@@ -810,6 +810,18 @@ func (h *toolHost) pause() {
 	}
 }
 
+// closeAdmission stops new calls without disturbing the ones already admitted.
+// A turn ending is a reason to stop accepting work, not a reason to abandon a
+// write that is half-done. A nil host hosts nothing.
+func (h *toolHost) closeAdmission() {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	h.paused = true
+	h.mu.Unlock()
+}
+
 // ResumeTools reopens a paused tool channel for new work. The generation moves,
 // so anything still queued from before the pause is refused rather than running
 // against a turn that never asked for it.

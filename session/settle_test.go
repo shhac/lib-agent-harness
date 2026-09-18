@@ -128,6 +128,53 @@ func TestNoTurnStartsWhileCancelledToolsAreStillRunning(t *testing.T) {
 	}
 }
 
+// A turn ending closes tool admission, in the turn, not whenever the caller
+// gets around to noticing. Both installed harnesses have been observed sending
+// a tool call after their terminal result, and a caller reacting to the terminal
+// event is always a little behind it — so a write would land after the work was
+// declared stopped. Anything already running is left to finish.
+func TestATurnEndingClosesToolAdmissionWithoutCancellingWhatRuns(t *testing.T) {
+	release := make(chan struct{})
+	running := make(chan struct{})
+	var cancelled atomic.Bool
+	h := testHost(t, ToolHandlerFunc(func(ctx context.Context, c ToolCall) (ToolResult, error) {
+		if c.Name != "run_command" {
+			return ToolResult{Content: "executed"}, nil
+		}
+		close(running)
+		select {
+		case <-release:
+		case <-ctx.Done():
+			cancelled.Store(true)
+		}
+		return ToolResult{Content: "finished on its own"}, nil
+	}),
+		ToolDefinition{Name: "read_file", Schema: map[string]any{"type": "object"}},
+		ToolDefinition{Name: "run_command", Schema: map[string]any{"type": "object"}},
+	)
+	turn := &Turn{id: "turn-one", events: make(chan Event, 4), done: make(chan struct{}), closeTools: h.closeAdmission}
+	c := dial(t, h, string(h.secret))
+	c.send(t, "tools/call", map[string]any{"name": "run_command", "arguments": map[string]any{}})
+	<-running
+
+	turn.finish("completed", nil)
+
+	// A call sent just after the terminal result finds the channel closed.
+	late := dial(t, h, string(h.secret))
+	text, isError := late.call(t, "read_file", map[string]any{})
+	if !isError || !strings.Contains(text, "paused") {
+		t.Fatalf("a call after the turn ended was admitted: %q", text)
+	}
+	// The one that was already running was not abandoned half-done.
+	if cancelled.Load() {
+		t.Fatal("a running call was cancelled by its turn ending")
+	}
+	close(release)
+	if got, isError := readResult(t, c.receive(t)); isError || !strings.Contains(got, "finished on its own") {
+		t.Fatalf("the running call did not finish: %q", got)
+	}
+}
+
 // A paused channel with nothing outstanding is still paused. Settlement is about
 // what is running, not about whether new work is allowed, and confusing the two
 // would let a call admitted after an interrupt look like part of the old turn.

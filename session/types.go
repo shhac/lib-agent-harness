@@ -61,15 +61,15 @@ func CapabilitiesFor(e Engine) Capabilities {
 }
 
 var (
-	ErrUnsupported        = errors.New("harness operation unsupported")
-	ErrClosed             = errors.New("harness session closed")
-	ErrBusy               = errors.New("harness turn already active")
-	ErrStaleTurn          = errors.New("harness turn does not match expected active turn")
+	ErrUnsupported = errors.New("harness operation unsupported")
+	ErrClosed      = errors.New("harness session closed")
+	ErrBusy        = errors.New("harness turn already active")
+	ErrStaleTurn   = errors.New("harness turn does not match expected active turn")
 	// ErrToolsUnsettled reports an attempt to start work while a tool call from
 	// the previous turn is still outstanding. Cancelling a call asks its handler
 	// to stop; until the handler returns, what it did is unknown, and authorizing
 	// another turn on top of it would be building on a workspace still in motion.
-	ErrToolsUnsettled = errors.New("harness tool calls from the previous turn have not settled")
+	ErrToolsUnsettled     = errors.New("harness tool calls from the previous turn have not settled")
 	ErrIncompatibleResume = errors.New("harness resume configuration does not match reference")
 	ErrBackpressure       = errors.New("harness event buffer exhausted; consume Events while the turn runs")
 	ErrProtocol           = errors.New("invalid harness protocol response")
@@ -253,6 +253,8 @@ type Turn struct {
 	awaitingCompactID  bool
 	pending            []map[string]json.RawMessage
 	pendingBytes       int
+	// closeTools shuts the caller's tool channel when this turn ends.
+	closeTools func()
 }
 
 func (t *Turn) ID() string           { t.mu.Lock(); defer t.mu.Unlock(); return t.id }
@@ -282,6 +284,16 @@ func (t *Turn) finish(status string, err error) {
 	t.result.Status = status
 	t.result.TurnID = t.id
 	t.err = err
+	// Tool admission closes with the turn, not when the caller gets around to
+	// noticing it has ended. Both installed harnesses have been observed sending
+	// a tool call after their terminal result, and there is always a gap between
+	// a turn ending and a caller reacting to it — so a caller that closed the
+	// channel on the terminal event would still be racing. Anything already
+	// running is left alone: it is cancellation that stops work, and a turn
+	// ending is not a reason to abandon a write half-done.
+	if t.closeTools != nil {
+		t.closeTools()
+	}
 	close(t.events)
 	close(t.done)
 }
