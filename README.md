@@ -86,6 +86,81 @@ backpressure fails explicitly instead of silently dropping tool activity.
 Cancellation of a wait only stops waiting. Interruption and session closure are
 separate operations.
 
+`Health` reports `running`, `active`, `quiet`, `idle`, `exited` or `failed` from
+what has been observed, without contacting the CLI. Quiet means nothing recently
+and the process is alive: that is unknown, not stuck, and the library draws no
+conclusion from it. Health describes a process and never means a task finished.
+
+Usage is published as it is observed. A turn makes many model requests, so each
+response's reported figures arrive as a `usage` event with `Final` false, and the
+turn's own accounting arrives with `Final` true. `Result.Observed` keeps the
+per-response figures even when a turn fails or is interrupted, where a provider's
+terminal counters are often absent or belong to an earlier turn; it is evidence
+of what was seen, not a measurement of the turn. Nothing is summed across turns.
+
+A lost CLI reports `*ProcessError` with its exit status and a fixed reason code,
+still wrapping `ErrTransport`. Captured standard error never enters an error
+value; set `OnDiagnostic` to receive a bounded, control-stripped, credential-
+redacted tail for your own private records.
+
+## Restricted sessions with caller-hosted tools
+
+`Options.Restriction` opts one session into a stricter contract: the harness's
+own tools are removed, inherited customization is disabled, and your tools
+become the session's entire surface. Sessions opened without it are unchanged.
+
+```go
+s, err := session.Start(ctx, session.Options{
+    Engine: session.Claude,
+    Model:  "haiku",
+    Instructions: session.Instructions{Mode: session.Append, Text: scopedTask},
+    Restriction: &session.Restriction{Tools: session.ToolHost{
+        Server:  "workspace",
+        Dir:     runPrivateDir,                  // owner-only, in your own state
+        Bridge:  session.Bridge{Path: exe, Args: []string{"tool-bridge"}},
+        Tools:   []session.ToolDefinition{{Name: "read_file", Schema: schema}, {Name: "finish", Schema: schema, Closing: true}},
+        Handler: yourExecutor,                   // you execute; the library never does
+    }},
+})
+```
+
+The restriction is proved before your login is ever used. The library launches
+the same binary with the same restricted arguments, a disposable home, a dummy
+credential and a loopback provider that refuses every request, drives one
+synthetic turn, and requires the outbound request to carry exactly your tools —
+none missing, nothing else present. A rejecting provider performs no inference,
+so no agent loop and no tool call can happen during the check. A failure returns
+`*CapabilityError` with a fixed reason code and the disagreeing tool names, and
+nothing is launched. Where a harness also advertises its tools at startup, the
+same comparison runs again before the first prompt.
+
+Restricting writes is not what this does. A tool that can read is a disclosure
+path whatever it may write, so the restriction is the removal of the tools; a
+sandbox mode and a working directory are neither claimed nor relied on as one.
+
+Your bridge command is your own binary re-executed as the harness's tool server.
+Its whole implementation is `session.RunBridge(ctx, os.Stdin, os.Stdout)`, which
+relays the protocol and holds a lock for the session's life. The channel lives
+on an owner-only local socket; its credential sits in an owner-only file and
+never appears in arguments, environment values, references or tool results.
+
+A tool declared `Closing` — reporting completion, asking for a decision —
+latches the channel shut *when it is admitted*, so a call issued in parallel in
+the same turn is refused rather than racing it, and work already running is
+cancelled. `Session.ToolsClosed` reports that state.
+
+If the launching process dies, the harness does not: it keeps its provider
+connection and keeps spending. `session.Reclaim(ctx, dir)` observes the bridge
+lock in that session's private directory — free means nothing survived, held
+means a subtree is alive — terminates the group the live holder recorded, and
+confirms the lock is free before reporting success. Anything else is
+`ErrUnreclaimed`, which means hold the work for inspection rather than start a
+second one.
+
+Restricted sessions require process-group containment and a releasable advisory
+lock, so they are available on macOS and Linux and fail closed elsewhere with
+`restricted_session_unsupported_platform`.
+
 ## Steering and capabilities
 
 Every engine offers the same session methods. `Capabilities` describes support

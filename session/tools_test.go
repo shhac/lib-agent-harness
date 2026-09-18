@@ -63,14 +63,19 @@ func dial(t *testing.T, h *toolHost, secret string) *client {
 	return &client{conn: conn, read: scanner}
 }
 
-func (c *client) send(t *testing.T, method string, params any) {
-	t.Helper()
+func (c *client) post(method string, params any) error {
 	c.mu.Lock()
 	c.next++
 	id := c.next
 	c.mu.Unlock()
 	raw, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
-	if _, err := c.conn.Write(append(raw, '\n')); err != nil {
+	_, err := c.conn.Write(append(raw, '\n'))
+	return err
+}
+
+func (c *client) send(t *testing.T, method string, params any) {
+	t.Helper()
+	if err := c.post(method, params); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -212,7 +217,9 @@ func TestClosingToolRefusesLaterCallsImmediately(t *testing.T) {
 	refusals := make(chan string, 8)
 	h.onRefusal = func(tool, reason string) { refusals <- tool + ":" + reason }
 	finisher := dial(t, h, string(h.secret))
-	go finisher.send(t, "tools/call", map[string]any{"name": "finish", "arguments": map[string]any{}})
+	go func() {
+		_ = finisher.post("tools/call", map[string]any{"name": "finish", "arguments": map[string]any{}})
+	}()
 	<-running
 
 	// Arrives while the closing tool is still executing: it must not run.
@@ -260,7 +267,9 @@ func TestClosingToolCancelsConcurrentWork(t *testing.T) {
 		ToolDefinition{Name: "ask_decision", Schema: map[string]any{"type": "object"}, Closing: true},
 	)
 	slow := dial(t, h, string(h.secret))
-	go slow.send(t, "tools/call", map[string]any{"name": "run_command", "arguments": map[string]any{}})
+	go func() {
+		_ = slow.post("tools/call", map[string]any{"name": "run_command", "arguments": map[string]any{}})
+	}()
 	<-started
 	closer := dial(t, h, string(h.secret))
 	if _, isError := closer.call(t, "ask_decision", map[string]any{}); isError {

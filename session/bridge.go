@@ -127,17 +127,25 @@ func RunBridge(ctx context.Context, in io.Reader, out io.Writer) error {
 	}
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
+	go func() {
+		_, _ = io.Copy(conn, in)
+		// Closing the write side lets the session observe the harness's end of
+		// the stream instead of waiting on a half-open connection.
+		if half, ok := conn.(*net.UnixConn); ok {
+			_ = half.CloseWrite()
+		}
+	}()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		_, _ = io.Copy(out, conn)
 	}()
-	_, _ = io.Copy(conn, in)
-	// Closing the write side lets the session observe the harness's end of the
-	// stream instead of waiting on a half-open connection.
-	if half, ok := conn.(*net.UnixConn); ok {
-		_ = half.CloseWrite()
+	// The harness's end of the stream is the authority on when relaying is over.
+	// A cancelled context ends it too, without waiting on a read from a harness
+	// that may never write again.
+	select {
+	case <-done:
+	case <-ctx.Done():
 	}
-	<-done
 	return nil
 }
