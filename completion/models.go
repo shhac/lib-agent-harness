@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/shhac/lib-agent-harness/internal/restrict"
 	"github.com/shhac/lib-agent-harness/process"
 )
 
@@ -83,7 +84,7 @@ func codexCatalogInvocation(cfg Config) (string, []string, []string, error) {
 	}
 	args := []string{"app-server", "--listen", "stdio://", "-c", "analytics.enabled=false", "-c", "check_for_update_on_startup=false"}
 	// No thread is created. Also disable tool-discovery features during startup.
-	for _, feature := range disabledCodexFeatures {
+	for _, feature := range restrict.CodexFeatures {
 		args = append(args, "-c", "features."+feature+"=false")
 	}
 	return bin, args, env, nil
