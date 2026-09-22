@@ -205,7 +205,7 @@ func (s *Session) ToolsSettled() bool {
 	}
 	host.mu.Lock()
 	defer host.mu.Unlock()
-	return host.running == 0 && len(host.pending) == 0
+	return host.settledLocked()
 }
 
 // AwaitToolsSettled blocks until nothing is outstanding, or the context ends.

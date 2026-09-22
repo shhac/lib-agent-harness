@@ -18,10 +18,6 @@ func (s *Session) StartTurn(ctx context.Context, in Input) (*Turn, error) {
 		return nil, err
 	}
 	defer s.unlockOp()
-	return s.startTurn(ctx, in)
-}
-
-func (s *Session) startTurn(ctx context.Context, in Input) (*Turn, error) {
 	return s.startTurnScoped(ctx, ctx, in)
 }
 

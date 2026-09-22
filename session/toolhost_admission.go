@@ -183,7 +183,7 @@ func (h *toolHost) release() {
 // is outstanding, so a waiter is woken by the last call retiring rather than by
 // a poll that might sample between two of them.
 func (h *toolHost) trackSettlementLocked() {
-	idle := h.running == 0 && len(h.pending) == 0
+	idle := h.settledLocked()
 	select {
 	case <-h.settled:
 		if !idle {
@@ -195,6 +195,10 @@ func (h *toolHost) trackSettlementLocked() {
 		}
 	}
 }
+
+// settledLocked reports that no admitted call is queued or executing. Call it
+// with h.mu held.
+func (h *toolHost) settledLocked() bool { return h.running == 0 && len(h.pending) == 0 }
 
 // barrierLocked is every reason a call may not run, in one place.
 func (h *toolHost) barrierLocked(name string) map[string]any {
@@ -260,7 +264,7 @@ func (h *toolHost) readyForWork() error {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.running == 0 && len(h.pending) == 0 {
+	if h.settledLocked() {
 		return nil
 	}
 	return ErrToolsUnsettled

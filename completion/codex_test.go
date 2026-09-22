@@ -20,9 +20,6 @@ import (
 const testCatalog = `{"models":[{"slug":"test-model","supported_reasoning_levels":[{"effort":"high"}],"shell_type":"unified_exec","apply_patch_tool_type":"freeform","experimental_supported_tools":["clock"],"tool_mode":"code_mode_only"}]}`
 
 func TestCodexModelEffortAndIsolation(t *testing.T) {
-	if got := catalogDefaultEffort([]byte(`{"models":[{"slug":"test-model","default_reasoning_level":"medium"}]}`), "test-model"); got != "medium" {
-		t.Fatalf("catalog default effort=%q", got)
-	}
 	for _, tc := range []struct{ model, effort string }{{"missing", "high"}, {"test-model", "ultra"}} {
 		if _, err := restrictedCatalog([]byte(testCatalog), tc.model, tc.effort); err == nil {
 			t.Fatalf("accepted unsupported selection: %+v", tc)

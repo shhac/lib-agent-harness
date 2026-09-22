@@ -84,7 +84,7 @@ func codexComplete(ctx context.Context, cfg Config, messages []Message, tools []
 		return empty, usage, preflightFailure("codex", "catalog_read_failed")
 	}
 	if cfg.Effort == "" {
-		cfg.Effort = catalogDefaultEffort(catalog, cfg.Model)
+		cfg.Effort = restrict.CodexCatalogEffort(catalog, cfg.Model)
 	}
 	restricted, err := restrictedCatalog(catalog, cfg.Model, cfg.Effort)
 	if err != nil {
@@ -158,10 +158,6 @@ func codexArgs(cfg Config, dir, catalogPath, schemaPath, instructionsPath string
 	// limits explicit; built-in provider definitions cannot be overridden.
 	args = append(args, "-c", `model_provider="harness_codex"`, "-c", `model_providers.harness_codex={name="Harness Codex",requires_openai_auth=true,wire_api="responses",request_max_retries=0,stream_max_retries=0,supports_websockets=false}`)
 	return args, nil
-}
-
-func catalogDefaultEffort(data []byte, model string) string {
-	return restrict.CodexCatalogEffort(data, model)
 }
 
 // restrictedCatalog keeps completion's own failure vocabulary while the catalog

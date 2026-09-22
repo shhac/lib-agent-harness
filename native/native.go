@@ -348,13 +348,7 @@ func Run(ctx context.Context, c Config, r Request, stream *Stream) (Result, erro
 }
 
 func overrideEnv(env []string, key, value string) []string {
-	out := make([]string, 0, len(env)+1)
-	for _, v := range env {
-		if !strings.HasPrefix(v, key+"=") {
-			out = append(out, v)
-		}
-	}
-	return append(out, key+"="+value)
+	return append(withoutEnv(env, key), key+"="+value)
 }
 func jsonCompact(s string) string {
 	var b bytes.Buffer
