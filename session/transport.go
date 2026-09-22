@@ -2,6 +2,7 @@ package session
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -379,3 +380,43 @@ func str(m map[string]json.RawMessage, k string) string {
 	_ = json.Unmarshal(m[k], &s)
 	return s
 }
+
+func runOnce(ctx context.Context, binary string, args []string, dir string, env []string) ([]byte, error) {
+	cmd, p, err := process.Command(ctx, binary, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer p.Close()
+	cmd.Dir = dir
+	cmd.Env = env
+	out := &boundedBuffer{limit: 4 << 20}
+	cmd.Stdout = out
+	cmd.Stderr = io.Discard
+	cmd.WaitDelay = 2 * time.Second
+	if err = p.Run(); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
+
+// boundedBuffer keeps a prefix and reports the full length, so a caller can see
+// that output was cut rather than silently receiving a shortened copy.
+type boundedBuffer struct {
+	buf   bytes.Buffer
+	limit int
+	total int
+}
+
+func (b *boundedBuffer) Write(p []byte) (int, error) {
+	n := len(p)
+	b.total += n
+	if remaining := b.limit - b.buf.Len(); remaining > 0 {
+		if len(p) > remaining {
+			p = p[:remaining]
+		}
+		_, _ = b.buf.Write(p)
+	}
+	return n, nil
+}
+
+func (b *boundedBuffer) Bytes() []byte { return b.buf.Bytes() }
