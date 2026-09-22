@@ -81,7 +81,6 @@ const (
 	CapabilityCatalogRestriction  = "model_catalog_restriction_failed"
 	CapabilityServerNotLoaded     = "tool_server_not_loaded"
 	CapabilityServerNameReserved  = "tool_server_name_reserved"
-	CapabilityInheritedConfig     = "inherited_configuration_present"
 	CapabilityLoginUnavailable    = "harness_login_unavailable"
 )
 
@@ -124,7 +123,6 @@ func (e *CapabilityError) Error() string {
 		CapabilityCatalogRestriction:  "the selected model could not be restricted in the installed harness catalog",
 		CapabilityServerNotLoaded:     "the installed harness did not load this session's tool server",
 		CapabilityServerNameReserved:  "the installed harness reserves this tool server name; choose another",
-		CapabilityInheritedConfig:     "the selected harness home declares configuration that would add capabilities this session did not configure",
 		CapabilityLoginUnavailable:    "the selected harness home has no file-backed login to share with a restricted session; log in to that home first",
 	}[e.Code]
 	if message == "" {
@@ -193,8 +191,8 @@ func bridgeArgs(h *toolHost) []string {
 // here. The installed CLI does not accept them on `app-server` at any argument
 // position — they belong to `exec` — so passing them is not a stricter launch,
 // it is a launch that fails to start. Inherited configuration is handled where
-// it can actually be handled: the selected home is inspected before launch and
-// refused if it declares tool-bearing configuration.
+// it can actually be handled: the session runs in a private RuntimeHome whose
+// configuration this library writes (see runtime.go).
 //
 // Every override is TOML, because that is what Codex parses. The MCP server is
 // registered as dotted-key leaves rather than one nested value, so quoting

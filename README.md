@@ -253,13 +253,12 @@ Its remaining surface includes MCP-mediated helpers (`tool_search`,
 are permitted because they can address nothing but configured MCP servers, a
 restricted session configures exactly one, and this library's tool host answers
 every resource method with method-not-supported. And `app-server` has no
-`--ignore-user-config` or `--ignore-rules` — those belong to `exec`, and
+`--ignore-user-config` or `--ignore-rules` (those belong to `exec`), and
 overriding the server table with `-c mcp_servers={}` does not clear entries
 already declared in `config.toml`, which were observed starting. Inherited
-configuration is therefore handled the one way that works without moving a
-credential: the selected home is inspected before launch and refused if it
-declares MCP servers, hooks, plugins or other tool-bearing tables. Your login
-stays exactly where it is.
+configuration is therefore never read at all: the session runs in
+`Options.RuntimeHome`, whose configuration this library writes, and only the
+login is shared into it from `Options.Home`, as described above.
 
 Restricted sessions require process-group containment and a releasable advisory
 lock, so they are available on macOS and Linux and fail closed elsewhere with
