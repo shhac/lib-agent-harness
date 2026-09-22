@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/shhac/lib-agent-harness/internal/restrict"
 	"github.com/shhac/lib-agent-harness/process"
 )
 
@@ -190,13 +191,11 @@ func Args(c Config, r Request) ([]string, error) {
 		} else {
 			args = append(args, "--skip-git-repo-check")
 			if c.Sandbox != "" {
-				v, _ := json.Marshal(c.Sandbox)
-				args = append(args, "-c", "sandbox_mode="+string(v))
+				args = append(args, "-c", codexOverride("sandbox_mode", c.Sandbox))
 			}
 		}
 		if r.AppendInstructions != "" {
-			v, _ := json.Marshal(r.AppendInstructions)
-			args = append(args, "-c", "developer_instructions="+string(v))
+			args = append(args, "-c", codexOverride("developer_instructions", r.AppendInstructions))
 		}
 		if r.SchemaPath != "" {
 			args = append(args, "--output-schema", r.SchemaPath)
@@ -206,8 +205,7 @@ func Args(c Config, r Request) ([]string, error) {
 		}
 		args = append(args, c.Args...)
 		if c.Effort != "" {
-			v, _ := json.Marshal(c.Effort)
-			args = append(args, "-c", "model_reasoning_effort="+string(v))
+			args = append(args, "-c", codexOverride("model_reasoning_effort", c.Effort))
 		}
 		args = append(args, "--")
 		if r.ResumeSession != "" {
@@ -246,6 +244,14 @@ func Args(c Config, r Request) ([]string, error) {
 	default:
 		return nil, fmt.Errorf("unsupported native harness %q", c.Engine)
 	}
+}
+
+// codexOverride encodes a `-c` override as the TOML Codex parses. Invalid UTF-8
+// becomes U+FFFD byte by byte, which is what the JSON encoding used here before
+// did, so no value Args accepted before is refused now or means something else.
+func codexOverride(key, value string) string {
+	encoded, _ := restrict.TOMLString(string([]rune(value)))
+	return key + "=" + encoded
 }
 
 // Execute starts exactly one CLI invocation. There is no automatic retry.

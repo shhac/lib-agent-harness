@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/shhac/lib-agent-harness/internal/tomltest"
 )
 
 const testCatalog = `{"models":[{"slug":"test-model","supported_reasoning_levels":[{"effort":"high"}],"shell_type":"unified_exec","apply_patch_tool_type":"freeform","experimental_supported_tools":["clock"],"tool_mode":"code_mode_only"}]}`
@@ -49,11 +51,48 @@ func TestCodexModelEffortAndIsolation(t *testing.T) {
 			t.Fatal("secret inherited")
 		}
 	}
-	args := strings.Join(codexArgs(Config{Model: "test-model", Effort: "high"}, "/safe", "/models", "/schema", "/instructions"), " ")
+	encoded, err := codexArgs(Config{Model: "test-model", Effort: "high"}, "/safe", "/models", "/schema", "/instructions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Join(encoded, " ")
 	for _, want := range []string{"--ignore-user-config", "--ignore-rules", "--ephemeral", "--sandbox read-only", "project_doc_max_bytes=0", "features.hooks=false", "features.plugins=false", "features.shell_tool=false", "features.skip_host_skill_discovery=true", "model_reasoning_effort=\"high\""} {
 		if !strings.Contains(args, want) {
 			t.Fatalf("missing boundary %s", want)
 		}
+	}
+}
+
+// Codex parses these overrides as TOML. Go quoting agrees with TOML only until a
+// value holds an escape the two spell differently (a bell, a vertical tab, an
+// astral character), so each value has to read back as exactly what was meant.
+func TestCodexOverridesReadBackAsTheirValues(t *testing.T) {
+	dir := "/tmp/scratch \"quoted\" \\ bell\a vtab\v del\x7f \U0001F600"
+	args, err := codexArgs(Config{Model: "test-model", Effort: "high"}, dir, dir+"/models.json", dir+"/schema.json", dir+"/instructions.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"model_reasoning_effort": "high", "model_catalog_json": dir + "/models.json", "model_instructions_file": dir + "/instructions.txt"}
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] != "-c" {
+			continue
+		}
+		key, _, _ := strings.Cut(args[i+1], "=")
+		expected, checked := want[key]
+		if !checked {
+			continue
+		}
+		_, value, err := tomltest.Override(args[i+1])
+		if err != nil || value != expected {
+			t.Errorf("%s reads back as %q (%v), want %q", args[i+1], value, err, expected)
+		}
+		delete(want, key)
+	}
+	if len(want) != 0 {
+		t.Errorf("overrides missing: %v", want)
+	}
+	if _, err = codexArgs(Config{Model: "test-model", Effort: "high"}, dir, "/tmp/\xff/models.json", dir, dir); err == nil {
+		t.Error("a path TOML cannot carry was altered rather than refused")
 	}
 }
 
@@ -176,7 +215,10 @@ func TestInstalledCodexCapabilityProbe(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	args := codexArgs(cfg, dir, filepath.Join(dir, "models.json"), filepath.Join(dir, "schema.json"), filepath.Join(dir, "instructions.txt"))
+	args, err := codexArgs(cfg, dir, filepath.Join(dir, "models.json"), filepath.Join(dir, "schema.json"), filepath.Join(dir, "instructions.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := probeCodex(context.Background(), cfg, bin, args, dir, codexCatalogEnvironment(dir)); err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +283,10 @@ func TestInstalledCodexStructuredResponse(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	args := codexArgs(cfg, dir, filepath.Join(dir, "models.json"), filepath.Join(dir, "schema.json"), filepath.Join(dir, "instructions.txt"))
+	args, err := codexArgs(cfg, dir, filepath.Join(dir, "models.json"), filepath.Join(dir, "schema.json"), filepath.Join(dir, "instructions.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	args = append(args, "-c", `model_provider="test_codex"`, "-c", `model_providers.test_codex={name="Local test",base_url="`+server.URL+`/v1",wire_api="responses",requires_openai_auth=true,request_max_retries=0,stream_max_retries=0}`)
 	// A fake persisted API login exercises the same requires_openai_auth path.
 	if err := os.WriteFile(filepath.Join(dir, "auth.json"), []byte(`{"OPENAI_API_KEY":"fake-local-key"}`), 0600); err != nil {

@@ -68,6 +68,17 @@ func TestCodexCatalogKeepsBaseInstructionsUnlessReplaced(t *testing.T) {
 	if string(selected(t, raw)["base_instructions"]) != `"application reasoning engine"` {
 		t.Errorf("replacement not applied: %s", raw)
 	}
+	// The catalog is JSON, so the replacement has to be JSON-encoded: Go quoting
+	// would write escapes such as \a that no JSON reader accepts.
+	awkward := "bell\a vtab\v \"quoted\" \U0001F600 \u2028"
+	raw, err = CodexCatalog([]byte(catalog), "picked", "low", &awkward)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded string
+	if err = json.Unmarshal(selected(t, raw)["base_instructions"], &decoded); err != nil || decoded != awkward {
+		t.Errorf("replacement reads back as %q (%v), want %q", decoded, err, awkward)
+	}
 }
 
 func TestCodexCatalogRejections(t *testing.T) {

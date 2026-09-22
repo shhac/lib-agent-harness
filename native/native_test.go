@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/shhac/lib-agent-harness/internal/tomltest"
 )
 
 func TestArgsProtectPositionalsAndReassertPolicy(t *testing.T) {
@@ -41,6 +43,44 @@ func TestArgsProtectPositionalsAndReassertPolicy(t *testing.T) {
 		if engine == "claude" && (!strings.Contains(joined, "--resume session") || !strings.Contains(joined, "--permission-mode auto")) {
 			t.Fatal(joined)
 		}
+	}
+}
+
+// Codex reads these overrides as TOML. They were JSON-encoded before, which
+// TOML mostly shares; each value must still read back as what that encoding
+// meant, including the U+FFFD it substituted for invalid UTF-8, so no caller's
+// instructions change meaning or start being refused.
+func TestCodexOverridesKeepTheirMeaningAsTOML(t *testing.T) {
+	instructions := "Line one\nsay \"hi\" \\ <b>&</b> \u2028 bell\a del\x7f \U0001F600 bad\xff\xfe bytes"
+	c := Config{Engine: "codex", Effort: "high", Sandbox: "workspace-write"}
+	args, err := Args(c, Request{Prompt: "p", ResumeSession: "session", AppendInstructions: instructions})
+	if err != nil {
+		t.Fatal(err)
+	}
+	meant := func(value string) string {
+		raw, _ := json.Marshal(value)
+		var decoded string
+		if err := json.Unmarshal(raw, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		return decoded
+	}
+	want := map[string]string{"developer_instructions": meant(instructions), "model_reasoning_effort": "high", "sandbox_mode": "workspace-write"}
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] != "-c" {
+			continue
+		}
+		key, value, err := tomltest.Override(args[i+1])
+		if err != nil {
+			t.Fatalf("%q is not a TOML override: %v", args[i+1], err)
+		}
+		if value != want[key] {
+			t.Errorf("%s reads back as %q, want %q", key, value, want[key])
+		}
+		delete(want, key)
+	}
+	if len(want) != 0 {
+		t.Errorf("overrides missing: %v", want)
 	}
 }
 

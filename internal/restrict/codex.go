@@ -9,10 +9,7 @@
 // verify the result against the installed CLI before trusting it.
 package restrict
 
-import (
-	"encoding/json"
-	"strconv"
-)
+import "encoding/json"
 
 // Error carries a fixed reason code. Provider text never enters it.
 type Error struct{ Code string }
@@ -92,7 +89,9 @@ func CodexCatalog(data []byte, model, effort string, baseInstructions *string) (
 		m["tool_mode"] = json.RawMessage(`"standard"`)
 		m["node_repl_disabled"] = json.RawMessage(`true`)
 		if baseInstructions != nil {
-			m["base_instructions"] = json.RawMessage(strconv.Quote(*baseInstructions))
+			// The catalog is JSON. Go quoting is not: it writes \a, \v and \x..
+			// escapes that JSON does not have.
+			m["base_instructions"], _ = json.Marshal(*baseInstructions)
 		}
 		return json.Marshal(map[string]any{"models": []map[string]json.RawMessage{m}})
 	}
