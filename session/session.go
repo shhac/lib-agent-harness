@@ -265,27 +265,14 @@ func (s *Session) initialize(ctx context.Context, resume bool) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if s.options.Engine == Codex {
-		if _, err := s.transport.request(ctx, "initialize", map[string]any{"clientInfo": map[string]any{"name": "lib-agent-harness", "version": "1"}, "capabilities": map[string]any{}}); err != nil {
+		if err := codexHandshake(ctx, s.transport); err != nil {
 			return err
-		}
-		if err := s.transport.send(ctx, map[string]any{"method": "initialized"}); err != nil {
-			return err
-		}
-		p := map[string]any{"cwd": s.options.WorkDir, "approvalPolicy": s.options.Policy.CodexApproval, "sandbox": s.options.Policy.CodexSandbox}
-		if s.options.Model != "" {
-			p["model"] = s.options.Model
-		}
-		if s.options.Instructions.Mode == Replace {
-			p["baseInstructions"] = s.options.Instructions.Text
-		} else if s.options.Instructions.Mode == Append {
-			p["developerInstructions"] = s.options.Instructions.Text
 		}
 		method := "thread/start"
 		if resume {
 			method = "thread/resume"
-			p["threadId"] = s.ref.ID
 		}
-		body, err := s.transport.request(ctx, method, p)
+		body, err := s.transport.request(ctx, method, codexThreadParams(s.options, s.options.WorkDir, resume, s.ref.ID))
 		if err != nil {
 			return err
 		}
@@ -484,7 +471,7 @@ func (s *Session) startTurnScoped(lifetime, request context.Context, in Input) (
 	if s.options.Engine == Codex {
 		err = s.startCodexTurn(request, t, ref, in)
 	} else {
-		err = s.transport.send(request, map[string]any{"type": "user", "session_id": ref.ID, "parent_tool_use_id": nil, "message": map[string]any{"role": "user", "content": in.Text}})
+		err = s.transport.send(request, claudeUserFrame(ref.ID, in.Text))
 	}
 	if err != nil {
 		if definitiveRejection(err) {
@@ -512,11 +499,7 @@ func (s *Session) startTurnScoped(lifetime, request context.Context, in Input) (
 // replay so no live notification interleaves with it, and with t.pending
 // cleared under t.mu before the replay begins.
 func (s *Session) startCodexTurn(ctx context.Context, t *Turn, ref Ref, in Input) error {
-	p := map[string]any{"threadId": ref.ID, "input": []any{map[string]any{"type": "text", "text": in.Text}}}
-	if s.options.Effort != "" {
-		p["effort"] = s.options.Effort
-	}
-	body, err := s.transport.request(ctx, "turn/start", p)
+	body, err := s.transport.request(ctx, "turn/start", codexTurnParams(ref.ID, in.Text, s.options.Effort))
 	if err != nil {
 		return err
 	}
@@ -655,7 +638,7 @@ func (s *Session) Steer(ctx context.Context, expected string, in Input, o SteerO
 		s.mu.Unlock()
 		return SteerResult{Composed, next}, nil
 	}
-	body, err := s.transport.request(ctx, "turn/steer", map[string]any{"threadId": s.Ref().ID, "expectedTurnId": expected, "input": []any{map[string]any{"type": "text", "text": in.Text}}})
+	body, err := s.transport.request(ctx, "turn/steer", map[string]any{"threadId": s.Ref().ID, "expectedTurnId": expected, "input": codexInput(in.Text)})
 	if err != nil {
 		if !definitiveRejection(err) {
 			s.fail(err)

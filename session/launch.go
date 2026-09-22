@@ -361,7 +361,7 @@ func driveProbe(ctx context.Context, o Options, l *launch, dir, endpoint string)
 }
 
 func driveClaudeProbe(ctx context.Context, o Options, args []string, id, dir string, env []string) error {
-	prompt, _ := json.Marshal(map[string]any{"type": "user", "session_id": id, "parent_tool_use_id": nil, "message": map[string]any{"role": "user", "content": "Capability check only."}})
+	prompt, _ := json.Marshal(claudeUserFrame(id, "Capability check only."))
 	cmd, p, err := process.Command(ctx, o.Binary, args...)
 	if err != nil {
 		return err
@@ -385,17 +385,10 @@ func driveCodexProbe(ctx context.Context, o Options, args []string, dir string, 
 		return err
 	}
 	defer func() { w.close(); <-w.reaped }()
-	if _, err = w.request(ctx, "initialize", map[string]any{"clientInfo": map[string]any{"name": "lib-agent-harness", "version": "1"}, "capabilities": map[string]any{}}); err != nil {
+	if err = codexHandshake(ctx, w); err != nil {
 		return err
 	}
-	if err = w.send(ctx, map[string]any{"method": "initialized"}); err != nil {
-		return err
-	}
-	params := map[string]any{"cwd": dir, "approvalPolicy": o.Policy.CodexApproval, "sandbox": o.Policy.CodexSandbox, "model": o.Model}
-	if o.Instructions.Mode == Append {
-		params["developerInstructions"] = o.Instructions.Text
-	}
-	body, err := w.request(ctx, "thread/start", params)
+	body, err := w.request(ctx, "thread/start", codexThreadParams(o, dir, false, ""))
 	if err != nil {
 		return err
 	}
@@ -407,10 +400,7 @@ func driveCodexProbe(ctx context.Context, o Options, args []string, dir string, 
 	if json.Unmarshal(body, &started) != nil || started.Thread.ID == "" {
 		return ErrProtocol
 	}
-	turn := map[string]any{"threadId": started.Thread.ID, "input": []any{map[string]any{"type": "text", "text": "Capability check only."}}}
-	if o.Effort != "" {
-		turn["effort"] = o.Effort
-	}
+	turn := codexTurnParams(started.Thread.ID, "Capability check only.", o.Effort)
 	// turn/start is acknowledged before the harness contacts its provider, so
 	// returning here would close the transport during the very request the check
 	// exists to read. Wait instead: the caller cancels this context as soon as a
