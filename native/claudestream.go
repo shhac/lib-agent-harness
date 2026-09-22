@@ -254,16 +254,21 @@ func (t *streamTranscoder) emitToolResult(b contentBlock) {
 	_, _ = fmt.Fprintf(t.out, " %s%s:\n%s\n", status, elapsed, decodeToolResult(b.Content))
 }
 
+// renderResult settles a result event's state first and writes what it shows
+// second, so the order a reader sees stays fixed however the state is derived.
 func (t *streamTranscoder) renderResult(ev streamEvent, rawLine []byte) {
+	structured, failure := t.recordResult(ev, rawLine)
+	t.writeResultTrailer(structured, failure)
+}
+
+// recordResult folds a result event into the transcoder's state. It reports
+// whether the event carried a structured report and why the run failed, if it
+// did; nothing is written.
+func (t *streamTranscoder) recordResult(ev streamEvent, rawLine []byte) (bool, string) {
 	t.completed = true
-	if len(ev.StructuredOutput) > 0 && !bytes.Equal(bytes.TrimSpace(ev.StructuredOutput), []byte("null")) {
+	structured := len(ev.StructuredOutput) > 0 && !bytes.Equal(bytes.TrimSpace(ev.StructuredOutput), []byte("null"))
+	if structured {
 		t.report = ev.StructuredOutput
-		// The report is the run's conclusion, and with --json-schema it
-		// arrives as a suppressed tool call rather than a message, so nothing
-		// else would render it. Emitting it under the agent marker is what
-		// gives the dashboard its decision bubble, exactly as codex's final
-		// assistant message does.
-		t.emit("claude", jsonCompact(string(t.report)))
 	}
 	// Claude can emit a terminal error with all-zero counters despite having
 	// streamed output. Such placeholders are not evidence of a free invocation.
@@ -287,10 +292,10 @@ func (t *streamTranscoder) renderResult(ev streamEvent, rawLine []byte) {
 	if !t.structured && !ev.IsError && len(t.report) == 0 {
 		t.report = ev.Result
 	}
+	failure := ""
 	if reason := resultFailure(ev); reason != "" && (t.structured || ev.IsError) {
+		failure = reason
 		t.failure = reason
-		t.event(Event{Kind: "error", Text: reason})
-		t.emit("error", reason)
 	}
 
 	// Summed for the same reason as the tokens, and verified the same way.
@@ -305,6 +310,24 @@ func (t *streamTranscoder) renderResult(ev streamEvent, rawLine []byte) {
 		t.costUSD += *ev.TotalCostUSD
 	} else {
 		t.costIncomplete = true
+	}
+	return structured, failure
+}
+
+// writeResultTrailer shows a settled result: the report, any failure, the
+// usage event and the token trailer, in that order.
+func (t *streamTranscoder) writeResultTrailer(structured bool, failure string) {
+	if structured {
+		// The report is the run's conclusion, and with --json-schema it
+		// arrives as a suppressed tool call rather than a message, so nothing
+		// else would render it. Emitting it under the agent marker is what
+		// gives the dashboard its decision bubble, exactly as codex's final
+		// assistant message does.
+		t.emit("claude", jsonCompact(string(t.report)))
+	}
+	if failure != "" {
+		t.event(Event{Kind: "error", Text: failure})
+		t.emit("error", failure)
 	}
 	t.event(Event{Kind: "usage", Usage: t.usage, CostUSD: t.costUSD, UsageKnown: t.sawUsage && !t.usageIncomplete, CostKnown: t.sawCost && !t.costIncomplete})
 
