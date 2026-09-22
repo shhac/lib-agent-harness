@@ -2,6 +2,7 @@ package session
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -116,5 +117,66 @@ func TestInterruptedClaudeErrorUsageStaysUnknown(t *testing.T) {
 	}
 	if result.Usage.Known || result.Usage.Input != 0 || result.Usage.Output != 0 {
 		t.Fatalf("interrupted totals reported as known usage: %+v", result.Usage)
+	}
+}
+
+// A tool result closes the card its tool_use opened, and says whether the tool
+// failed. A card left open would read as a tool still running.
+func TestClaudeToolResultsCloseTheirCards(t *testing.T) {
+	s, _ := fakeSession(t, Claude)
+	ctx := testContext(t)
+	turn, err := s.StartTurn(ctx, Input{"start"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	notify(s, `{"type":"assistant","session_id":"session-1","message":{"id":"a","content":[{"type":"tool_use","id":"ok-call","name":"Read"},{"type":"tool_use","id":"bad-call","name":"Edit"}]}}`)
+	notify(s, `{"type":"user","session_id":"session-1","message":{"content":[{"type":"tool_result","tool_use_id":"ok-call"},{"type":"text","text":"not a result"},{"type":"tool_result","tool_use_id":"bad-call","is_error":true}]}}`)
+	finishClaude(s, false)
+	if _, err = turn.Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	status := map[string]string{}
+	for event := range turn.Events() {
+		if event.Kind == "tool_completed" {
+			status[event.ItemID] = event.Status
+		}
+	}
+	if len(status) != 2 || status["ok-call"] != "completed" || status["bad-call"] != "failed" {
+		t.Fatalf("tool cards were not closed with their outcomes: %v", status)
+	}
+}
+
+// Streamed text belongs to the message that is streaming. A new message starts
+// its own text rather than appending to the last one's, which is what lets the
+// final answer be the last message instead of every message run together.
+func TestClaudeStreamedTextFollowsTheCurrentMessage(t *testing.T) {
+	s, _ := fakeSession(t, Claude)
+	ctx := testContext(t)
+	turn, err := s.StartTurn(ctx, Input{"start"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	notify(s, `{"type":"stream_event","session_id":"session-1","event":{"type":"message_start","message":{"id":"first"}}}`)
+	notify(s, `{"type":"stream_event","session_id":"session-1","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"planning "}}}`)
+	notify(s, `{"type":"stream_event","session_id":"session-1","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"aloud"}}}`)
+	notify(s, `{"type":"stream_event","session_id":"session-1","event":{"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"{}"}}}`)
+	notify(s, `{"type":"stream_event","session_id":"session-1","event":{"type":"message_start","message":{"id":"second"}}}`)
+	notify(s, `{"type":"stream_event","session_id":"session-1","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"answer"}}}`)
+	notify(s, `{"type":"result","subtype":"success","is_error":false,"session_id":"session-1","usage":{"input_tokens":1,"output_tokens":1}}`)
+	result, err := turn.Wait(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Text != "answer" {
+		t.Fatalf("streamed text crossed messages: %q", result.Text)
+	}
+	var deltas []string
+	for event := range turn.Events() {
+		if event.Kind == "text_delta" {
+			deltas = append(deltas, event.ItemID+":"+event.Text)
+		}
+	}
+	if strings.Join(deltas, "|") != "first:planning |first:aloud|second:answer" {
+		t.Fatalf("deltas were not attributed to their messages: %q", deltas)
 	}
 }

@@ -30,6 +30,9 @@ const (
 const holdFixtureLifetime = 10 * time.Minute
 
 func TestMain(m *testing.M) {
+	if scenario := os.Getenv(fakeScenarioEnv); scenario != "" {
+		os.Exit(runFakeHarness(scenario))
+	}
 	if path := os.Getenv(holdLockEnv); path != "" {
 		lock, err := holdBridgeLock(path, os.Getenv(holdLaunchEnv))
 		if err != nil {
