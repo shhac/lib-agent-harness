@@ -32,105 +32,117 @@ func (s *Session) codexEvent(t *Turn, ref Ref, m map[string]json.RawMessage) {
 	case "item/agentMessage/delta":
 		s.text(t, str(p, "itemId"), str(p, "delta"), false)
 	case "item/started", "item/completed":
-		var item map[string]json.RawMessage
-		if json.Unmarshal(p["item"], &item) != nil {
-			return
-		}
-		typ := str(item, "type")
-		if typ == "contextCompaction" {
-			s.invalidateContext(t, "context compacting; awaiting a fresh observation")
-			kind := "compaction_started"
-			if method == "item/completed" {
-				kind = "compaction_completed"
-			}
-			s.emit(t, Event{Kind: kind, ItemID: str(item, "id")})
-			return
-		}
-		id := str(item, "id")
-		if typ == "agentMessage" {
-			if method == "item/completed" {
-				s.text(t, id, str(item, "text"), true)
-			}
-			return
-		}
-		switch typ {
-		case "commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "collabAgentToolCall", "subAgentActivity", "sleep", "imageGeneration", "webSearch", "imageView":
-			tool := typ
-			if name := str(item, "tool"); name != "" {
-				tool = name
-			}
-			kind := "tool_started"
-			if method == "item/completed" {
-				kind = "tool_completed"
-			}
-			s.emit(t, Event{Kind: kind, ItemID: id, Tool: tool, Status: str(item, "status")})
-		}
+		s.codexItem(t, method == "item/completed", p)
 	case "thread/tokenUsage/updated":
-		if str(p, "turnId") == "" {
-			return
-		}
-		if c, err := parseCodexContext(p["tokenUsage"]); err == nil {
-			s.observeContext(c, t)
-		}
-		var envelope struct {
-			Last  json.RawMessage `json:"last"`
-			Total json.RawMessage `json:"total"`
-		}
-		if json.Unmarshal(p["tokenUsage"], &envelope) != nil || str(p, "turnId") == "" {
-			return
-		}
-		last, lastOK := parseCodexUsage(envelope.Last)
-		total, totalOK := parseCodexUsage(envelope.Total)
-		if !lastOK || !totalOK {
-			return
-		}
-		// last is one model response; total identifies repeated notifications. Sum
-		// response usage within this turn, never the resumed session's old total.
-		t.mu.Lock()
-		fresh := t.lastCodexTotal != total || !t.result.Usage.Known
-		if fresh {
-			t.result.Usage = t.result.Usage.add(last.normalized())
-			t.lastCodexTotal = total
-		}
-		t.mu.Unlock()
-		if fresh {
-			s.observeRequestUsage(t, last.normalized())
-		}
+		s.codexTokenUsage(t, p)
 	case "thread/compacted":
 		s.invalidateContext(t, "context compacted; awaiting a fresh observation")
 	case "turn/completed":
-		var turn struct{ ID, Status string }
-		if json.Unmarshal(p["turn"], &turn) != nil {
-			return
-		}
-		if turn.ID != t.ID() {
-			return
-		}
-		var err error
-		if turn.Status == "failed" {
-			t.mu.Lock()
-			t.result.NativeError = true
-			t.mu.Unlock()
-			err = ErrTurnFailed
-		}
-		switch turn.Status {
-		case "completed", "interrupted", "failed":
-		default:
-			s.fail(ErrProtocol)
-			return
-		}
-		// The turn's own accounting is published separately from the per-response
-		// observations, so a caller never has to guess which one it is holding.
-		t.mu.Lock()
-		accounting := t.result.Usage
-		t.mu.Unlock()
-		if accounting.Known {
-			accounting.Final = true
-			s.emit(t, Event{Kind: "usage", Usage: &accounting})
-		}
-		s.emit(t, Event{Kind: "status", Status: turn.Status})
-		t.finish(turn.Status, err)
+		s.codexTurnCompleted(t, p)
 	}
+}
+
+func (s *Session) codexItem(t *Turn, completed bool, p map[string]json.RawMessage) {
+	var item map[string]json.RawMessage
+	if json.Unmarshal(p["item"], &item) != nil {
+		return
+	}
+	typ := str(item, "type")
+	if typ == "contextCompaction" {
+		s.invalidateContext(t, "context compacting; awaiting a fresh observation")
+		kind := "compaction_started"
+		if completed {
+			kind = "compaction_completed"
+		}
+		s.emit(t, Event{Kind: kind, ItemID: str(item, "id")})
+		return
+	}
+	id := str(item, "id")
+	if typ == "agentMessage" {
+		if completed {
+			s.text(t, id, str(item, "text"), true)
+		}
+		return
+	}
+	switch typ {
+	case "commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "collabAgentToolCall", "subAgentActivity", "sleep", "imageGeneration", "webSearch", "imageView":
+		tool := typ
+		if name := str(item, "tool"); name != "" {
+			tool = name
+		}
+		kind := "tool_started"
+		if completed {
+			kind = "tool_completed"
+		}
+		s.emit(t, Event{Kind: kind, ItemID: id, Tool: tool, Status: str(item, "status")})
+	}
+}
+
+func (s *Session) codexTokenUsage(t *Turn, p map[string]json.RawMessage) {
+	if str(p, "turnId") == "" {
+		return
+	}
+	if c, err := parseCodexContext(p["tokenUsage"]); err == nil {
+		s.observeContext(c, t)
+	}
+	var envelope struct {
+		Last  json.RawMessage `json:"last"`
+		Total json.RawMessage `json:"total"`
+	}
+	if json.Unmarshal(p["tokenUsage"], &envelope) != nil {
+		return
+	}
+	last, lastOK := parseCodexUsage(envelope.Last)
+	total, totalOK := parseCodexUsage(envelope.Total)
+	if !lastOK || !totalOK {
+		return
+	}
+	// last is one model response; total identifies repeated notifications. Sum
+	// response usage within this turn, never the resumed session's old total.
+	t.mu.Lock()
+	fresh := t.lastCodexTotal != total || !t.result.Usage.Known
+	if fresh {
+		t.result.Usage = t.result.Usage.add(last.normalized())
+		t.lastCodexTotal = total
+	}
+	t.mu.Unlock()
+	if fresh {
+		s.observeRequestUsage(t, last.normalized())
+	}
+}
+
+func (s *Session) codexTurnCompleted(t *Turn, p map[string]json.RawMessage) {
+	var turn struct{ ID, Status string }
+	if json.Unmarshal(p["turn"], &turn) != nil {
+		return
+	}
+	if turn.ID != t.ID() {
+		return
+	}
+	var err error
+	if turn.Status == "failed" {
+		t.mu.Lock()
+		t.result.NativeError = true
+		t.mu.Unlock()
+		err = ErrTurnFailed
+	}
+	switch turn.Status {
+	case "completed", "interrupted", "failed":
+	default:
+		s.fail(ErrProtocol)
+		return
+	}
+	// The turn's own accounting is published separately from the per-response
+	// observations, so a caller never has to guess which one it is holding.
+	t.mu.Lock()
+	accounting := t.result.Usage
+	t.mu.Unlock()
+	if accounting.Known {
+		accounting.Final = true
+		s.emit(t, Event{Kind: "usage", Usage: &accounting})
+	}
+	s.emit(t, Event{Kind: "status", Status: turn.Status})
+	t.finish(turn.Status, err)
 }
 
 type codexUsage struct {
