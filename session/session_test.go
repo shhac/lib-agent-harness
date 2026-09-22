@@ -24,8 +24,9 @@ func (w *fakeWire) send(ctx context.Context, m map[string]any) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	kind, _ := m["type"].(string)
 	w.mu.Lock()
-	w.calls = append(w.calls, "send:"+m["type"].(string))
+	w.calls = append(w.calls, "send:"+kind)
 	w.mu.Unlock()
 	if w.sendFn != nil {
 		return w.sendFn(m)

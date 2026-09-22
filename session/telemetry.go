@@ -44,20 +44,16 @@ func Inspect(ctx context.Context, o Options) (Inspection, error) {
 		return out, err
 	}
 	defer func() { s.Close(); <-w.reaped }()
-	params := map[string]any{}
 	if o.Engine == Codex {
-		params["clientInfo"] = map[string]string{"name": "lib-agent-harness", "version": "1"}
+		err = codexHandshake(ctx, w)
+	} else {
+		var body json.RawMessage
+		if body, err = w.request(ctx, "initialize", map[string]any{}); err == nil {
+			s.observeClaudeAccount(body)
+		}
 	}
-	body, err := w.request(ctx, "initialize", params)
 	if err != nil {
 		return out, err
-	}
-	if o.Engine == Codex {
-		if err = w.send(ctx, map[string]any{"method": "initialized"}); err != nil {
-			return out, err
-		}
-	} else {
-		s.observeClaudeAccount(body)
 	}
 	out.Account, err = s.ReadAccount(ctx)
 	var quotaErr error

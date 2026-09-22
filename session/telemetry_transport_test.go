@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -66,10 +67,18 @@ func telemetryFixture() int {
 		result := json.RawMessage(`{}`)
 		switch method {
 		case "initialize":
+			if engine == Codex {
+				if os.WriteFile(filepath.Join(home, "initialize"), m["params"], 0600) != nil {
+					return 22
+				}
+			}
 			if engine == Claude {
 				result = json.RawMessage(`{"account":{"email":"fixture@example.test","subscriptionType":"max","apiProvider":"firstParty"}}`)
 			}
 		case "initialized":
+			if os.WriteFile(filepath.Join(home, "initialized"), nil, 0600) != nil {
+				return 23
+			}
 			continue
 		case "account/read":
 			if engine != Codex || params["refreshToken"] != false {
@@ -150,7 +159,36 @@ func TestInspectUsesConfiguredCLIAndHomeWithoutInference(t *testing.T) {
 			if _, err = os.Stat(string(cwd)); !os.IsNotExist(err) {
 				t.Fatal("inspection scratch directory not cleaned")
 			}
+			if engine == Codex {
+				requireSessionHandshake(t, o.Home)
+			}
 		})
+	}
+}
+
+// Inspect opens the app-server exactly as a session and its probe do. A
+// handshake that differed would make an inspection evidence about a client the
+// library never runs.
+func requireSessionHandshake(t *testing.T, home string) {
+	t.Helper()
+	sent, err := os.ReadFile(filepath.Join(home, "initialize"))
+	if err != nil {
+		t.Fatal("inspection did not initialize the app-server")
+	}
+	var session json.RawMessage
+	w := &fakeWire{requestFn: func(_ string, p map[string]any) (json.RawMessage, error) {
+		session, _ = json.Marshal(p)
+		return json.RawMessage(`{}`), nil
+	}}
+	if err = codexHandshake(testContext(t), w); err != nil {
+		t.Fatal(err)
+	}
+	var inspected, opened any
+	if json.Unmarshal(sent, &inspected) != nil || json.Unmarshal(session, &opened) != nil || !reflect.DeepEqual(inspected, opened) {
+		t.Fatalf("inspection initialized with %s; sessions initialize with %s", sent, session)
+	}
+	if _, err = os.Stat(filepath.Join(home, "initialized")); err != nil {
+		t.Fatal("inspection did not complete the handshake")
 	}
 }
 func TestInspectOlderCLIHasPartialDataAndSanitizedError(t *testing.T) {
