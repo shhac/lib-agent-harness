@@ -56,7 +56,11 @@ func newProcessWire(ctx context.Context, o Options, nativeID string, resuming bo
 // and a dummy credential instead of the caller's login.
 func newProcessWireArgs(ctx context.Context, o Options, args, env []string, onStart func(int), event func(map[string]json.RawMessage), ended func(error)) (*streamWire, error) {
 	runCtx, cancel := context.WithCancel(ctx)
-	cmd := exec.CommandContext(runCtx, o.Binary, args...)
+	cmd, p, err := process.Command(runCtx, o.Binary, args...)
+	if err != nil {
+		cancel()
+		return nil, ErrTransport
+	}
 	cmd.Dir = o.WorkDir
 	if env == nil {
 		env = environment(o)
@@ -70,23 +74,15 @@ func newProcessWireArgs(ctx context.Context, o Options, args, env []string, onSt
 	cmd.WaitDelay = 2 * time.Second
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
+		p.Close()
 		cancel()
 		return nil, ErrTransport
 	}
 	reader, writer := io.Pipe()
 	cmd.Stdout = writer
-	p, err := process.New(cmd)
-	if err != nil {
-		stdin.Close()
-		reader.Close()
-		writer.Close()
-		cancel()
-		return nil, ErrTransport
-	}
 	if onStart != nil {
 		p.Notify(onStart)
 	}
-	cmd.Cancel = func() error { p.Stop(); return nil }
 	w := &streamWire{engine: o.Engine, stdin: stdin, stdout: reader, pending: map[string]chan response{}, done: make(chan struct{}), reaped: make(chan struct{}), writeGate: make(chan struct{}, 1), event: event, ended: ended, stderr: stderr, diagnose: o.OnDiagnostic}
 	w.stop = func() { cancel(); p.Stop(); stdin.Close(); reader.Close() }
 	go w.read()

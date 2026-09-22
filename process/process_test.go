@@ -37,18 +37,39 @@ func TestHelper(t *testing.T) {
 
 func helper(t *testing.T, ctx context.Context, role string) (*Process, *bytes.Buffer) {
 	t.Helper()
-	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestHelper$", "--", role)
+	cmd, p, err := Command(ctx, os.Args[0], "-test.run=^TestHelper$", "--", role)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(p.Close)
 	cmd.Env = append(os.Environ(), "HARNESS_PROCESS_HELPER=1")
 	buf := &bytes.Buffer{}
 	cmd.Stdout = buf
 	cmd.WaitDelay = 2 * time.Second
-	p, err := New(cmd)
+	return p, buf
+}
+
+// Command's cancellation is the contained Stop, not exec's default of killing
+// only the direct child. Calling it before Run proves which one it is: Stop
+// refuses a later start, where the default would have had no process to kill.
+func TestCommandWiresCancellationToContainment(t *testing.T) {
+	cmd, p, err := Command(context.Background(), os.Args[0], "-test.run=^TestHelper$", "--", "answer")
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd.Cancel = func() error { p.Stop(); return nil }
 	t.Cleanup(p.Close)
-	return p, buf
+	if cmd.SysProcAttr == nil {
+		t.Fatal("the command was returned without containment")
+	}
+	cmd.Env = append(os.Environ(), "HARNESS_PROCESS_HELPER=1")
+	buf := &bytes.Buffer{}
+	cmd.Stdout = buf
+	if cmd.Cancel == nil || cmd.Cancel() != nil {
+		t.Fatal("cancellation was not wired")
+	}
+	if p.Run() == nil || buf.Len() != 0 {
+		t.Fatal("a cancelled contained command still started")
+	}
 }
 
 func TestContainedOutput(t *testing.T) {

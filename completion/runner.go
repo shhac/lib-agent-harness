@@ -10,7 +10,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -45,19 +44,16 @@ func runCLI(ctx context.Context, cfg Config, bin string, args []string, dir stri
 	}
 	ctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, args...)
-	cmd.Dir = dir
-	cmd.Env = env
-	cmd.Stdin = strings.NewReader(input)
-	child, err := process.New(cmd)
+	cmd, child, err := process.Command(ctx, bin, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer child.Close()
-	stop := child.Stop
-	cmd.Cancel = func() error { stop(); return nil }
+	cmd.Dir = dir
+	cmd.Env = env
+	cmd.Stdin = strings.NewReader(input)
 	cmd.WaitDelay = 2 * time.Second
-	output := &limitedOutput{max: 2 * 1024 * 1024, stop: stop}
+	output := &limitedOutput{max: 2 * 1024 * 1024, stop: child.Stop}
 	cmd.Stdout = output
 	// Diagnostics may contain credentials or remote record content. Keep them out
 	// of tool results, audit logs and model history.

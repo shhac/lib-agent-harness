@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -255,7 +254,11 @@ func Execute(ctx context.Context, c Config, args []string, workDir string, stdou
 	if bin == "" {
 		bin = c.Engine
 	}
-	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd, p, err := process.Command(ctx, bin, args...)
+	if err != nil {
+		return err
+	}
+	defer p.Close()
 	cmd.Dir = workDir
 	var outputMu sync.Mutex
 	cmd.Stdout = lockedWriter{mu: &outputMu, out: stdout}
@@ -276,12 +279,6 @@ func Execute(ctx context.Context, c Config, args []string, workDir string, stdou
 			cmd.Env = overrideEnv(env, key, c.Home)
 		}
 	}
-	p, err := process.New(cmd)
-	if err != nil {
-		return err
-	}
-	defer p.Close()
-	cmd.Cancel = func() error { p.Stop(); return nil }
 	cmd.WaitDelay = 10 * time.Second
 	return p.Run()
 }

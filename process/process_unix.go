@@ -10,7 +10,7 @@ import (
 )
 
 // Process contains a CLI and its descendants in a separate process group.
-// Construct the command with exec.CommandContext and wire Cancel to Stop.
+// Build it with Command, which wires the command's cancellation to Stop.
 type Process struct {
 	cmd      *exec.Cmd
 	mu       sync.Mutex

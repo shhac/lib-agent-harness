@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -170,19 +169,17 @@ func disposableEnvironment(o Options, dir string) []string {
 }
 
 func runOnce(ctx context.Context, binary string, args []string, dir string, env []string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, binary, args...)
+	cmd, p, err := process.Command(ctx, binary, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer p.Close()
 	cmd.Dir = dir
 	cmd.Env = env
 	out := &boundedBuffer{limit: 4 << 20}
 	cmd.Stdout = out
 	cmd.Stderr = io.Discard
 	cmd.WaitDelay = 2 * time.Second
-	p, err := process.New(cmd)
-	if err != nil {
-		return nil, err
-	}
-	cmd.Cancel = func() error { p.Stop(); return nil }
-	defer p.Close()
 	if err = p.Run(); err != nil {
 		return nil, err
 	}
@@ -365,19 +362,17 @@ func driveProbe(ctx context.Context, o Options, l *launch, dir, endpoint string)
 
 func driveClaudeProbe(ctx context.Context, o Options, args []string, id, dir string, env []string) error {
 	prompt, _ := json.Marshal(map[string]any{"type": "user", "session_id": id, "parent_tool_use_id": nil, "message": map[string]any{"role": "user", "content": "Capability check only."}})
-	cmd := exec.CommandContext(ctx, o.Binary, args...)
+	cmd, p, err := process.Command(ctx, o.Binary, args...)
+	if err != nil {
+		return err
+	}
+	defer p.Close()
 	cmd.Dir = dir
 	cmd.Env = env
 	cmd.Stdin = bytes.NewReader(append(prompt, '\n'))
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
 	cmd.WaitDelay = 2 * time.Second
-	p, err := process.New(cmd)
-	if err != nil {
-		return err
-	}
-	cmd.Cancel = func() error { p.Stop(); return nil }
-	defer p.Close()
 	return p.Run()
 }
 

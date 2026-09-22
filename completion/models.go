@@ -126,7 +126,11 @@ func runModelTransport(ctx context.Context, cfg Config, exchange func(io.Reader,
 	defer os.RemoveAll(dir)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd, child, err := process.Command(ctx, bin, args...)
+	if err != nil {
+		return err
+	}
+	defer child.Close()
 	cmd.Dir, cmd.Env, cmd.Stderr = dir, env, io.Discard
 	stdinReader, stdinWriter := io.Pipe()
 	stdoutReader, stdoutWriter := io.Pipe()
@@ -140,12 +144,6 @@ func runModelTransport(ctx context.Context, cfg Config, exchange func(io.Reader,
 	})
 	defer stopClosing()
 	cmd.Stdin, cmd.Stdout = stdinReader, stdoutWriter
-	child, err := process.New(cmd)
-	if err != nil {
-		return err
-	}
-	defer child.Close()
-	cmd.Cancel = func() error { child.Stop(); return nil }
 	cmd.WaitDelay = time.Second
 	done := make(chan error, 1)
 	go func() {
