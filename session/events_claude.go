@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
+
+	"github.com/shhac/lib-agent-harness/internal/claudeproto"
 )
 
 // Claude's stream-json dialect. Kept apart from Codex's because the two
@@ -238,14 +240,17 @@ func claudeCompactionTrigger(m map[string]json.RawMessage) string {
 // the caller a bounded, sanitized diagnostic through the hook that exists for
 // it. Provider text never enters the error value.
 func (s *Session) claudeTerminalFailure(m map[string]json.RawMessage, subtype string) error {
-	failure := &TurnError{Engine: string(Claude), Code: claudeResultCode(subtype)}
+	failure := &TurnError{Engine: string(Claude), Code: claudeproto.ResultSubtype(subtype)}
+	if failure.Code == "" {
+		failure.Code = "turn_failed"
+	}
 	var frame struct {
 		Reason string `json:"terminal_reason"`
 		Stop   string `json:"stop_reason"`
 		Error  string `json:"error"`
 	}
 	if json.Unmarshal(mustMarshal(m), &frame) == nil {
-		if code := claudeErrorCode(frame.Error); code != "" {
+		if code := claudeproto.ErrorCode(frame.Error); code != "" {
 			failure.Code = code
 		}
 		if frame.Reason == "prompt_too_long" || frame.Stop == "model_context_window_exceeded" {
@@ -256,25 +261,4 @@ func (s *Session) claudeTerminalFailure(m map[string]json.RawMessage, subtype st
 		report(Diagnostic{Engine: string(Claude), Stage: "turn_result", Code: failure.Code, Detail: sanitize(mustMarshal(m["errors"]), 1024), At: time.Now().UTC()})
 	}
 	return failure
-}
-
-// claudeResultCode maps a terminal subtype to a fixed code.
-func claudeResultCode(subtype string) string {
-	switch subtype {
-	case "error_during_execution", "error_max_turns", "error_max_budget_usd", "error_max_structured_output_retries":
-		return subtype
-	}
-	return "turn_failed"
-}
-
-// claudeErrorCode accepts only values the native schema defines. An unknown
-// value could be provider prose, so it is dropped rather than retained.
-func claudeErrorCode(code string) string {
-	switch code {
-	case "authentication_failed", "oauth_org_not_allowed", "account_on_hold", "verification_required",
-		"billing_error", "rate_limit", "overloaded", "invalid_request", "model_not_found",
-		"server_error", "unknown", "max_output_tokens", "cloud_credential_error":
-		return code
-	}
-	return ""
 }

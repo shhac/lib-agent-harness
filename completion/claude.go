@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/shhac/lib-agent-harness/internal/claudeproto"
 )
 
 // ValidateClaudeHome accepts native or explicitly configured login storage.
@@ -146,7 +148,7 @@ func parseClaude(data []byte, tools []Tool) (Message, Usage, error) {
 			return Message{}, usage, &RequestError{Kind: ErrorUnknown, Engine: "claude", Phase: PhaseResponse, Code: code}
 		}
 		if event.Type == "assistant" {
-			assistantError = claudeErrorCode(event.Error)
+			assistantError = claudeproto.ErrorCode(event.Error)
 		}
 		if event.Type != "result" {
 			continue

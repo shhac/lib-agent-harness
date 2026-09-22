@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/shhac/lib-agent-harness/internal/claudeproto"
 )
 
 // ErrorKind identifies a failure without retaining provider text or credentials.
@@ -126,23 +128,9 @@ func processRequestFailure(engine string, data []byte, err error) error {
 	return failure
 }
 
-// Known Claude enums come from the native stream-json schema. Never retain
-// unknown enum values: malformed or future fields could contain provider text.
-func claudeErrorCode(code string) string {
-	switch code {
-	case "authentication_failed", "oauth_org_not_allowed", "account_on_hold", "verification_required", "billing_error", "rate_limit", "overloaded", "invalid_request", "model_not_found", "server_error", "unknown", "max_output_tokens", "cloud_credential_error":
-		return code
-	}
-	return ""
-}
-
 func claudeTerminalFailure(subtype, reason, stop, assistantError string) *RequestError {
-	f := &RequestError{Kind: ErrorUnknown, Engine: "claude", Phase: PhaseResponse}
-	switch subtype {
-	case "error_during_execution", "error_max_turns", "error_max_budget_usd", "error_max_structured_output_retries":
-		f.Code = subtype
-	}
-	if code := claudeErrorCode(assistantError); code != "" {
+	f := &RequestError{Kind: ErrorUnknown, Engine: "claude", Phase: PhaseResponse, Code: claudeproto.ResultSubtype(subtype)}
+	if code := claudeproto.ErrorCode(assistantError); code != "" {
 		f.Code = code
 	}
 	switch assistantError {
@@ -189,7 +177,7 @@ func claudeTerminalDiagnostic(data []byte) *RequestError {
 			return nil
 		}
 		if e.Type == "assistant" {
-			assistantError = claudeErrorCode(e.Error)
+			assistantError = claudeproto.ErrorCode(e.Error)
 		}
 		if e.Type == "result" {
 			if !e.IsError || e.Subtype == "success" {
