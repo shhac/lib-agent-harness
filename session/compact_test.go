@@ -107,3 +107,27 @@ func TestCompactUnsupportedFailedAndCancelled(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Compaction runs no hosted tools. It must neither reopen a channel a caller
+// paused nor refuse to start because a paused call has not settled: only a turn
+// that authorizes work does either.
+func TestCompactLeavesAPausedToolChannelAlone(t *testing.T) {
+	s, w := fakeSession(t, Codex)
+	s.tools = testHost(t, echoHandler(t))
+	s.tools.closeAdmission()
+	s.tools.mu.Lock()
+	s.tools.running++
+	generation := s.tools.generation
+	s.tools.mu.Unlock()
+	w.requestFn = func(string, map[string]any) (json.RawMessage, error) { return json.RawMessage(`{}`), nil }
+	if _, err := s.Compact(testContext(t)); err != nil {
+		t.Fatalf("an unsettled tool call blocked compaction: %v", err)
+	}
+	s.tools.mu.Lock()
+	paused, moved := s.tools.paused, s.tools.generation != generation
+	s.tools.running--
+	s.tools.mu.Unlock()
+	if !paused || moved {
+		t.Fatalf("compaction reopened the tool channel: paused=%v generation moved=%v", paused, moved)
+	}
+}

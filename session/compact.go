@@ -16,22 +16,16 @@ func (s *Session) Compact(ctx context.Context) (*Turn, error) {
 	}
 	defer s.unlockOp()
 	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
-		return nil, ErrClosed
-	}
-	if s.options.Engine != Codex {
+	if s.options.Engine != Codex && !s.closed {
 		c := s.caps.Compact
 		s.mu.Unlock()
 		return nil, &UnsupportedError{"compact", c}
 	}
-	if s.active != nil {
-		select {
-		case <-s.active.done:
-		default:
-			s.mu.Unlock()
-			return nil, ErrBusy
-		}
+	// Compaction is not a turn that authorizes tool work, so unlike StartTurn it
+	// neither waits for hosted tools to settle nor reopens their channel.
+	if err := s.claimIdleLocked(); err != nil {
+		s.mu.Unlock()
+		return nil, err
 	}
 	t := &Turn{events: make(chan Event, s.options.EventBuffer), done: make(chan struct{}), starting: true, compacting: true, awaitingCompactID: true}
 	s.active = t
@@ -55,25 +49,9 @@ func (s *Session) Compact(ctx context.Context) (*Turn, error) {
 	s.mu.Lock()
 	s.caps.Compact = Capability{Native, "thread/compact/start acknowledged by installed harness"}
 	s.mu.Unlock()
-	s.eventMu.Lock()
-	t.mu.Lock()
-	t.starting = false
-	pending := t.pending
-	t.pending = nil
-	t.pendingBytes = 0
-	t.mu.Unlock()
-	for _, event := range pending {
-		s.notificationLocked(event)
-	}
-	s.eventMu.Unlock()
-	go func() {
-		select {
-		case <-ctx.Done():
-			s.failTurn(t, ctx.Err())
-		case <-t.done:
-		case <-s.done:
-		}
-	}()
+	// The id arrives later, with turn/started.
+	s.replayStarting(t, "")
+	s.watchTurn(ctx, t)
 	return t, nil
 }
 

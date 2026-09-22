@@ -45,17 +45,9 @@ func (s *Session) startTurnScoped(lifetime, request context.Context, in Input) (
 		return nil, errors.New("turn input is empty")
 	}
 	s.mu.Lock()
-	if s.closed {
+	if err := s.claimIdleLocked(); err != nil {
 		s.mu.Unlock()
-		return nil, ErrClosed
-	}
-	if s.active != nil {
-		select {
-		case <-s.active.done:
-		default:
-			s.mu.Unlock()
-			return nil, ErrBusy
-		}
+		return nil, err
 	}
 	// Starting a turn is what authorizes tool work again after a pause. Anything
 	// queued from before is refused by the generation change, and anything still
@@ -90,6 +82,30 @@ func (s *Session) startTurnScoped(lifetime, request context.Context, in Input) (
 		}
 		return nil, err
 	}
+	s.watchTurn(lifetime, t)
+	return t, nil
+}
+
+// claimIdleLocked reports why no new turn may start: the session is closed, or
+// its current turn has not ended. Call it with s.mu held. It says nothing about
+// hosted tools; a turn that authorizes tool work checks those separately.
+func (s *Session) claimIdleLocked() error {
+	if s.closed {
+		return ErrClosed
+	}
+	if s.active != nil {
+		select {
+		case <-s.active.done:
+		default:
+			return ErrBusy
+		}
+	}
+	return nil
+}
+
+// watchTurn ends the session if lifetime ends while t is still running, so a
+// cancelled caller never leaves model or tool work going without an owner.
+func (s *Session) watchTurn(lifetime context.Context, t *Turn) {
 	go func() {
 		select {
 		case <-lifetime.Done():
@@ -98,15 +114,9 @@ func (s *Session) startTurnScoped(lifetime, request context.Context, in Input) (
 		case <-s.done:
 		}
 	}()
-
-	return t, nil
 }
 
 // startCodexTurn asks the server to open the turn and adopts the id it assigns.
-// Notifications that arrived while the turn was still starting were buffered
-// against the local id, so they are replayed here, under eventMu for the whole
-// replay so no live notification interleaves with it, and with t.pending
-// cleared under t.mu before the replay begins.
 func (s *Session) startCodexTurn(ctx context.Context, t *Turn, ref Ref, in Input) error {
 	body, err := s.transport.request(ctx, "turn/start", codexTurnParams(ref.ID, in.Text, s.options.Effort))
 	if err != nil {
@@ -118,10 +128,24 @@ func (s *Session) startCodexTurn(ctx context.Context, t *Turn, ref Ref, in Input
 	if json.Unmarshal(body, &r) != nil || r.Turn.ID == "" {
 		return ErrProtocol
 	}
+	s.replayStarting(t, r.Turn.ID)
+	return nil
+}
+
+// replayStarting ends t's starting phase. Notifications that arrived while the
+// turn was still starting were buffered against it, so they are replayed here,
+// under eventMu for the whole replay so no live notification interleaves with
+// it, and with t.pending cleared under t.mu before the replay begins. A
+// non-empty id is the server's id for the turn, adopted in the same critical
+// section that ends the starting phase.
+func (s *Session) replayStarting(t *Turn, id string) {
 	s.eventMu.Lock()
+	defer s.eventMu.Unlock()
 	t.mu.Lock()
-	t.id = r.Turn.ID
-	t.result.TurnID = r.Turn.ID
+	if id != "" {
+		t.id = id
+		t.result.TurnID = id
+	}
 	t.starting = false
 	pending := t.pending
 	t.pending = nil
@@ -130,8 +154,6 @@ func (s *Session) startCodexTurn(ctx context.Context, t *Turn, ref Ref, in Input
 	for _, event := range pending {
 		s.notificationLocked(event)
 	}
-	s.eventMu.Unlock()
-	return nil
 }
 
 func (s *Session) activeTurn(expected string) (*Turn, error) {
