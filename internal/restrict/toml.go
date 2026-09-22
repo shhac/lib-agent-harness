@@ -2,8 +2,8 @@ package restrict
 
 import (
 	"errors"
+	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -45,8 +45,9 @@ func TOMLString(value string) (string, error) {
 			out.WriteString(`\r`)
 		default:
 			if r < 0x20 || r == 0x7f {
-				out.WriteString(`\u`)
-				out.WriteString(strings.ToUpper(strconv.FormatInt(int64(r), 16)))
+				// TOML's \u escape takes exactly four hex digits; a shorter one is
+				// a parse error rather than a shorter code point.
+				fmt.Fprintf(&out, `\u%04X`, r)
 				continue
 			}
 			out.WriteRune(r)

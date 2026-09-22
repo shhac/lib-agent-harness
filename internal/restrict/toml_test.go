@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/shhac/lib-agent-harness/internal/tomltest"
 )
 
 func TestTOMLStringEscapesWhatTOMLRequires(t *testing.T) {
@@ -13,7 +15,8 @@ func TestTOMLStringEscapesWhatTOMLRequires(t *testing.T) {
 		`back\slash`:           `"back\\slash"`,
 		"tab\there":            `"tab\there"`,
 		"line\nbreak":          `"line\nbreak"`,
-		"\x01":                 `"\u1"`,
+		"\x01":                 `"\u0001"`,
+		"del\x7f":              `"del\u007F"`,
 		`/Users/p/a b/bin`:     `"/Users/p/a b/bin"`,
 		`C:\Users\p\bin.exe`:   `"C:\\Users\\p\\bin.exe"`,
 		`unicode — em dash ok`: `"unicode — em dash ok"`,
@@ -28,6 +31,29 @@ func TestTOMLStringEscapesWhatTOMLRequires(t *testing.T) {
 	}
 	if _, err := TOMLString(string([]byte{0xff, 0xfe})); !errors.Is(err, ErrUnencodable) {
 		t.Error("invalid UTF-8 was encoded rather than rejected")
+	}
+}
+
+// What Codex reads back has to be the value that was encoded. The decoder is a
+// strict reading of the TOML grammar written apart from the encoder, so a
+// malformed escape fails here instead of matching its own expectation.
+func TestTOMLStringParsesBackToTheSameValue(t *testing.T) {
+	for _, value := range []string{
+		"", "plain", `with "quotes"`, `back\slash`, "C:\\Users\\p", "tab\there", "line\nbreak\r\n",
+		"\x00\x01\x08\x0b\x0c\x1b\x1f\x7f", "unicode — em dash", "astral \U0001F600", "html <b>&amp;</b>",
+		"separator \u2028 \u2029", `\u0041 is not an escape here`,
+	} {
+		encoded, err := TOMLString(value)
+		if err != nil {
+			t.Fatalf("TOMLString(%q): %v", value, err)
+		}
+		decoded, err := tomltest.BasicString(encoded)
+		if err != nil {
+			t.Fatalf("TOMLString(%q) = %s, which is not a TOML basic string: %v", value, encoded, err)
+		}
+		if decoded != value {
+			t.Errorf("TOMLString(%q) = %s, which reads back as %q", value, encoded, decoded)
+		}
 	}
 }
 
