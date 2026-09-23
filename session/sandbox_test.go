@@ -37,6 +37,7 @@ const (
 	fakeCanarySilent    = "canary-silent"      // exits cleanly without running the script
 	fakeCanaryOpen      = "canary-open"        // runs the real canary script with no sandbox at all
 	fakeResumeLegacy    = "resume-legacy"      // thread/start keeps the profile, thread/resume loses it
+	fakeCanaryGitDir    = "canary-gitdir"      // the workspace's .git is writable
 )
 
 func fakeCodexCanary(scenario string, args []string) int {
@@ -71,6 +72,8 @@ func fakeCodexCanary(scenario string, args []string) int {
 		lines = append(lines, canaryTmpdir)
 	case fakeCanaryNoClient:
 		lines = append(lines, canaryNoClient)
+	case fakeCanaryGitDir:
+		lines = append(lines, canaryGitDir)
 	case fakeCanarySibling:
 		if os.WriteFile(os.Getenv("CANARY_SIBLING"), []byte("x"), 0600) != nil {
 			return 2
@@ -314,6 +317,7 @@ func TestCodexSandboxCanary(t *testing.T) {
 		{fakeCanaryNetwork, true, CapabilitySandboxNotEnforced},
 		{fakeCanaryNetwork, false, CapabilitySandboxNotEnforced},
 		{fakeCanaryWriteOnRO, false, CapabilitySandboxNotEnforced},
+		{fakeCanaryGitDir, true, CapabilitySandboxNotEnforced},
 		{fakeCanaryNoInside, true, CapabilitySandboxUnavailable},
 		{fakeCanaryNoClient, true, CapabilitySandboxUnavailable},
 		{fakeCanaryCrash, true, CapabilitySandboxUnavailable},
@@ -432,7 +436,7 @@ func TestSandboxedCodexFailingCanaryStartsNothing(t *testing.T) {
 func TestOpenCanaryEscapesAreEachDetected(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "workspace")
-	if err := os.MkdirAll(workspace, 0700); err != nil {
+	if err := os.MkdirAll(filepath.Join(workspace, ".git"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -457,7 +461,7 @@ func TestOpenCanaryEscapesAreEachDetected(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := strings.Fields(string(out))
-	for _, want := range []string{canaryInside, canarySibling, canaryTmp, canaryTmpdir, canaryRan} {
+	for _, want := range []string{canaryInside, canarySibling, canaryTmp, canaryTmpdir, canaryGitDir, canaryRan} {
 		if !slices.Contains(got, want) {
 			t.Errorf("unsandboxed %s write was not reported: %v", want, got)
 		}
@@ -590,9 +594,35 @@ func TestEnvAdditionsComeLastAndCannotTouchManagedKeys(t *testing.T) {
 	if env[len(env)-2] != "GOCACHE=/work/.crew/go" || env[len(env)-1] != "TMPDIR=/work/.crew/tmp" {
 		t.Fatalf("additions must come last to take effect: %v", env[len(env)-2:])
 	}
-	for _, bad := range []string{"HOME=/x", "PATH=/x", "CODEX_HOME=/x", "ANTHROPIC_API_KEY=x", "CLAUDE_CODE_USE_BEDROCK=1", "no-equals", "1BAD=x"} {
+	for _, bad := range []string{"HOME=/x", "PATH=/x", "CODEX_HOME=/x", "ANTHROPIC_API_KEY=x", "CLAUDE_CODE_USE_BEDROCK=1", "no-equals", "1BAD=x",
+		"DYLD_INSERT_LIBRARIES=/x", "LD_PRELOAD=/x", "NODE_OPTIONS=--require=/x", "HTTPS_PROXY=http://x", "https_proxy=http://x", "GIT_DIR=/x", "SSL_CERT_FILE=/x"} {
 		if _, err := normalize(Options{Engine: Claude, WorkDir: t.TempDir(), Env: []string{bad}}); err == nil {
 			t.Errorf("accepted %s", bad)
 		}
+	}
+}
+
+func TestSandboxedSessionsInheritOnlyWhatTheyNeed(t *testing.T) {
+	t.Setenv("CREW_TEST_SECRET_TOKEN", "should-not-leak")
+	t.Setenv("LC_ALL", "C")
+	o, err := normalize(Options{Engine: Claude, WorkDir: t.TempDir(), Sandbox: &Sandbox{Write: true}, Env: []string{"TMPDIR=/work/.crew/tmp"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := strings.Join(environment(o), "\n")
+	if strings.Contains(env, "CREW_TEST_SECRET_TOKEN") {
+		t.Fatal("a sandboxed session inherited an arbitrary exported variable")
+	}
+	for _, want := range []string{"PATH=", "HOME=", "LC_ALL=C", "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1", "TMPDIR=/work/.crew/tmp"} {
+		if !strings.Contains(env, want) {
+			t.Errorf("sandboxed session environment lacks %s", want)
+		}
+	}
+	ordinary, err := normalize(Options{Engine: Claude, WorkDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(environment(ordinary), "\n"), "CREW_TEST_SECRET_TOKEN") {
+		t.Fatal("ordinary sessions changed")
 	}
 }

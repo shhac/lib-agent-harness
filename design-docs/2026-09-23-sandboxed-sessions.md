@@ -96,3 +96,22 @@ Nothing listed as unestablished below remains open.
   Edit allow rule.
 
 A caller's first real run should attempt each deliberately.
+
+## v0.3.2 and v0.3.3, same day
+
+- **Correction.** The "personal instructions" finding that motivated
+  `claudeMdExcludes` was wrong. A diagnostic turn with a canary instruction
+  above the workspace and another inside it showed that, with
+  `--setting-sources=` empty, Claude Code 2.1.280 loads no instruction files at
+  all, including the workspace's own. The owner's name the role used came from
+  the account email in its context, not from their files. The exclusions stay
+  as a second guard, and the README now says repository instructions have to
+  be pointed to.
+- **Sandboxed sessions inherit an allowlisted environment.** `Options.Env`
+  refuses variables that change the unsandboxed CLI itself (loader, Node,
+  proxy, certificate, `GIT_*`).
+- **Claude:** auto-memory and skills are disabled; its `.git` is read-only
+  (v0.3.2); the Codex canary now also proves `.git` is read-only.
+- **Verified with real turns under the allowlist:** Claude's `.git` writes
+  were refused by shell and tool alike, and Codex ran `go test` in its sandbox
+  with its cache and `TMPDIR` in the workspace.

@@ -181,11 +181,12 @@ func claudeSandboxSettings(o Options) string {
 	return string(raw)
 }
 
-// claudeInstructionExcludes keeps the operator's own instruction files out of
-// a sandboxed session: their user-level CLAUDE.md and rules, and any found in
-// a directory above the workspace. Those are written for the operator's own
-// sessions. Instructions inside the workspace, which belong to the work, still
-// load.
+// claudeInstructionExcludes names the operator's own instruction files: their
+// user-level CLAUDE.md and rules, and any in a directory above the workspace.
+// With every settings source dropped, Claude Code 2.1.280 loads no instruction
+// files at all, including the workspace's own, so this is a second guard for
+// builds where that changes. A caller that wants a repository's instructions
+// followed has to point the session at them.
 func claudeInstructionExcludes(o Options) []string {
 	homes := []string{o.Home}
 	if home, err := os.UserHomeDir(); err == nil {
@@ -207,7 +208,7 @@ func claudeInstructionExcludes(o Options) []string {
 }
 
 func claudeSandboxArgs(o Options) []string {
-	return []string{"--setting-sources=", "--strict-mcp-config", "--disallowedTools", "WebFetch,WebSearch,mcp__*", "--settings", claudeSandboxSettings(o)}
+	return []string{"--setting-sources=", "--strict-mcp-config", "--disable-slash-commands", "--disallowedTools", "WebFetch,WebSearch,mcp__*", "--settings", claudeSandboxSettings(o)}
 }
 
 // prepareSandbox assembles a sandboxed launch and proves its sandbox against
@@ -349,6 +350,7 @@ const (
 	canaryTmpdir   = "tmpdir"
 	canaryNetwork  = "network"
 	canaryNoClient = "no-network-client"
+	canaryGitDir   = "gitdir"
 	// canaryRan is the script's last line. Without it an empty result could
 	// mean "everything refused" or "nothing ran", and only one is evidence.
 	canaryRan = "canary-ran"
@@ -363,6 +365,7 @@ try inside sh -c 'echo x > ./canary'
 try sibling sh -c 'echo x > "$1"' _ "$CANARY_SIBLING"
 try tmp sh -c 'echo x > "/tmp/$CANARY_NAME" && rm -f "/tmp/$CANARY_NAME"'
 try tmpdir sh -c 'echo x > "$TMPDIR/$CANARY_NAME" && rm -f "$TMPDIR/$CANARY_NAME"'
+try gitdir sh -c 'echo x >> .git/config'
 if command -v curl >/dev/null 2>&1; then curl -s -m 3 --noproxy '*' -o /dev/null "http://127.0.0.1:$CANARY_PORT/"
 elif command -v nc >/dev/null 2>&1; then nc -z -w 3 127.0.0.1 "$CANARY_PORT"
 else echo no-network-client; fi
@@ -384,10 +387,14 @@ func probeCodexSandbox(ctx context.Context, o Options) error {
 	home := filepath.Join(root, "home")
 	workspace := filepath.Join(root, "workspace")
 	sibling := filepath.Join(root, "outside")
-	for _, dir := range []string{home, workspace, sibling} {
+	for _, dir := range []string{home, filepath.Join(workspace, ".git"), sibling} {
 		if err = os.MkdirAll(dir, 0700); err != nil {
 			return unavailable
 		}
+	}
+	// Repository metadata must stay read-only even for a writing session.
+	if err = os.WriteFile(filepath.Join(workspace, ".git", "config"), []byte("[core]\n"), 0600); err != nil {
+		return unavailable
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -440,7 +447,7 @@ func probeCodexSandbox(ctx context.Context, o Options) error {
 		}
 		return notEnforced
 	}
-	if escaped[canarySibling] || escaped[canaryTmp] || escaped[canaryTmpdir] || escaped[canaryNetwork] {
+	if escaped[canarySibling] || escaped[canaryTmp] || escaped[canaryTmpdir] || escaped[canaryNetwork] || escaped[canaryGitDir] {
 		return notEnforced
 	}
 	if _, err = os.Stat(filepath.Join(sibling, "canary")); err == nil {

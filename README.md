@@ -294,8 +294,9 @@ the result is cached per resolved binary and sandbox:
     disabled.
   - A canary runs under that profile through `codex sandbox`. Writing outside
     the workspace, to `/tmp` or to the inherited `$TMPDIR` must fail, as must
-    reaching a loopback listener owned by the probe. The canary must also
-    report that it ran, so an empty result is never read as success.
+    reaching a loopback listener owned by the probe, or writing the
+    workspace's `.git`. The canary must also report that it ran, so an empty
+    result is never read as success.
   - Once the harness starts, thread/start and thread/resume must report that
     profile, with network closed and temporary directories excluded, before
     the first prompt. Otherwise the session is closed.
@@ -311,18 +312,24 @@ the result is cached per resolved binary and sandbox:
   - A writing session cannot change `WorkDir/.git`, as with Codex.
   - A read-only session also loses Edit and Write, and denies sandboxed writes
     to `WorkDir`.
-  - The operator's own instruction files do not load: their user `CLAUDE.md`
-    and rules, and any `CLAUDE.md` or `CLAUDE.local.md` above the workspace.
-    Instructions inside the workspace still do.
+  - No instruction files load, not even the workspace's own: with every
+    settings source dropped, Claude Code 2.1.280 loads none, and the
+    operator's user and ancestor files are also excluded by name as a second
+    guard. Point the session at a repository's `AGENTS.md` or `CLAUDE.md` in
+    its prompt if it should follow them. Skills and auto-memory are off.
   - `claude sandbox status` with the same settings, asked from a throwaway
     home, must report the sandbox supported, enabled and strict, with no
     unavailable reason. This is the CLI's own report, not a canary: Claude
     offers no way to run a sandboxed command without inference.
 
+A sandboxed session inherits only an allowlisted environment from its
+caller (`PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TERM`, `LANG`, `LC_*`,
+`TZ`, `TMPDIR`), never whatever else the caller happened to export.
 `Options.Env` adds ordinary `KEY=VALUE` settings to any session, for example
 a build cache or `TMPDIR` inside the workspace so a sandboxed build can write
-them. Keys the harness manages or strips (homes, `PATH`, provider credentials
-and overrides) are refused.
+them. Keys the harness manages, and keys that would change the CLI itself
+outside its sandbox (loader and Node options, proxies and certificates,
+`GIT_*`, homes, provider credentials), are refused.
 
 `session.VerifySandbox(ctx, options)` runs the same check without opening a
 session. Failures are `*CapabilityError` values with `sandbox_unavailable` or
