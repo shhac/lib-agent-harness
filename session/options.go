@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -69,6 +70,10 @@ func normalize(o Options) (Options, error) {
 	if o.Instructions.Text != "" && o.Instructions.Mode == "" {
 		return o, errors.New("instructions require an explicit replace or append mode")
 	}
+	if err = validateEnv(o.Env); err != nil {
+		return o, err
+	}
+	o.Env = append([]string(nil), o.Env...)
 	if o.Sandbox != nil {
 		frozen := *o.Sandbox
 		o.Sandbox = &frozen
@@ -290,7 +295,14 @@ func commandArgs(o Options, nativeID string, resuming bool, l *launch) []string 
 	}
 	return args
 }
+
+// environment is the session's own environment plus the caller's additions,
+// which come last so they take effect.
 func environment(o Options) []string {
+	return append(baseEnvironment(o), o.Env...)
+}
+
+func baseEnvironment(o Options) []string {
 	env := make([]string, 0, len(os.Environ())+1)
 	for _, entry := range os.Environ() {
 		key, _, _ := strings.Cut(entry, "=")
@@ -329,3 +341,24 @@ func reservedClaudeServer(name string) bool {
 	}
 	return false
 }
+
+// validateEnv refuses additions the harness manages itself: credentials and
+// provider overrides it strips, the homes it selects, and the process basics
+// an addition could use to change which binaries or login are used.
+func validateEnv(env []string) error {
+	for _, entry := range env {
+		key, _, ok := strings.Cut(entry, "=")
+		if !ok || !envKey.MatchString(key) {
+			return errors.New("environment additions must be KEY=VALUE")
+		}
+		switch {
+		case key == "HOME", key == "PATH", key == "USER", key == "CODEX_HOME", key == "CLAUDE_CONFIG_DIR", key == "CLAUDECODE",
+			key == "OPENAI_API_KEY", key == "OPENAI_BASE_URL", key == "ANTHROPIC_API_KEY", key == "ANTHROPIC_AUTH_TOKEN", key == "ANTHROPIC_BASE_URL",
+			key == "CLAUDE_CODE_OAUTH_TOKEN", key == "ANTHROPIC_MODEL", strings.HasPrefix(key, "CLAUDE_CODE_"), strings.HasPrefix(key, "ANTHROPIC_"):
+			return errors.New("environment addition " + key + " is managed by the harness")
+		}
+	}
+	return nil
+}
+
+var envKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)

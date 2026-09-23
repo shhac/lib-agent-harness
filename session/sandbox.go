@@ -154,8 +154,13 @@ func claudeSandboxSettings(o Options) string {
 	}
 	filesystem := map[string]any{}
 	if o.Sandbox.Write {
-		// Permission rules take "//" for an absolute path.
+		// Permission rules take "//" for an absolute path. Repository metadata
+		// stays read-only, as in the Codex profile: hooks or config written
+		// there would run wherever git next runs, outside this sandbox.
+		gitDir := "/" + filepath.Join(o.WorkDir, ".git") + "/**"
 		permissions["allow"] = []string{"Edit(/" + o.WorkDir + "/**)"}
+		permissions["deny"] = []string{"WebFetch", "WebSearch", "Edit(" + gitDir + ")", "Write(" + gitDir + ")"}
+		filesystem["denyWrite"] = []string{filepath.Join(o.WorkDir, ".git")}
 	} else {
 		permissions["deny"] = []string{"WebFetch", "WebSearch", "Edit", "Write"}
 		// Sandbox paths are plain absolute paths. The shell may otherwise write
@@ -172,8 +177,33 @@ func claudeSandboxSettings(o Options) string {
 	if len(filesystem) > 0 {
 		sandbox["filesystem"] = filesystem
 	}
-	raw, _ := json.Marshal(map[string]any{"sandbox": sandbox, "disableAllHooks": true, "permissions": permissions})
+	raw, _ := json.Marshal(map[string]any{"sandbox": sandbox, "disableAllHooks": true, "permissions": permissions, "claudeMdExcludes": claudeInstructionExcludes(o)})
 	return string(raw)
+}
+
+// claudeInstructionExcludes keeps the operator's own instruction files out of
+// a sandboxed session: their user-level CLAUDE.md and rules, and any found in
+// a directory above the workspace. Those are written for the operator's own
+// sessions. Instructions inside the workspace, which belong to the work, still
+// load.
+func claudeInstructionExcludes(o Options) []string {
+	homes := []string{o.Home}
+	if home, err := os.UserHomeDir(); err == nil {
+		homes = append(homes, filepath.Join(home, ".claude"))
+	}
+	var out []string
+	for _, home := range homes {
+		if home != "" {
+			out = append(out, filepath.Join(home, "CLAUDE.md"), filepath.Join(home, "rules")+"/**")
+		}
+	}
+	for dir := filepath.Dir(o.WorkDir); ; dir = filepath.Dir(dir) {
+		out = append(out, filepath.Join(dir, "CLAUDE.md"), filepath.Join(dir, "CLAUDE.local.md"), filepath.Join(dir, ".claude", "CLAUDE.md"), filepath.Join(dir, ".claude", "rules")+"/**")
+		if parent := filepath.Dir(dir); parent == dir {
+			break
+		}
+	}
+	return out
 }
 
 func claudeSandboxArgs(o Options) []string {

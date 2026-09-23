@@ -220,7 +220,7 @@ func TestSandboxedClaudeArguments(t *testing.T) {
 			t.Fatalf("write=%v: sandbox settings too loose: %+v", write, settings)
 		}
 		if write {
-			if !slices.Equal(settings.Permissions.Allow, []string{"Edit(/" + o.WorkDir + "/**)"}) || len(settings.Sandbox.Filesystem.DenyWrite) != 0 {
+			if !slices.Equal(settings.Permissions.Allow, []string{"Edit(/" + o.WorkDir + "/**)"}) || !slices.Equal(settings.Sandbox.Filesystem.DenyWrite, []string{filepath.Join(o.WorkDir, ".git")}) {
 				t.Fatalf("writer confined wrongly: %+v", settings)
 			}
 		} else if !slices.Equal(settings.Sandbox.Filesystem.DenyWrite, []string{o.WorkDir}) || !slices.Contains(settings.Permissions.Deny, "Edit") || len(settings.Permissions.Allow) != 0 {
@@ -543,6 +543,56 @@ func TestSandboxKeepsNativeToolsWorking(t *testing.T) {
 	for _, needed := range []string{"code_mode_host", "shell_tool", "unified_exec", "apply_patch"} {
 		if strings.Contains(args, "features."+needed+"=false") {
 			t.Errorf("a sandboxed session could not work with %s disabled", needed)
+		}
+	}
+}
+
+func TestClaudeSandboxKeepsOperatorInstructionsOut(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home directory")
+	}
+	o, err := normalize(Options{Engine: Claude, WorkDir: t.TempDir(), Sandbox: &Sandbox{Write: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	excludes := claudeInstructionExcludes(o)
+	for _, want := range []string{filepath.Join(home, ".claude", "CLAUDE.md"), filepath.Join(filepath.Dir(o.WorkDir), "CLAUDE.local.md"), "/CLAUDE.md"} {
+		if !slices.Contains(excludes, want) {
+			t.Errorf("%s would still load", want)
+		}
+	}
+	for _, e := range excludes {
+		if strings.HasPrefix(e, o.WorkDir+string(filepath.Separator)) {
+			t.Errorf("the workspace's own instructions are excluded: %s", e)
+		}
+	}
+	var settings struct {
+		ClaudeMdExcludes []string
+		Sandbox          struct{ Filesystem struct{ DenyWrite []string } }
+		Permissions      struct{ Deny []string }
+	}
+	if err = json.Unmarshal([]byte(claudeSandboxSettings(o)), &settings); err != nil {
+		t.Fatal(err)
+	}
+	gitDir := filepath.Join(o.WorkDir, ".git")
+	if len(settings.ClaudeMdExcludes) == 0 || !slices.Contains(settings.Sandbox.Filesystem.DenyWrite, gitDir) || !slices.Contains(settings.Permissions.Deny, "Edit(/"+gitDir+"/**)") {
+		t.Fatalf("writer may change repository metadata or read operator instructions: %+v", settings)
+	}
+}
+
+func TestEnvAdditionsComeLastAndCannotTouchManagedKeys(t *testing.T) {
+	o, err := normalize(Options{Engine: Claude, WorkDir: t.TempDir(), Env: []string{"GOCACHE=/work/.crew/go", "TMPDIR=/work/.crew/tmp"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := environment(o)
+	if env[len(env)-2] != "GOCACHE=/work/.crew/go" || env[len(env)-1] != "TMPDIR=/work/.crew/tmp" {
+		t.Fatalf("additions must come last to take effect: %v", env[len(env)-2:])
+	}
+	for _, bad := range []string{"HOME=/x", "PATH=/x", "CODEX_HOME=/x", "ANTHROPIC_API_KEY=x", "CLAUDE_CODE_USE_BEDROCK=1", "no-equals", "1BAD=x"} {
+		if _, err := normalize(Options{Engine: Claude, WorkDir: t.TempDir(), Env: []string{bad}}); err == nil {
+			t.Errorf("accepted %s", bad)
 		}
 	}
 }

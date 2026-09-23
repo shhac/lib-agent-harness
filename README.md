@@ -308,12 +308,21 @@ the result is cached per resolved binary and sandbox:
     `dontAsk` permissions, WebFetch, WebSearch and MCP tools removed, and
     `Edit` allowed only inside `WorkDir` (resolved through symlinks). The
     network allowlist is strict.
+  - A writing session cannot change `WorkDir/.git`, as with Codex.
   - A read-only session also loses Edit and Write, and denies sandboxed writes
     to `WorkDir`.
+  - The operator's own instruction files do not load: their user `CLAUDE.md`
+    and rules, and any `CLAUDE.md` or `CLAUDE.local.md` above the workspace.
+    Instructions inside the workspace still do.
   - `claude sandbox status` with the same settings, asked from a throwaway
     home, must report the sandbox supported, enabled and strict, with no
     unavailable reason. This is the CLI's own report, not a canary: Claude
     offers no way to run a sandboxed command without inference.
+
+`Options.Env` adds ordinary `KEY=VALUE` settings to any session, for example
+a build cache or `TMPDIR` inside the workspace so a sandboxed build can write
+them. Keys the harness manages or strips (homes, `PATH`, provider credentials
+and overrides) are refused.
 
 `session.VerifySandbox(ctx, options)` runs the same check without opening a
 session. Failures are `*CapabilityError` values with `sandbox_unavailable` or

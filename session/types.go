@@ -143,6 +143,11 @@ type Options struct {
 	// Sandbox.Write is set. It is proved before a credentialed launch. A session is either
 	// restricted or sandboxed, never both. Nil keeps the ordinary contract.
 	Sandbox *Sandbox
+	// Env adds KEY=VALUE entries to the session's environment, after the
+	// harness has removed provider credentials and overrides. It is for
+	// ordinary settings such as a build cache inside the workspace; keys the
+	// harness manages or strips are refused. It is not part of a Ref.
+	Env []string
 	// OnDiagnostic receives bounded, sanitized detail about a failure, once, for
 	// the caller's own private records. It is deliberately not part of any error
 	// value: like provider text, captured harness output does not belong in a
