@@ -21,6 +21,9 @@ import (
 // handed to the real launch. A caller's login is never present while the
 // question "does this build actually drop its own tools" is still open.
 func prepareLaunch(ctx context.Context, o Options) (*launch, error) {
+	if o.Sandbox != nil {
+		return prepareSandbox(ctx, o)
+	}
 	if o.Restriction == nil {
 		return nil, nil
 	}

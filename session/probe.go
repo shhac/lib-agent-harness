@@ -195,7 +195,7 @@ func driveCodexProbe(ctx context.Context, o Options, args []string, dir string, 
 		return err
 	}
 	defer func() { w.close(); <-w.reaped }()
-	if err = codexHandshake(ctx, w); err != nil {
+	if err = codexHandshake(ctx, w, false); err != nil {
 		return err
 	}
 	body, err := w.request(ctx, "thread/start", codexThreadParams(o, dir, false, ""))

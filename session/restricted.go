@@ -124,6 +124,8 @@ func (e *CapabilityError) Error() string {
 		CapabilityServerNotLoaded:     "the installed harness did not load this session's tool server",
 		CapabilityServerNameReserved:  "the installed harness reserves this tool server name; choose another",
 		CapabilityLoginUnavailable:    "the selected harness home has no file-backed login to share with a restricted session; log in to that home first",
+		CapabilitySandboxUnavailable:  "the installed harness could not be run under the requested sandbox",
+		CapabilitySandboxNotEnforced:  "the installed harness's sandbox allowed writes or network access the session must not have",
 	}[e.Code]
 	if message == "" {
 		message = "the restricted session configuration could not be established"

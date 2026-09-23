@@ -180,7 +180,7 @@ func requireSessionHandshake(t *testing.T, home string) {
 		session, _ = json.Marshal(p)
 		return json.RawMessage(`{}`), nil
 	}}
-	if err = codexHandshake(testContext(t), w); err != nil {
+	if err = codexHandshake(testContext(t), w, false); err != nil {
 		t.Fatal(err)
 	}
 	var inspected, opened any

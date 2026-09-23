@@ -69,6 +69,13 @@ func normalize(o Options) (Options, error) {
 	if o.Instructions.Text != "" && o.Instructions.Mode == "" {
 		return o, errors.New("instructions require an explicit replace or append mode")
 	}
+	if o.Sandbox != nil {
+		frozen := *o.Sandbox
+		o.Sandbox = &frozen
+		if o, err = normalizeSandbox(o); err != nil {
+			return o, err
+		}
+	}
 	if o.Policy.CodexSandbox == "" {
 		o.Policy.CodexSandbox = "read-only"
 	}
@@ -177,6 +184,16 @@ func reference(o Options, id string) Ref {
 			RuntimeHome string
 			HostedTools []ToolDefinition
 		}{legacy, true, o.Restriction.Tools.Server, o.RuntimeHome, hostedTools(o)})
+	}
+	if o.Sandbox != nil {
+		// A resume must not open a different sandbox than the one the session
+		// was started under, so the sandbox is part of what a reference names.
+		payload, _ = json.Marshal(struct {
+			Legacy      any
+			Sandboxed   bool
+			Write       bool
+			RuntimeHome string
+		}{legacy, true, o.Sandbox.Write, o.RuntimeHome})
 	}
 	hash := sha256.Sum256(payload)
 	return Ref{Engine: o.Engine, ID: id, Home: o.Home, WorkDir: o.WorkDir, AccountIdentity: o.AccountIdentity, ConfigHash: hex.EncodeToString(hash[:])}
@@ -288,7 +305,7 @@ func environment(o Options) []string {
 	// configuration and shared the login into it, so nothing the operator keeps
 	// beside their credential comes along.
 	selected := o.Home
-	if o.Restriction != nil && o.RuntimeHome != "" && o.Engine == Codex {
+	if (o.Restriction != nil || o.Sandbox != nil) && o.RuntimeHome != "" && o.Engine == Codex {
 		selected = o.RuntimeHome
 	}
 	key := "CODEX_HOME"

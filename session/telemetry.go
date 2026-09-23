@@ -45,7 +45,7 @@ func Inspect(ctx context.Context, o Options) (Inspection, error) {
 	}
 	defer func() { s.Close(); <-w.reaped }()
 	if o.Engine == Codex {
-		err = codexHandshake(ctx, w)
+		err = codexHandshake(ctx, w, false)
 	} else {
 		var body json.RawMessage
 		if body, err = w.request(ctx, "initialize", map[string]any{}); err == nil {

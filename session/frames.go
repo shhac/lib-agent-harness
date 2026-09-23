@@ -8,8 +8,14 @@ import "context"
 // what makes that equivalence structural rather than two functions agreeing.
 
 // codexHandshake opens the app-server protocol.
-func codexHandshake(ctx context.Context, w wire) error {
-	if _, err := w.request(ctx, "initialize", map[string]any{"clientInfo": map[string]any{"name": "lib-agent-harness", "version": "1"}, "capabilities": map[string]any{}}); err != nil {
+func codexHandshake(ctx context.Context, w wire, experimental bool) error {
+	// A sandboxed session asks for the experimental surface because that is
+	// where the harness reports which permission profile a thread runs under.
+	capabilities := map[string]any{}
+	if experimental {
+		capabilities["experimentalApi"] = true
+	}
+	if _, err := w.request(ctx, "initialize", map[string]any{"clientInfo": map[string]any{"name": "lib-agent-harness", "version": "1"}, "capabilities": capabilities}); err != nil {
 		return err
 	}
 	return w.send(ctx, map[string]any{"method": "initialized"})
@@ -19,6 +25,10 @@ func codexHandshake(ctx context.Context, w wire) error {
 // session's policy, model and instructions.
 func codexThreadParams(o Options, cwd string, resume bool, id string) map[string]any {
 	p := map[string]any{"cwd": cwd, "approvalPolicy": o.Policy.CodexApproval, "sandbox": o.Policy.CodexSandbox}
+	if o.Sandbox != nil {
+		// A legacy sandbox mode here replaces the session's permission profile.
+		delete(p, "sandbox")
+	}
 	if o.Model != "" {
 		p["model"] = o.Model
 	}

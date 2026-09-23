@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -89,6 +90,10 @@ func invocations(t *testing.T, log, kind string) int {
 func runFakeHarness(scenario string) int {
 	args := os.Args[1:]
 	switch {
+	case len(args) > 0 && args[0] == "sandbox":
+		return fakeCodexCanary(scenario, args)
+	case slices.Contains(args, "sandbox") && slices.Contains(args, "status"):
+		return fakeClaudeSandboxStatus(scenario)
 	case len(args) > 0 && args[0] == "-p":
 		return fakeClaude(scenario, args)
 	case len(args) > 1 && args[0] == "debug" && args[1] == "models":
@@ -228,7 +233,7 @@ func fakeCodex(scenario string, args []string) int {
 		case "initialize":
 			result = map[string]any{}
 		case "thread/start", "thread/resume":
-			result = map[string]any{"thread": map[string]any{"id": "fake-thread"}}
+			result = fakeCodexThread(scenario, overrides)
 		case "turn/start":
 			if out.Encode(map[string]any{"id": id, "result": map[string]any{"turn": map[string]any{"id": "fake-turn"}}}) != nil {
 				return 2

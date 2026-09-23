@@ -138,6 +138,11 @@ type Options struct {
 	// against the installed CLI before a credentialed process starts. Leaving it
 	// nil keeps the ordinary native contract exactly as it was.
 	Restriction *Restriction
+	// Sandbox opts an ordinary native session into the installed CLI's OS
+	// sandbox: no network, and project writes only inside WorkDir when
+	// Sandbox.Write is set. It is proved before a credentialed launch. A session is either
+	// restricted or sandboxed, never both. Nil keeps the ordinary contract.
+	Sandbox *Sandbox
 	// OnDiagnostic receives bounded, sanitized detail about a failure, once, for
 	// the caller's own private records. It is deliberately not part of any error
 	// value: like provider text, captured harness output does not belong in a

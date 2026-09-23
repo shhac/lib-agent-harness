@@ -61,7 +61,7 @@ func open(ctx context.Context, o Options, r *Ref) (*Session, error) {
 		return nil, err
 	}
 	s := &Session{options: o, ref: reference(o, ""), caps: CapabilitiesFor(o.Engine), lifetime: ctx, done: make(chan struct{}), opGate: make(chan struct{}, 1)}
-	if l != nil {
+	if l != nil && l.host != nil {
 		s.tools = l.host
 		l.host.onRefusal = s.toolRefused
 		l.host.activeTurn = func() string {
@@ -84,7 +84,7 @@ func open(ctx context.Context, o Options, r *Ref) (*Session, error) {
 	// Doing only the first would leave nothing to signal. Both, in that order,
 	// mean a crash at any point is either "no process" or "a process, reserved".
 	var onStart func(int)
-	if l != nil {
+	if l != nil && l.host != nil {
 		if err = recordLaunch(l.host.cfg.Dir, launchRecord{Engine: string(o.Engine), Launch: l.host.socketDir, Started: time.Now().UTC()}); err != nil {
 			s.releaseTools()
 			return nil, err
@@ -138,7 +138,7 @@ func open(ctx context.Context, o Options, r *Ref) (*Session, error) {
 // assignment that no later resume could ever unblock. So the marker is settled
 // when the process is confirmed gone, and kept when it is not.
 func (s *Session) settleFailedLaunch(l *launch) {
-	if l == nil {
+	if l == nil || l.host == nil {
 		return
 	}
 	s.mu.Lock()
@@ -205,6 +205,22 @@ func (s *Session) awaitReaped(ctx context.Context) {
 	}
 }
 
+// reaped reports whether this session's harness process has been collected.
+func (s *Session) reaped() bool {
+	s.mu.Lock()
+	w, _ := s.transport.(*streamWire)
+	s.mu.Unlock()
+	if w == nil {
+		return true
+	}
+	select {
+	case <-w.reaped:
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Session) transportFailure() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -228,7 +244,7 @@ func (s *Session) initialize(ctx context.Context, resume bool) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if s.options.Engine == Codex {
-		if err := codexHandshake(ctx, s.transport); err != nil {
+		if err := codexHandshake(ctx, s.transport, s.options.Sandbox != nil); err != nil {
 			return err
 		}
 		method := "thread/start"
@@ -249,6 +265,11 @@ func (s *Session) initialize(ctx context.Context, resume bool) error {
 		}
 		if resume && response.Thread.ID != s.ref.ID {
 			return ErrProtocol
+		}
+		if s.options.Sandbox != nil {
+			if err = checkCodexSandbox(s.options, body); err != nil {
+				return err
+			}
 		}
 		s.mu.Lock()
 		s.ref.ID = response.Thread.ID
@@ -302,6 +323,20 @@ func (s *Session) Release(ctx context.Context) (Reclamation, error) {
 	s.mu.Unlock()
 	s.Close()
 	if host == nil {
+		// A sandboxed Codex session has no bridge to reclaim, but it ran in a
+		// runtime home that may hold a refreshed login.
+		if s.options.Sandbox != nil && s.options.Engine == Codex && s.options.RuntimeHome != "" {
+			s.awaitReaped(ctx)
+			if !s.reaped() {
+				// Still running, and possibly still refreshing its login. Copying a
+				// credential it may be halfway through writing is worse than
+				// leaving the refresh for the next launch to share back.
+				return Reclamation{Found: true}, ErrUnreclaimed
+			}
+			if err := writeBackCredential(s.options.Home, s.options.RuntimeHome); err != nil {
+				return Reclamation{Confirmed: true}, err
+			}
+		}
 		return Reclamation{Confirmed: true}, nil
 	}
 	// Wait for this session's own harness to be reaped before asking the general

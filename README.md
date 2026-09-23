@@ -265,6 +265,73 @@ lock, so they are available on macOS and Linux and fail closed elsewhere with
 `restricted_session_unsupported_platform`. Ordinary sessions are unaffected on
 every platform.
 
+## Sandboxed sessions with native tools
+
+`Options.Sandbox` keeps a session's own tools and puts everything it executes
+under the installed CLI's OS sandbox: no network, and project writes only
+inside `WorkDir` when `Sandbox.Write` is set. Claude Code's shell may also write
+its own private session temporary directory. Codex's shell may not write
+`/tmp` or `$TMPDIR` at all.
+
+```go
+s, err := session.Start(ctx, session.Options{
+    Engine:      session.Codex,
+    WorkDir:     "/private/workspace",
+    RuntimeHome: "/private/state/codex-runtime", // Codex only; shares the login
+    Sandbox:     &session.Sandbox{Write: true},
+})
+```
+
+The sandbox is proved before any credentialed launch, without inference, and
+the result is cached per resolved binary and sandbox:
+
+- **Codex:**
+  - The session runs in a private `RuntimeHome` under a dedicated permission
+    profile: filesystem read, the workspace writable (or read-only), `.git`
+    read-only, `.git`, `.codex` and `.agents` read-only, network disabled,
+    approval `never`, web search off, and the connector, plugin, hook,
+    browser, computer-use, multi-agent and dependency-install features
+    disabled.
+  - A canary runs under that profile through `codex sandbox`. Writing outside
+    the workspace, to `/tmp` or to the inherited `$TMPDIR` must fail, as must
+    reaching a loopback listener owned by the probe. The canary must also
+    report that it ran, so an empty result is never read as success.
+  - Once the harness starts, thread/start and thread/resume must report that
+    profile, with network closed and temporary directories excluded, before
+    the first prompt. Otherwise the session is closed.
+  - The legacy `sandbox` thread mode is never sent, because it silently
+    replaces the profile.
+- **Claude Code:**
+  - The session loads only the library's settings (`--setting-sources=`,
+    `--strict-mcp-config`, hooks disabled): sandbox enabled and
+    fail-if-unavailable, no unsandboxed retries, an empty network allowlist,
+    `dontAsk` permissions, WebFetch, WebSearch and MCP tools removed, and
+    `Edit` allowed only inside `WorkDir` (resolved through symlinks). The
+    network allowlist is strict.
+  - A read-only session also loses Edit and Write, and denies sandboxed writes
+    to `WorkDir`.
+  - `claude sandbox status` with the same settings, asked from a throwaway
+    home, must report the sandbox supported, enabled and strict, with no
+    unavailable reason. This is the CLI's own report, not a canary: Claude
+    offers no way to run a sandboxed command without inference.
+
+`session.VerifySandbox(ctx, options)` runs the same check without opening a
+session. Failures are `*CapabilityError` values with `sandbox_unavailable` or
+`sandbox_not_enforced`. The phase says whether anything was launched.
+
+What this does **not** do:
+- Reads are not contained. A session can read what the operating account can
+  read.
+- The model provider connection remains an outward channel.
+- Claude Code's file tools are confined by permission rules; its OS sandbox
+  covers only the shell.
+- Sandboxed sessions have no bridge, so they have no launch record or
+  `Reclaim`. A caller that restarts mid-turn should treat the turn as
+  interrupted.
+- The mode is unavailable on Windows (`sandbox_unavailable`).
+- `Restriction` and `Sandbox` are mutually exclusive, and a sandbox refuses
+  any policy it would otherwise have to override.
+
 ## Steering and capabilities
 
 Every engine offers the same session methods. `Capabilities` describes support
