@@ -626,3 +626,41 @@ func TestSandboxedSessionsInheritOnlyWhatTheyNeed(t *testing.T) {
 		t.Fatal("ordinary sessions changed")
 	}
 }
+
+func TestSandboxReadPathsReopenOnlyWhatIsNamed(t *testing.T) {
+	cache := t.TempDir()
+	o, err := normalize(Options{Engine: Claude, WorkDir: t.TempDir(), Sandbox: &Sandbox{Write: true, Read: []string{cache}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, _ := filepath.EvalSymlinks(cache)
+	var settings struct {
+		Sandbox     struct{ Filesystem struct{ AllowRead []string } }
+		Permissions struct{ Allow []string }
+	}
+	if err = json.Unmarshal([]byte(claudeSandboxSettings(o)), &settings); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(settings.Sandbox.Filesystem.AllowRead, []string{resolved}) || !slices.Contains(settings.Permissions.Allow, "Read(/"+resolved+"/**)") {
+		t.Fatalf("the named directory is not readable: %+v", settings)
+	}
+	if !slices.Contains(settings.Permissions.Allow, "Edit(/"+o.WorkDir+"/**)") {
+		t.Fatalf("read paths replaced the workspace edit rule: %v", settings.Permissions.Allow)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home directory")
+	}
+	for _, bad := range []string{"relative/cache", cache + "/../x", "/", home, filepath.Dir(home)} {
+		if _, err := normalize(Options{Engine: Claude, WorkDir: t.TempDir(), Sandbox: &Sandbox{Read: []string{bad}}}); err == nil {
+			t.Errorf("accepted read path %q", bad)
+		}
+	}
+	plain, err := normalize(Options{Engine: Claude, WorkDir: t.TempDir(), Sandbox: &Sandbox{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(claudeSandboxSettings(plain), "allowRead") {
+		t.Fatal("a session with no read paths reopened something")
+	}
+}

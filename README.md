@@ -312,6 +312,11 @@ the result is cached per resolved binary and sandbox:
   - A writing session cannot change `WorkDir/.git`, as with Codex.
   - A read-only session also loses Edit and Write, and denies sandboxed writes
     to `WorkDir`.
+  - Its shell cannot read the home directory outside `WorkDir`
+    (`blockReadsOutsideWorkingDirectories`). `Sandbox.Read` reopens named
+    directories read-only, such as a Go module cache a build needs. A read
+    path must be absolute, and none may contain the home directory. Codex
+    already reads everything, so `Read` changes nothing there.
   - No instruction files load, not even the workspace's own: with every
     settings source dropped, Claude Code 2.1.280 loads none, and the
     operator's user and ancestor files are also excluded by name as a second

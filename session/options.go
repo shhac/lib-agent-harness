@@ -76,6 +76,7 @@ func normalize(o Options) (Options, error) {
 	o.Env = append([]string(nil), o.Env...)
 	if o.Sandbox != nil {
 		frozen := *o.Sandbox
+		frozen.Read = append([]string(nil), o.Sandbox.Read...)
 		o.Sandbox = &frozen
 		if o, err = normalizeSandbox(o); err != nil {
 			return o, err
@@ -197,8 +198,9 @@ func reference(o Options, id string) Ref {
 			Legacy      any
 			Sandboxed   bool
 			Write       bool
+			Read        []string `json:",omitempty"`
 			RuntimeHome string
-		}{legacy, true, o.Sandbox.Write, o.RuntimeHome})
+		}{legacy, true, o.Sandbox.Write, o.Sandbox.Read, o.RuntimeHome})
 	}
 	hash := sha256.Sum256(payload)
 	return Ref{Engine: o.Engine, ID: id, Home: o.Home, WorkDir: o.WorkDir, AccountIdentity: o.AccountIdentity, ConfigHash: hex.EncodeToString(hash[:])}

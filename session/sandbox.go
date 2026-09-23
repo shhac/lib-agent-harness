@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -22,16 +23,25 @@ import (
 // also write its own private session temporary directory; Codex's may not write
 // /tmp or $TMPDIR at all.
 //
-// Reads are not contained. A sandboxed session can read what the operating
-// account can read, and the model provider connection remains an outward
-// channel for anything it reads. Claude Code's file tools are confined by
-// permission rules rather than by the OS sandbox, which covers only its shell.
+// Reads are not fully contained. A Codex session can read what the operating
+// account can read. A Claude session's shell cannot read the home directory
+// outside WorkDir and Read, but can read the rest of the system. Either way the
+// model provider connection remains an outward channel for anything read.
+// Claude Code's file tools are confined by permission rules rather than by the
+// OS sandbox, which covers only its shell.
 //
 // The sandbox is proved before any credentialed launch and, for Codex, read
 // back from the running harness before its first prompt. There is no mode that
 // starts a sandboxed session whose sandbox could not be established.
 type Sandbox struct {
 	Write bool
+	// Read names directories outside the workspace that the session's shell
+	// may also read, such as a shared build-module cache. Claude Code blocks its
+	// shell from reading the home directory otherwise; Codex already reads
+	// everything the account can. Each must be an absolute directory that holds
+	// no credentials. None may contain the home directory, which would reopen
+	// all of it.
+	Read []string
 }
 
 // sandboxProfile is the Codex permission profile a sandboxed session runs
@@ -61,6 +71,29 @@ func sandboxClaudeTools(write bool) []string {
 
 // normalizeSandbox rejects every setting a sandbox would otherwise have to
 // silently override. o.Policy is the caller's, before defaults are applied.
+// sandboxReadDirs resolves each extra readable directory to the path the
+// sandbox will match, and refuses any that would reopen the home directory.
+func sandboxReadDirs(dirs []string) ([]string, error) {
+	home, _ := os.UserHomeDir()
+	if resolved, err := filepath.EvalSymlinks(home); err == nil {
+		home = resolved
+	}
+	out := make([]string, 0, len(dirs))
+	for _, dir := range dirs {
+		if !filepath.IsAbs(dir) || filepath.Clean(dir) != dir {
+			return nil, fmt.Errorf("sandbox read path %q must be a clean absolute path", dir)
+		}
+		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+			dir = resolved
+		}
+		if rel, err := filepath.Rel(dir, home); home != "" && err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return nil, fmt.Errorf("sandbox read path %q would reopen the home directory", dir)
+		}
+		out = append(out, dir)
+	}
+	return out, nil
+}
+
 func normalizeSandbox(o Options) (Options, error) {
 	if o.Restriction != nil {
 		return o, errors.New("a session is either restricted or sandboxed; set only one of Restriction and Sandbox")
@@ -74,6 +107,11 @@ func normalizeSandbox(o Options) (Options, error) {
 	if !restrictedPlatform() {
 		return o, &CapabilityError{Engine: string(o.Engine), Code: CapabilitySandboxUnavailable, Phase: BeforeLaunch}
 	}
+	read, err := sandboxReadDirs(o.Sandbox.Read)
+	if err != nil {
+		return o, err
+	}
+	o.Sandbox.Read = read
 	if o.Engine == Codex {
 		if o.Policy.CodexSandbox != "" {
 			return o, errors.New("a sandboxed Codex session owns its sandbox; leave Policy.CodexSandbox unset")
@@ -166,6 +204,14 @@ func claudeSandboxSettings(o Options) string {
 		// Sandbox paths are plain absolute paths. The shell may otherwise write
 		// to its working directory by default.
 		filesystem["denyWrite"] = []string{o.WorkDir}
+	}
+	if len(o.Sandbox.Read) > 0 {
+		filesystem["allowRead"] = o.Sandbox.Read
+		allow, _ := permissions["allow"].([]string)
+		for _, dir := range o.Sandbox.Read {
+			allow = append(allow, "Read(/"+dir+"/**)")
+		}
+		permissions["allow"] = allow
 	}
 	sandbox := map[string]any{
 		"enabled":                  true,
@@ -296,9 +342,10 @@ func sandboxKey(o Options, l *launch) (string, error) {
 		Size     int64
 		Modified time.Time
 		Write    bool
+		Read     []string
 		Args     []string
 		TempDir  string
-	}{"sandbox", o.Engine, binary, info.Size(), info.ModTime(), o.Sandbox.Write, l.extra, sessionTempDir()})
+	}{"sandbox", o.Engine, binary, info.Size(), info.ModTime(), o.Sandbox.Write, o.Sandbox.Read, l.extra, sessionTempDir()})
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:]), nil
 }
