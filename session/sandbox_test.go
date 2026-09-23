@@ -530,3 +530,19 @@ func mustNormalize(t *testing.T, o Options) Options {
 	}
 	return out
 }
+
+// The sandbox switches off surfaces that reach past it, and nothing a
+// sandboxed session needs to do its work.
+func TestSandboxKeepsNativeToolsWorking(t *testing.T) {
+	args := strings.Join(codexSandboxArgs(true), " ")
+	for _, off := range []string{"features.apps=false", "features.plugins=false", "features.hooks=false", "features.browser_use=false", "features.computer_use=false", "web_search=\"disabled\""} {
+		if !strings.Contains(args, off) {
+			t.Errorf("outward surface left on: %s", off)
+		}
+	}
+	for _, needed := range []string{"code_mode_host", "shell_tool", "unified_exec", "apply_patch"} {
+		if strings.Contains(args, "features."+needed+"=false") {
+			t.Errorf("a sandboxed session could not work with %s disabled", needed)
+		}
+	}
+}

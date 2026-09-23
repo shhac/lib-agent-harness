@@ -53,6 +53,35 @@ remove the tools. This added a third mode: ordinary tools, OS sandbox.
 
   With these settings, thread/start still reported the profile.
 
+## Established with real inference (same day, before v0.3.1)
+
+A smoke run asked each engine, in both modes, to try six things: create a
+file in the workspace with its file tool; create one outside the workspace
+with its file tool; write outside with the shell; write `/tmp` with the
+shell; run `curl https://example.com`; run `git ls-remote` against GitHub.
+
+- **Claude Code, writing:**
+  - the file in the workspace was created;
+  - the Write tool was refused outside the workspace by permission rules;
+  - both shell writes failed with "operation not permitted";
+  - `curl` and `git` failed at the proxy with 403.
+- **Claude Code, read-only:** no file tools, the shell writes were denied, and
+  the network was blocked.
+- **Codex, writing:**
+  - `apply_patch` created the workspace file and was rejected outside it;
+  - the shell writes were denied;
+  - DNS was blocked for both network commands.
+- **Codex, read-only:** everything was rejected.
+- **v0.3.0 bug:** the first Codex run showed that v0.3.0 had also disabled the
+  `code_mode_host` feature. Every tool call then failed with "code-mode host is
+  disabled", so nothing escaped, but nothing could be done either. v0.3.1 keeps
+  it enabled, with a test.
+- **Resume readback:** a Codex thread that had completed one turn was resumed
+  under the sandbox, and thread/resume reported the profile. The readback
+  passed before any prompt.
+
+Nothing listed as unestablished below remains open.
+
 ## Not established
 
 - That thread/resume reports `activePermissionProfile` the way thread/start

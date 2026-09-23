@@ -109,7 +109,7 @@ func normalizeSandbox(o Options) (Options, error) {
 	return o, nil
 }
 
-var sandboxDisabledFeatures = []string{"apps", "plugins", "remote_plugin", "hooks", "browser_use", "browser_use_external", "computer_use", "code_mode_host", "multi_agent", "multi_agent_v2", "skill_mcp_dependency_install", "workspace_dependencies", "tool_suggest", "memories"}
+var sandboxDisabledFeatures = []string{"apps", "plugins", "remote_plugin", "hooks", "browser_use", "browser_use_external", "computer_use", "multi_agent", "multi_agent_v2", "skill_mcp_dependency_install", "workspace_dependencies", "tool_suggest", "memories"}
 
 // codexSandboxArgs are the overrides a sandboxed Codex harness and its canary
 // both run with. They are the only place the profile is described.
@@ -131,7 +131,9 @@ func codexSandboxArgs(write bool) []string {
 		`analytics.enabled=false`,
 	}
 	// Surfaces that reach past the sandbox — connectors, plugins, hooks, a
-	// browser or the desktop — are switched off. The shell and file tools stay.
+	// browser or the desktop — are switched off. The shell and file tools stay,
+	// and so does the code-mode host: on codex 0.154.0 every native tool call
+	// runs through it, and disabling it leaves a session unable to do anything.
 	for _, feature := range sandboxDisabledFeatures {
 		settings = append(settings, "features."+feature+"=false")
 	}
