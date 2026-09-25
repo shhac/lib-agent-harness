@@ -58,7 +58,7 @@ func prepareLaunch(ctx context.Context, o Options, lease *os.File) (*launch, err
 		if restrictErr != nil {
 			return fail(restrictErr)
 		}
-		l.catalog = filepath.Join(host.cfg.Dir, "catalog.json")
+		l.catalog = catalogPath(host.cfg.Dir)
 		if err = writePrivate(l.catalog, restricted); err != nil {
 			return fail(err)
 		}

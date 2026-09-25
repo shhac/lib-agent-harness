@@ -316,7 +316,7 @@ func TestOpenHoldsTheLeaseFromReclaimToLaunch(t *testing.T) {
 	o, _ := persistentOptions(t, Claude)
 	ctx := probeContext(t)
 	n := mustNormalize(t, o)
-	path := filepath.Join(n.Restriction.Tools.Dir, "session.lease")
+	path := leasePath(n.Restriction.Tools.Dir)
 	leaseFree := func() bool {
 		t.Helper()
 		other, err := holdLease(path)

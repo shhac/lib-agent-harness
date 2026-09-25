@@ -350,7 +350,7 @@ func TestReleaseLeavesAnAssignmentAnotherSessionTook(t *testing.T) {
 	// The released session's harness has ended and its lease is free. Another
 	// session takes the lease and launches a harness of its own.
 	host.close()
-	lease, err := holdLease(filepath.Join(dir, "session.lease"))
+	lease, err := holdLease(leasePath(dir))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,6 +10,16 @@ import (
 	"strconv"
 )
 
+// The restricted directory's layout: every file a restricted session keeps in
+// the directory its caller supplies. Naming each once is what makes the lease
+// Open reclaims under and the lease the tool host holds the same file.
+func leasePath(dir string) string          { return filepath.Join(dir, "session.lease") }
+func secretPath(dir string) string         { return filepath.Join(dir, "t.secret") }
+func lockPath(dir string) string           { return filepath.Join(dir, "bridge.lock") }
+func launchPath(dir string) string         { return filepath.Join(dir, "harness.launch") }
+func pendingContextPath(dir string) string { return filepath.Join(dir, "context.pending") }
+func catalogPath(dir string) string        { return filepath.Join(dir, "catalog.json") }
+
 // shortPrivateDir creates an owner-only directory whose path leaves room for a
 // local socket name. The system temporary directory is per-user on the
 // platforms this runs on, and the directory itself is owner-only regardless.

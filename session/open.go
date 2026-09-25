@@ -113,7 +113,7 @@ func reclaimBeforeOpen(ctx context.Context, o Options) (*os.File, error) {
 // with it, any harness found belongs to a process that no longer holds the
 // assignment. A lease another session holds is returned as ErrLeaseHeld.
 func reclaimUnderLease(ctx context.Context, dir string) (*os.File, Reclamation, error) {
-	lease, err := holdLease(filepath.Join(dir, "session.lease"))
+	lease, err := holdLease(leasePath(dir))
 	if err != nil {
 		return nil, Reclamation{}, err
 	}

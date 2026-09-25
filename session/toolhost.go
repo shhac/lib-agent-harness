@@ -98,7 +98,7 @@ func newToolHost(cfg ToolHost, lease *os.File) (_ *toolHost, err error) {
 	// exists. It is released when the host closes, or by the operating system if
 	// this process dies.
 	if lease == nil {
-		if lease, err = holdLease(filepath.Join(cfg.Dir, "session.lease")); err != nil {
+		if lease, err = holdLease(leasePath(cfg.Dir)); err != nil {
 			_ = os.RemoveAll(socketDir)
 			return nil, err
 		}
@@ -113,7 +113,7 @@ func newToolHost(cfg ToolHost, lease *os.File) (_ *toolHost, err error) {
 		return nil, errors.New("tool host credential unavailable")
 	}
 	h.secret = []byte(hex.EncodeToString(secret[:]))
-	if err = writePrivate(filepath.Join(cfg.Dir, "t.secret"), h.secret); err != nil {
+	if err = writePrivate(secretPath(cfg.Dir), h.secret); err != nil {
 		_ = os.RemoveAll(socketDir)
 		return nil, err
 	}
@@ -137,8 +137,8 @@ func newToolHost(cfg ToolHost, lease *os.File) (_ *toolHost, err error) {
 func (h *toolHost) environment() map[string]string {
 	return map[string]string{
 		BridgeSocketEnv: h.socket,
-		BridgeSecretEnv: filepath.Join(h.cfg.Dir, "t.secret"),
-		BridgeLockEnv:   filepath.Join(h.cfg.Dir, "bridge.lock"),
+		BridgeSecretEnv: secretPath(h.cfg.Dir),
+		BridgeLockEnv:   lockPath(h.cfg.Dir),
 	}
 }
 

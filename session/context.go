@@ -13,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
 )
 
@@ -134,5 +133,5 @@ func contextMarkerPath(o Options) string {
 	if o.Restriction == nil {
 		return ""
 	}
-	return filepath.Join(o.Restriction.Tools.Dir, "context.pending")
+	return pendingContextPath(o.Restriction.Tools.Dir)
 }

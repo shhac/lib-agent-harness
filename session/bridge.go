@@ -154,9 +154,6 @@ func Reclaim(ctx context.Context, dir string) (Reclamation, error) {
 	return out, ErrUnreclaimed
 }
 
-func lockPath(dir string) string   { return filepath.Join(dir, "bridge.lock") }
-func launchPath(dir string) string { return filepath.Join(dir, "harness.launch") }
-
 // recordLaunch persists what was started, before it can produce any effect. A
 // crash between this write and the process starting leaves a record for a group
 // that never existed, which recovery reports as confirmed-absent — the safe way
