@@ -41,6 +41,26 @@ type Session struct {
 	contextGeneration uint64
 }
 
+func (s *Session) lockOp(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case s.opGate <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			s.unlockOp()
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.done:
+		return ErrClosed
+	}
+}
+
+func (s *Session) unlockOp() { <-s.opGate }
+
 // Start opens a persistent native CLI. ctx owns its lifetime; cancelling it
 // terminates the process tree. Startup performs a handshake, not inference.
 func Start(ctx context.Context, o Options) (*Session, error) { return open(ctx, o, nil, nil) }

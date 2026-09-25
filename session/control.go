@@ -310,26 +310,6 @@ func (s *Session) operationError(operation string, err error) error {
 	return &UnsupportedError{operation, c}
 }
 
-func (s *Session) lockOp(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	select {
-	case s.opGate <- struct{}{}:
-		if err := ctx.Err(); err != nil {
-			s.unlockOp()
-			return err
-		}
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-s.done:
-		return ErrClosed
-	}
-}
-
-func (s *Session) unlockOp() { <-s.opGate }
-
 func definitiveRejection(err error) bool {
 	return errors.Is(err, ErrRejected) || errors.Is(err, ErrUnsupported)
 }
