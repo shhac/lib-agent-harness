@@ -427,3 +427,65 @@ func TestBareToolNameNeverPassesAsAHostedTool(t *testing.T) {
 		t.Fatalf("an unconfigured tool under our own prefix was accepted: %v", failure)
 	}
 }
+
+// What a probe observed decides its outcome, judged without a provider or a
+// harness: each observation maps to the refusal it warrants, or to none.
+func TestJudgeProbeMapsEachObservationToItsOutcome(t *testing.T) {
+	claude, err := normalize(restrictedOptions(t, Claude))
+	if err != nil {
+		t.Fatal(err)
+	}
+	codex, err := normalize(restrictedOptions(t, Codex))
+	if err != nil {
+		t.Fatal(err)
+	}
+	claudeRequest := func(names ...string) []byte {
+		tools := []map[string]any{}
+		for _, name := range names {
+			tools = append(tools, map[string]any{"name": name})
+		}
+		raw, _ := json.Marshal(map[string]any{"model": "picked", "tools": tools})
+		return raw
+	}
+	codexRequest := func(model string) []byte {
+		raw, _ := json.Marshal(map[string]any{"model": model, "input": []any{
+			map[string]any{"type": "additional_tools", "role": "system", "tools": []any{map[string]any{"type": "tool_search"}}},
+		}})
+		return raw
+	}
+	exact := claudeRequest("mcp__agent_workspace__read_file", "mcp__agent_workspace__finish")
+	for _, tc := range []struct {
+		name     string
+		o        Options
+		requests [][]byte
+		timedOut bool
+		runErr   error
+		served   bool
+		code     string
+	}{
+		{name: "timed out before any request", o: claude, timedOut: true, runErr: errors.New("killed"), code: CapabilityProbeTimeout},
+		{name: "harness failed before any request", o: claude, runErr: errors.New("exited"), code: CapabilityProbeFailed},
+		{name: "harness ended without a request", o: claude, code: CapabilityProbeNoRequest},
+		{name: "a request that could not be read", o: claude, requests: [][]byte{exact, nil}, code: CapabilityProbeUnreadable},
+		{name: "a request that is not JSON", o: claude, requests: [][]byte{[]byte("not json")}, code: CapabilityProbeUnreadable},
+		{name: "exactly the hosted tools", o: claude, requests: [][]byte{exact}, timedOut: true},
+		{name: "a retained built-in", o: claude, requests: [][]byte{claudeRequest("mcp__agent_workspace__read_file", "mcp__agent_workspace__finish", "Bash")}, code: CapabilityNativeToolsPresent},
+		{name: "a changed model", o: codex, requests: [][]byte{codexRequest("other")}, served: true, code: CapabilityChangedModel},
+		{name: "deferred tools the channel served", o: codex, requests: [][]byte{codexRequest("picked")}, served: true},
+		{name: "deferred tools never served", o: codex, requests: [][]byte{codexRequest("picked")}, code: CapabilityHostedToolsMissing},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := judgeProbe(tc.o, tc.requests, tc.timedOut, tc.runErr, tc.served)
+			if tc.code == "" {
+				if err != nil {
+					t.Fatalf("a proved configuration was refused: %v", err)
+				}
+				return
+			}
+			var failure *CapabilityError
+			if !errors.As(err, &failure) || failure.Code != tc.code || failure.Phase != BeforeLaunch {
+				t.Fatalf("want %s before launch, got %v", tc.code, err)
+			}
+		})
+	}
+}

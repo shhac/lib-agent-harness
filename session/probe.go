@@ -82,8 +82,16 @@ func probeRestriction(ctx context.Context, o Options, l *launch) error {
 	mu.Lock()
 	requests := append([][]byte(nil), captured...)
 	mu.Unlock()
+	return judgeProbe(o, requests, probeCtx.Err() != nil, runErr, l.host.served())
+}
+
+// judgeProbe decides what a probe established from what it observed: the
+// request bodies the provider captured, nil for one it could not read; whether
+// the probe ran out of time; how the harness run ended; and whether the tool
+// channel served the session's tools.
+func judgeProbe(o Options, requests [][]byte, timedOut bool, runErr error, served bool) error {
 	if len(requests) == 0 {
-		if probeCtx.Err() != nil {
+		if timedOut {
 			return &CapabilityError{Engine: string(o.Engine), Code: CapabilityProbeTimeout, Phase: BeforeLaunch}
 		}
 		if runErr != nil {
@@ -111,7 +119,7 @@ func probeRestriction(ctx context.Context, o Options, l *launch) error {
 	//
 	// Assign before returning: a typed nil pointer returned straight into an
 	// error result is not nil, and every passing check would read as a failure.
-	if failure := judgeSurfaces(string(o.Engine), hosted, surfaces, l.host.served()); failure != nil {
+	if failure := judgeSurfaces(string(o.Engine), hosted, surfaces, served); failure != nil {
 		return failure
 	}
 	return nil
