@@ -33,7 +33,16 @@ const (
 	// fakeRefreshEnv names a login a fake Codex session writes into its runtime
 	// home, standing in for the harness refreshing its credential.
 	fakeRefreshEnv = "AGENT_HARNESS_TEST_FAKE_REFRESH"
+	// fakePersistEnv makes a fake session keep its conversation the way the
+	// installed CLIs do, and refuse to resume one it does not have. Claude writes
+	// a transcript under its config directory's projects folder; Codex keeps a
+	// thread record in its home and rejects thread/resume without one.
+	fakePersistEnv = "AGENT_HARNESS_TEST_FAKE_PERSIST"
 )
+
+// fakeCompactCue in a turn's input makes the fake compact that conversation
+// during the turn, reporting it the way each installed CLI does.
+const fakeCompactCue = "[compact]"
 
 // Probe scenarios: what the fake harness sends to the provider it was given.
 const (
@@ -160,7 +169,17 @@ func fakeClaude(scenario string, args []string) int {
 		return fakePost(base+"/v1/messages", body)
 	}
 	logInvocation("session")
+	logInvocation("args:" + string(mustMarshal(args)))
 	out := json.NewEncoder(os.Stdout)
+	persist := os.Getenv(fakePersistEnv) != ""
+	if persist && slices.Contains(args, "--resume") && !fakeClaudeHasConversation(session) {
+		// What the installed CLI does, checked against 2.1.282: a line on standard
+		// error, an error result naming the session, and exit status 1 — with no
+		// init frame and no reply to the initialize request.
+		_, _ = os.Stderr.WriteString("No conversation found with session ID: " + session + "\n")
+		_ = out.Encode(map[string]any{"type": "result", "subtype": "error_during_execution", "is_error": true, "session_id": session, "errors": []string{"No conversation found with session ID: " + session}})
+		return 1
+	}
 	server := ""
 	if len(hosted) > 0 {
 		server = strings.Split(hosted[0], "__")[1]
@@ -180,6 +199,17 @@ func fakeClaude(scenario string, args []string) int {
 		case "control_request":
 			reply = append(reply, map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": str(frame, "request_id"), "response": map[string]any{}}})
 		case "user":
+			var message struct {
+				Message struct{ Content string } `json:"message"`
+			}
+			_ = json.Unmarshal(input.Bytes(), &message)
+			logInvocation("input:" + string(mustMarshal(message.Message.Content)))
+			if persist && !fakeClaudeRecord(session, input.Bytes()) {
+				return 2
+			}
+			if strings.Contains(message.Message.Content, fakeCompactCue) {
+				reply = append(reply, map[string]any{"type": "system", "subtype": "compact_boundary", "session_id": session, "uuid": "boundary", "compact_metadata": map[string]any{"trigger": "auto", "pre_tokens": 1000}})
+			}
 			reply = append(reply,
 				map[string]any{"type": "assistant", "session_id": session, "message": map[string]any{"id": "reply", "content": []any{map[string]any{"type": "text", "text": "fake answer"}}}},
 				map[string]any{"type": "result", "subtype": "success", "session_id": session, "is_error": false, "result": "fake answer", "usage": map[string]any{"input_tokens": 1, "output_tokens": 1}})
@@ -191,6 +221,50 @@ func fakeClaude(scenario string, args []string) int {
 		}
 	}
 	return 0
+}
+
+// fakeClaudeProject is where the installed CLI keeps a working directory's
+// transcripts, written independently of the library's own rule so the two can
+// disagree: every character that is not a letter or digit of the resolved
+// working directory becomes a dash. Test paths stay under the length at which
+// the CLI starts abbreviating.
+func fakeClaudeProject() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	if resolved, resolveErr := filepath.EvalSymlinks(cwd); resolveErr == nil {
+		cwd = resolved
+	}
+	return filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "projects", regexp.MustCompile(`[^a-zA-Z0-9]`).ReplaceAllString(cwd, "-"))
+}
+
+// fakeClaudeRecord appends a user frame to the session's transcript.
+func fakeClaudeRecord(session string, frame []byte) bool {
+	dir := fakeClaudeProject()
+	if dir == "" || os.MkdirAll(dir, 0700) != nil {
+		return false
+	}
+	f, err := os.OpenFile(filepath.Join(dir, session+".jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	_, err = f.Write(append(append([]byte(nil), frame...), '\n'))
+	return err == nil
+}
+
+// fakeClaudeHasConversation looks for the transcript in any project folder, as
+// the installed CLI's resume lookup does, and requires a recorded message.
+func fakeClaudeHasConversation(session string) bool {
+	matches, _ := filepath.Glob(filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "projects", "*", session+".jsonl"))
+	for _, match := range matches {
+		raw, err := os.ReadFile(match)
+		if err == nil && bytes.Contains(raw, []byte(`"type":"user"`)) {
+			return true
+		}
+	}
+	return false
 }
 
 var fakeBaseURL = regexp.MustCompile(`base_url="([^"]+)"`)
@@ -207,10 +281,13 @@ func fakeCodex(scenario string, args []string) int {
 		}
 	}
 	provider := fakeBaseURL.FindStringSubmatch(overrides["model_providers.harness_probe"])
+	persist := os.Getenv(fakePersistEnv) != "" && provider == nil
+	threads := filepath.Join(os.Getenv("CODEX_HOME"), "fake-threads")
 	if provider != nil {
 		logInvocation("probe")
 	} else {
 		logInvocation("session")
+		logInvocation("args:" + string(mustMarshal(args)))
 		if refreshed := os.Getenv(fakeRefreshEnv); refreshed != "" {
 			if os.WriteFile(filepath.Join(os.Getenv("CODEX_HOME"), codexCredentialFile), []byte(refreshed), 0600) != nil {
 				return 2
@@ -234,12 +311,47 @@ func fakeCodex(scenario string, args []string) int {
 			result = map[string]any{}
 		case "thread/start", "thread/resume":
 			result = fakeCodexThread(scenario, overrides)
+			if persist {
+				if str(frame, "method") == "thread/resume" {
+					var p struct {
+						ThreadID string `json:"threadId"`
+					}
+					_ = json.Unmarshal(frame["params"], &p)
+					logInvocation("resume:" + p.ThreadID)
+					if _, err := os.Stat(filepath.Join(threads, p.ThreadID)); err != nil {
+						// The installed CLI's answer, checked against 0.156.1.
+						if out.Encode(map[string]any{"id": id, "error": map[string]any{"code": -32600, "message": "no rollout found for thread id " + p.ThreadID}}) != nil {
+							return 2
+						}
+						continue
+					}
+				} else if os.MkdirAll(threads, 0700) != nil || os.WriteFile(filepath.Join(threads, "fake-thread"), nil, 0600) != nil {
+					return 2
+				}
+			}
+		case "thread/compact/start":
+			if out.Encode(map[string]any{"id": id, "result": map[string]any{}}) != nil {
+				return 2
+			}
+			if !fakeCodexTurn(out, "compact-turn", true) {
+				return 2
+			}
+			continue
 		case "turn/start":
 			if out.Encode(map[string]any{"id": id, "result": map[string]any{"turn": map[string]any{"id": "fake-turn"}}}) != nil {
 				return 2
 			}
 			if provider == nil {
-				if out.Encode(map[string]any{"method": "turn/completed", "params": map[string]any{"threadId": "fake-thread", "turn": map[string]any{"id": "fake-turn", "status": "completed"}}}) != nil {
+				var p struct {
+					Input []struct{ Text string } `json:"input"`
+				}
+				_ = json.Unmarshal(frame["params"], &p)
+				text := ""
+				if len(p.Input) > 0 {
+					text = p.Input[0].Text
+				}
+				logInvocation("input:" + string(mustMarshal(text)))
+				if !fakeCodexTurn(out, "fake-turn", strings.Contains(text, fakeCompactCue)) {
 					return 2
 				}
 				continue
@@ -262,6 +374,28 @@ func fakeCodex(scenario string, args []string) int {
 		}
 	}
 	return 0
+}
+
+// fakeCodexTurn finishes a turn, compacting the thread during it when asked,
+// with the item the installed CLI's schema names for a completed compaction.
+func fakeCodexTurn(out *json.Encoder, turn string, compact bool) bool {
+	frames := []map[string]any{}
+	if turn == "compact-turn" {
+		frames = append(frames, map[string]any{"method": "turn/started", "params": map[string]any{"threadId": "fake-thread", "turn": map[string]any{"id": turn}}})
+	}
+	if compact {
+		item := map[string]any{"type": "contextCompaction", "id": "compaction"}
+		frames = append(frames,
+			map[string]any{"method": "item/started", "params": map[string]any{"threadId": "fake-thread", "turnId": turn, "item": item}},
+			map[string]any{"method": "item/completed", "params": map[string]any{"threadId": "fake-thread", "turnId": turn, "item": item}})
+	}
+	frames = append(frames, map[string]any{"method": "turn/completed", "params": map[string]any{"threadId": "fake-thread", "turn": map[string]any{"id": turn, "status": "completed"}}})
+	for _, frame := range frames {
+		if out.Encode(frame) != nil {
+			return false
+		}
+	}
+	return true
 }
 
 // fakeCodexRequest is the shape captured from the installed CLI: MCP tools
