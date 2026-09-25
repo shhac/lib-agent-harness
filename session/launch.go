@@ -58,11 +58,11 @@ func prepareLaunch(ctx context.Context, o Options, lease *os.File) (*launch, err
 		if restrictErr != nil {
 			return fail(restrictErr)
 		}
-		l.catalog = catalogPath(host.cfg.Dir)
-		if err = writePrivate(l.catalog, restricted); err != nil {
+		catalogFile := catalogPath(host.cfg.Dir)
+		if err = writePrivate(catalogFile, restricted); err != nil {
 			return fail(err)
 		}
-		if l.extra, err = codexRestrictedArgs(host, l.catalog); err != nil {
+		if l.extra, err = codexRestrictedArgs(host, catalogFile); err != nil {
 			return fail(err)
 		}
 	}
@@ -86,12 +86,11 @@ func prepareLaunch(ctx context.Context, o Options, lease *os.File) (*launch, err
 	return l, nil
 }
 
-// launch describes one restricted session's prepared runtime: the arguments it
-// adds and the private files it depends on.
+// launch describes one restricted or sandboxed session's prepared runtime: the
+// tool channel it serves, if any, and the arguments it adds.
 type launch struct {
-	host    *toolHost
-	extra   []string
-	catalog string
+	host  *toolHost
+	extra []string
 }
 
 func commandArgs(o Options, nativeID string, resuming bool, l *launch) []string {
