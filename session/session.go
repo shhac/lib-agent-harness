@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -117,14 +118,37 @@ func open(ctx context.Context, o Options, r *Ref) (*Session, error) {
 	if err = s.awaitIdentity(ctx); err != nil {
 		s.fail(err)
 		s.settleFailedLaunch(l)
-		return nil, err
+		return nil, s.resumeFailure(r != nil, err)
 	}
 	if err = s.initialize(ctx, r != nil); err != nil {
 		s.fail(err)
 		s.settleFailedLaunch(l)
-		return nil, err
+		return nil, s.resumeFailure(r != nil, err)
 	}
 	return s, nil
+}
+
+// resumeFailure marks a Claude resume whose harness exited on its own during
+// startup. Checked against Claude Code 2.1.282: resuming a conversation it
+// does not have writes an error result and exits with status 1, without an
+// init frame or a reply to the initialize request. Only a natural exit counts;
+// a harness this library had to stop is not evidence about the conversation.
+func (s *Session) resumeFailure(resuming bool, err error) error {
+	if !resuming || s.options.Engine != Claude || !errors.Is(err, ErrTransport) {
+		return err
+	}
+	s.awaitReaped(context.Background())
+	s.mu.Lock()
+	w, _ := s.transport.(*streamWire)
+	s.mu.Unlock()
+	if w == nil {
+		return err
+	}
+	var exit *ProcessError
+	if errors.As(w.processError(), &exit) && exit.Code == ProcessExited {
+		return fmt.Errorf("%w: %w", errConversationGone, err)
+	}
+	return err
 }
 
 // settleFailedLaunch clears the marker when this launch demonstrably produced
@@ -253,6 +277,11 @@ func (s *Session) initialize(ctx context.Context, resume bool) error {
 		}
 		body, err := s.transport.request(ctx, method, codexThreadParams(s.options, s.options.WorkDir, resume, s.ref.ID))
 		if err != nil {
+			if resume && errors.Is(err, ErrRejected) {
+				// Checked against codex 0.156.1: a thread it has no rollout for
+				// is refused with an invalid-request error.
+				return fmt.Errorf("%w: %w", errConversationGone, err)
+			}
 			return err
 		}
 		var response struct {
