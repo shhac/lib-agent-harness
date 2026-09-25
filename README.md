@@ -350,9 +350,9 @@ the result is cached per resolved binary and sandbox:
   - The session runs in a private `RuntimeHome` under a dedicated permission
     profile: filesystem read, the workspace writable (or read-only), `.git`
     read-only, `.git`, `.codex` and `.agents` read-only, network disabled,
-    approval `never`, web search off, and the connector, plugin, hook,
-    browser, computer-use, multi-agent and dependency-install features
-    disabled.
+    approval `never`, web search off unless `Web` is set, and the connector,
+    plugin, hook, browser, computer-use, multi-agent and dependency-install
+    features disabled.
   - A canary runs under that profile through `codex sandbox`. Writing outside
     the workspace, to `/tmp` or to the inherited `$TMPDIR` must fail, as must
     reaching a loopback listener owned by the probe, or writing the
@@ -367,7 +367,8 @@ the result is cached per resolved binary and sandbox:
   - The session loads only the library's settings (`--setting-sources=`,
     `--strict-mcp-config`, hooks disabled): sandbox enabled and
     fail-if-unavailable, no unsandboxed retries, an empty network allowlist,
-    `dontAsk` permissions, WebFetch, WebSearch and MCP tools removed, and
+    `dontAsk` permissions, WebFetch, WebSearch and MCP tools removed (see
+    `Web` and `Tools` below), and
     `Edit` allowed only inside `WorkDir` (resolved through symlinks). The
     network allowlist is strict.
   - A writing session cannot change `WorkDir/.git`, as with Codex.
@@ -397,6 +398,69 @@ them. Keys the harness manages, and keys that would change the CLI itself
 outside its sandbox (loader and Node options, proxies and certificates,
 `GIT_*`, homes, provider credentials), are refused.
 
+### Web access
+
+`Sandbox.Web` lets a sandboxed session search and read the web. Nothing else
+about the sandbox changes, and the shell's network stays closed:
+
+- **Claude Code** gains WebSearch and WebFetch, allowed by bare permission
+  rules. A `WebFetch(domain:...)` rule is never written, because Claude Code
+  adds every domain such a rule names to the shell's network allowlist too.
+  WebFetch runs in the CLI process, outside the OS sandbox.
+- **Codex** runs with `web_search="live"`. Checked against codex 0.156.1 with
+  a provider that declares web search support, this offers the model a `web`
+  tool that searches and opens pages through the provider, not from the
+  shell. Whether a real login's provider offers it has not been checked
+  without inference.
+
+Either way it is an outward channel for anything the session can read: a
+fetched URL can carry data out. A reference records whether a sandbox had
+`Web`, so a resume cannot change it; a sandbox without it keeps its earlier
+reference digest.
+
+### Caller-hosted tools beside native ones
+
+`Sandbox.Tools` takes the same `ToolHost` a restriction does, and serves it the
+same way: through the caller's bridge command (`session.RunBridge`), under the
+assignment lease, with a launch record, `Reclaim`, `Open`'s reclaim-first
+behaviour and `Release`. The session keeps its sandboxed native tools and gains
+the hosted ones.
+
+```go
+s, err := session.Start(ctx, session.Options{
+    Engine:  session.Claude,
+    WorkDir: "/private/workspace",
+    Sandbox: &session.Sandbox{Write: true, Web: true, Tools: &session.ToolHost{
+        Server:  "crew",
+        Tools:   tools,
+        Handler: handler,
+        Dir:     "/private/state/crew-worker-1", // owner-only, outside WorkDir
+        Bridge:  session.Bridge{Path: executable, Args: []string{"tool-bridge"}},
+    }},
+})
+```
+
+- The sandbox is proved first; the tool channel opens only after that, and the
+  sandbox evidence stays cached across channels.
+- **Claude Code** loads only this server (`--strict-mcp-config`, claude.ai
+  connectors disabled) and allows exactly its tools. The wholesale `mcp__*`
+  deny is dropped, because a deny outranks every allow and would refuse the
+  hosted tools too; any other MCP tool has no allow rule, which `dontAsk`
+  refuses. The startup report must show the server connected, every hosted
+  tool present and no other server's tools, or the session is closed.
+- **Codex** registers the bridge as an approved MCP server in its private
+  runtime home, which declares no other server. The app-server launches the
+  bridge outside the shell's sandbox; checked against codex 0.156.1, the
+  sandboxed shell itself cannot connect to the channel's socket.
+- `Dir` must lie outside `WorkDir`. A Codex session can still read it, as it
+  can read the account's other files, but the channel refuses anything
+  without its credential and the shell cannot reach the socket.
+- Hosted tools run whatever their handler does, outside the sandbox.
+- There is no pre-launch surface probe, as native tools are present by design.
+  Codex's hosted tools are not checked at startup beyond the channel serving
+  them.
+- A reference includes the tool server's name, not the tools or the channel.
+
 `session.VerifySandbox(ctx, options)` runs the same check without opening a
 session. Failures are `*CapabilityError` values with `sandbox_unavailable` or
 `sandbox_not_enforced`. The phase says whether anything was launched.
@@ -407,9 +471,9 @@ What this does **not** do:
 - The model provider connection remains an outward channel.
 - Claude Code's file tools are confined by permission rules; its OS sandbox
   covers only the shell.
-- Sandboxed sessions have no bridge, so they have no launch record or
-  `Reclaim`. A caller that restarts mid-turn should treat the turn as
-  interrupted.
+- A sandboxed session without `Tools` has no bridge, so it has no launch
+  record or `Reclaim`. A caller that restarts mid-turn should treat the turn
+  as interrupted.
 - The mode is unavailable on Windows (`sandbox_unavailable`).
 - `Restriction` and `Sandbox` are mutually exclusive, and a sandbox refuses
   any policy it would otherwise have to override.

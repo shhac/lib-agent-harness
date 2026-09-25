@@ -115,3 +115,35 @@ A caller's first real run should attempt each deliberately.
 - **Verified with real turns under the allowlist:** Claude's `.git` writes
   were refused by shell and tool alike, and Codex ran `go test` in its sandbox
   with its cache and `TMPDIR` in the workspace.
+
+## Web access and hosted tools, 2026-09-26
+
+Checked against Claude Code 2.1.282 and codex-cli 0.156.1 on macOS, with
+disposable homes, dummy keys and a loopback provider that refused every
+request. Nothing below used inference.
+
+- **Claude's WebFetch domain rules reach the shell.** The 2.1.282 bundle
+  builds the sandbox's network allowlist from `sandbox.network.allowedDomains`
+  and from the `domain:` content of every `WebFetch(domain:...)` allow rule;
+  a bare `WebFetch` rule has no content and adds nothing. So `Sandbox.Web`
+  allows the bare tool names only. `dontAsk` needs those rules: without an
+  allow rule a web tool is refused.
+- **Claude with Web** advertised `WebFetch` and `WebSearch` in its init frame
+  and in the request's `tools`, beside the sandboxed native set.
+- **Codex's `web_search="live"`** accepts `disabled`, `cached`, `indexed` and
+  `live`. With a provider that declares `supports_standalone_web_search`, it
+  adds a `web__run` tool (search, open, find) inside the code-mode `exec`
+  surface. `disabled` removes it. The loopback provider does not declare
+  support, so its requests carried no web tool in either mode; the built-in
+  OpenAI provider is expected to. This was not confirmed with a real login.
+- **Hosted tools, Claude:** with `--strict-mcp-config`, `--mcp-config` naming
+  the bridge, and no `mcp__*` deny, the init frame reported the server
+  `connected` and `mcp__<server>__<tool>` beside the native tools, and the
+  request carried it. The tool channel served its list. Claude Code applies
+  deny rules before allow rules, so the old `mcp__*` deny would have refused
+  the hosted tools.
+- **Hosted tools, Codex:** the bridge, launched by the app-server as an MCP
+  server, reached the channel from a sandboxed session and was served its
+  tools. The tools were deferred as before. Under the same profile,
+  `codex sandbox` running a Unix-socket client was refused with EPERM, so the
+  shell cannot reach the channel even though it can read `ToolHost.Dir`.
