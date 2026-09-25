@@ -177,9 +177,7 @@ func (s *Session) resumeFailure(resuming bool, err error) error {
 		return err
 	}
 	s.awaitReaped(context.Background())
-	s.mu.Lock()
-	w, _ := s.transport.(*streamWire)
-	s.mu.Unlock()
+	w := s.processWire()
 	if w == nil {
 		return err
 	}
@@ -204,9 +202,7 @@ func (s *Session) settleFailedLaunch(l *launch) {
 	if l == nil || l.host == nil {
 		return
 	}
-	s.mu.Lock()
-	w, _ := s.transport.(*streamWire)
-	s.mu.Unlock()
+	w := s.processWire()
 	if w != nil {
 		w.close()
 		select {
@@ -255,9 +251,7 @@ func (s *Session) awaitIdentity(ctx context.Context) error {
 // caller's context. It is best effort: a harness that will not die is exactly
 // what the reclamation that follows is for.
 func (s *Session) awaitReaped(ctx context.Context) {
-	s.mu.Lock()
-	w, _ := s.transport.(*streamWire)
-	s.mu.Unlock()
+	w := s.processWire()
 	if w == nil {
 		return
 	}
@@ -270,9 +264,7 @@ func (s *Session) awaitReaped(ctx context.Context) {
 
 // reaped reports whether this session's harness process has been collected.
 func (s *Session) reaped() bool {
-	s.mu.Lock()
-	w, _ := s.transport.(*streamWire)
-	s.mu.Unlock()
+	w := s.processWire()
 	if w == nil {
 		return true
 	}
@@ -282,6 +274,15 @@ func (s *Session) reaped() bool {
 	default:
 		return false
 	}
+}
+
+// processWire is the harness process this session launched, or nil for a
+// transport with no process behind it.
+func (s *Session) processWire() *streamWire {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	w, _ := s.transport.(*streamWire)
+	return w
 }
 
 func (s *Session) transportFailure() error {
