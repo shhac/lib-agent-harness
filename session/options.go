@@ -252,50 +252,6 @@ func compatible(o Options, r Ref) bool {
 	return r.ID != "" && r == expected
 }
 
-// launch describes one restricted session's prepared runtime: the arguments it
-// adds and the private files it depends on.
-type launch struct {
-	host    *toolHost
-	extra   []string
-	catalog string
-}
-
-func commandArgs(o Options, nativeID string, resuming bool, l *launch) []string {
-	if o.Engine == Codex {
-		args := []string{"app-server", "--listen", "stdio://"}
-		if l != nil {
-			args = append(args, l.extra...)
-		}
-		return args
-	}
-	args := []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--permission-mode", o.Policy.ClaudePermission}
-	if l != nil {
-		args = append(args, l.extra...)
-	}
-	if resuming {
-		args = append(args, "--resume", nativeID)
-	} else {
-		args = append(args, "--session-id", nativeID)
-	}
-	if o.Model != "" {
-		args = append(args, "--model", o.Model)
-	}
-	if o.Effort != "" {
-		args = append(args, "--effort", o.Effort)
-	}
-	if o.Policy.ClaudeTools != nil {
-		args = append(args, "--tools="+strings.Join(o.Policy.ClaudeTools, ","))
-	}
-	if o.Instructions.Mode != "" {
-		flag := "--system-prompt"
-		if o.Instructions.Mode == Append {
-			flag = "--append-system-prompt"
-		}
-		args = append(args, flag, o.Instructions.Text)
-	}
-	return args
-}
-
 // environment is the session's own environment plus the caller's additions,
 // which come last so they take effect.
 func environment(o Options) []string {
