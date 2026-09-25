@@ -105,29 +105,6 @@ func reclaimBeforeOpen(ctx context.Context, o Options) (*os.File, error) {
 	return lease, nil
 }
 
-// reclaimUnderLease takes the assignment lease and then reclaims dir, returning
-// the lease still held when nothing from an earlier launch remains.
-//
-// The lease comes first. Reclaim ends a harness it can identify, and without
-// the lease that could be a harness another live session is driving right now;
-// with it, any harness found belongs to a process that no longer holds the
-// assignment. A lease another session holds is returned as ErrLeaseHeld.
-func reclaimUnderLease(ctx context.Context, dir string) (*os.File, Reclamation, error) {
-	lease, err := holdLease(leasePath(dir))
-	if err != nil {
-		return nil, Reclamation{}, err
-	}
-	out, err := Reclaim(ctx, dir)
-	if err == nil && !out.Confirmed {
-		err = ErrUnreclaimed
-	}
-	if err != nil {
-		_ = lease.Close()
-		return nil, out, err
-	}
-	return lease, out, nil
-}
-
 // claudeConversationStored reports whether the installed Claude CLI would find
 // the conversation to resume. Checked against Claude Code 2.1.282's bundled
 // code and a run with a disposable home: transcripts are kept at

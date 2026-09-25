@@ -4,7 +4,7 @@ package session
 // errors.Is and the typed failures it inspects with errors.As. Codes are fixed
 // library constants; no provider text, path or credential ever enters one.
 // Failures that belong to one subsystem's protocol stay with it: the tool
-// channel's in tools.go, and crash recovery's beside Reclaim.
+// channel's in tools.go, and crash recovery's in reclaim.go.
 
 import (
 	"errors"
