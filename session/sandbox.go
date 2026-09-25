@@ -43,6 +43,18 @@ type Sandbox struct {
 	// names no domain, because a domain rule would also open the shell's
 	// network, and Codex searches through its provider.
 	Web bool
+	// Tools adds the caller's tools beside the session's own, served through
+	// the same bridge and tool channel a restricted session uses, with the same
+	// lease, launch record and reclamation. Its Dir must lie outside WorkDir.
+	// The bridge runs outside the OS sandbox, as the CLI's MCP servers do, so a
+	// hosted tool reaches whatever its handler does; the sandbox confines only
+	// the session's own tools.
+	//
+	// Every other MCP server stays off: Claude Code loads only this one, with
+	// claude.ai connectors disabled and any other server's tools refused by
+	// dontAsk, and its startup report must list this server's tools and no
+	// other server's. Codex's private runtime home declares no other server.
+	Tools *ToolHost
 }
 
 // sandboxProfile is the Codex permission profile a sandboxed session runs
@@ -93,6 +105,13 @@ func sandboxReadDirs(dirs []string) ([]string, error) {
 func normalizeSandbox(o Options) (Options, error) {
 	frozen := *o.Sandbox
 	frozen.Read = append([]string(nil), o.Sandbox.Read...)
+	if o.Sandbox.Tools != nil {
+		// Copied for the same reason a restriction is: normalizing must not edit
+		// the caller's value, and a launch must not see another's edits.
+		tools := *o.Sandbox.Tools
+		tools.Tools = freezeTools(tools.Tools)
+		frozen.Tools = &tools
+	}
 	o.Sandbox = &frozen
 	if o.Restriction != nil {
 		return o, errors.New("a session is either restricted or sandboxed; set only one of Restriction and Sandbox")
@@ -111,6 +130,9 @@ func normalizeSandbox(o Options) (Options, error) {
 		return o, err
 	}
 	o.Sandbox.Read = read
+	if err = validateSandboxTools(o); err != nil {
+		return o, err
+	}
 	if o.Engine == Codex {
 		if o.Policy.CodexSandbox != "" {
 			return o, errors.New("a sandboxed Codex session owns its sandbox; leave Policy.CodexSandbox unset")
@@ -144,6 +166,30 @@ func normalizeSandbox(o Options) (Options, error) {
 		}
 	}
 	return o, nil
+}
+
+// validateSandboxTools refuses a tool host the session could not run as asked.
+func validateSandboxTools(o Options) error {
+	tools := o.Sandbox.Tools
+	if tools == nil {
+		return nil
+	}
+	if err := tools.validate(); err != nil {
+		return err
+	}
+	if o.Engine == Claude && reservedClaudeServer(tools.Server) {
+		return &CapabilityError{Engine: string(o.Engine), Code: CapabilityServerNameReserved, Phase: BeforeLaunch, Tools: []string{tools.Server}}
+	}
+	// The channel's credential and lock live in Dir. Inside the workspace a
+	// writing session's own tools could replace them.
+	dir := tools.Dir
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
+	if rel, err := filepath.Rel(o.WorkDir, dir); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return errors.New("a sandboxed session's tool host directory must lie outside its working directory")
+	}
+	return nil
 }
 
 var sandboxDisabledFeatures = []string{"apps", "plugins", "remote_plugin", "hooks", "browser_use", "browser_use_external", "computer_use", "multi_agent", "multi_agent_v2", "skill_mcp_dependency_install", "workspace_dependencies", "tool_suggest", "memories"}
@@ -180,11 +226,7 @@ func codexSandboxArgs(s Sandbox) []string {
 	for _, feature := range sandboxDisabledFeatures {
 		settings = append(settings, "features."+feature+"=false")
 	}
-	args := make([]string, 0, len(settings)*2)
-	for _, setting := range settings {
-		args = append(args, "-c", setting)
-	}
-	return args
+	return codexOverrides(settings)
 }
 
 // claudeSandboxSettings is the settings document a sandboxed Claude session
@@ -221,6 +263,9 @@ func claudeSandboxSettings(o Options) string {
 		// dontAsk refuses a tool with no allow rule, so these are required.
 		allow = append(allow, claudeWebTools...)
 	}
+	if o.Sandbox.Tools != nil {
+		allow = append(allow, o.Sandbox.Tools.Qualified()...)
+	}
 	permissions := map[string]any{
 		"defaultMode":                         "dontAsk",
 		"deny":                                deny,
@@ -239,7 +284,13 @@ func claudeSandboxSettings(o Options) string {
 	if len(filesystem) > 0 {
 		sandbox["filesystem"] = filesystem
 	}
-	raw, _ := json.Marshal(map[string]any{"sandbox": sandbox, "disableAllHooks": true, "permissions": permissions, "claudeMdExcludes": claudeInstructionExcludes(o)})
+	document := map[string]any{"sandbox": sandbox, "disableAllHooks": true, "permissions": permissions, "claudeMdExcludes": claudeInstructionExcludes(o)}
+	if o.Sandbox.Tools != nil {
+		// With hosted tools, MCP is no longer denied wholesale, so the
+		// connectors a subscription login would fetch are switched off too.
+		document["disableClaudeAiConnectors"] = true
+	}
+	raw, _ := json.Marshal(document)
 	return string(raw)
 }
 
@@ -274,25 +325,62 @@ func claudeSandboxArgs(o Options) []string {
 	if !o.Sandbox.Web {
 		disallowed = append(disallowed, claudeWebTools...)
 	}
-	disallowed = append(disallowed, "mcp__*")
-	return []string{"--setting-sources=", "--strict-mcp-config", "--disable-slash-commands", "--disallowedTools", strings.Join(disallowed, ","), "--settings", claudeSandboxSettings(o)}
+	// A deny outranks every allow in Claude Code, so denying MCP wholesale
+	// would deny the hosted tools too. With them, --strict-mcp-config loads
+	// only their server and dontAsk refuses any tool without an allow rule.
+	if o.Sandbox.Tools == nil {
+		disallowed = append(disallowed, "mcp__*")
+	}
+	args := []string{"--setting-sources=", "--strict-mcp-config", "--disable-slash-commands"}
+	if len(disallowed) > 0 {
+		args = append(args, "--disallowedTools", strings.Join(disallowed, ","))
+	}
+	return append(args, "--settings", claudeSandboxSettings(o))
+}
+
+// sandboxArgs are the arguments that describe a sandboxed session's sandbox,
+// and are what its check proves.
+func sandboxArgs(o Options) []string {
+	if o.Engine == Codex {
+		return codexSandboxArgs(*o.Sandbox)
+	}
+	return claudeSandboxArgs(o)
 }
 
 // prepareSandbox assembles a sandboxed launch and proves its sandbox against
-// the installed harness before a credentialed process exists.
-func prepareSandbox(ctx context.Context, o Options) (*launch, error) {
-	l := &launch{}
+// the installed harness before a credentialed process exists. A session that
+// hosts tools opens its tool channel only once the sandbox is proved, under
+// lease, which the launch owns from here.
+func prepareSandbox(ctx context.Context, o Options, lease *os.File) (*launch, error) {
+	refuse := func(err error) (*launch, error) { _ = lease.Close(); return nil, err }
+	l := &launch{extra: sandboxArgs(o)}
 	if o.Engine == Codex {
 		if _, err := prepareRuntimeHome(o.Home, o.RuntimeHome); err != nil {
-			return nil, err
+			return refuse(err)
 		}
-		l.extra = codexSandboxArgs(*o.Sandbox)
-	} else {
-		l.extra = claudeSandboxArgs(o)
 	}
 	if err := verifySandbox(ctx, o, l); err != nil {
+		return refuse(err)
+	}
+	if o.Sandbox.Tools == nil {
+		_ = lease.Close()
+		return l, nil
+	}
+	host, err := newToolHost(*o.Sandbox.Tools, lease)
+	if err != nil {
 		return nil, err
 	}
+	l.host = host
+	if o.Engine == Claude {
+		l.extra = append(l.extra, claudeMCPConfig(host), claudeHostedAllowed(host))
+		return l, nil
+	}
+	server, err := codexHostedServer(host)
+	if err != nil {
+		host.close()
+		return nil, err
+	}
+	l.extra = append(l.extra, codexOverrides(server)...)
 	return l, nil
 }
 
@@ -307,13 +395,12 @@ func VerifySandbox(ctx context.Context, o Options) error {
 	if err != nil {
 		return err
 	}
-	l := &launch{extra: codexSandboxArgs(*o.Sandbox)}
-	if o.Engine == Claude {
-		l.extra = claudeSandboxArgs(o)
-	} else if login, err := credentialDigest(filepath.Join(o.Home, codexCredentialFile)); err != nil || login == nil {
-		// Start would refuse to share a missing login; say so here too rather
-		// than report a session ready that cannot open.
-		return &CapabilityError{Engine: string(Codex), Code: CapabilityLoginUnavailable, Phase: BeforeLaunch}
+	if o.Engine == Codex {
+		if login, err := credentialDigest(filepath.Join(o.Home, codexCredentialFile)); err != nil || login == nil {
+			// Start would refuse to share a missing login; say so here too rather
+			// than report a session ready that cannot open.
+			return &CapabilityError{Engine: string(Codex), Code: CapabilityLoginUnavailable, Phase: BeforeLaunch}
+		}
 	}
-	return verifySandbox(ctx, o, l)
+	return verifySandbox(ctx, o, &launch{extra: sandboxArgs(o)})
 }

@@ -27,7 +27,7 @@ import (
 // the tool host to take; either way the launch owns it from here.
 func prepareLaunch(ctx context.Context, o Options, lease *os.File) (*launch, error) {
 	if o.Sandbox != nil {
-		return prepareSandbox(ctx, o)
+		return prepareSandbox(ctx, o, lease)
 	}
 	if o.Restriction == nil {
 		return nil, nil

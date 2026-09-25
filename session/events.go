@@ -7,6 +7,7 @@ package session
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -105,11 +106,15 @@ func mustMarshal(v any) []byte { b, _ := json.Marshal(v); return b }
 // that did not load leaves a session with no tools at all — observed for real
 // with a name the harness reserves, where the server was accepted, silently
 // dropped, and the session reported success with nothing to work with.
+//
+// A sandboxed session keeps its own tools, so only its MCP surface is judged:
+// the hosted tools must be there, and no other server's may be.
 func (s *Session) observeClaudeInit(m map[string]json.RawMessage) bool {
 	if str(m, "type") != "system" || str(m, "subtype") != "init" {
 		return false
 	}
-	if s.options.Restriction == nil {
+	host := hostedTools(s.options)
+	if host == nil {
 		return false
 	}
 	var frame struct {
@@ -120,10 +125,10 @@ func (s *Session) observeClaudeInit(m map[string]json.RawMessage) bool {
 		} `json:"mcp_servers"`
 	}
 	if json.Unmarshal(mustMarshal(m), &frame) != nil {
-		s.recordRestriction(&CapabilityError{Engine: string(Claude), Code: CapabilityProbeUnreadable, Phase: BeforeFirstPrompt})
+		s.recordSurface(&CapabilityError{Engine: string(Claude), Code: CapabilityProbeUnreadable, Phase: BeforeFirstPrompt})
 		return true
 	}
-	server := s.options.Restriction.Tools.Server
+	server := host.Server
 	loaded := false
 	for _, advertised := range frame.Servers {
 		if advertised.Name == server && advertised.Status == "connected" {
@@ -131,7 +136,7 @@ func (s *Session) observeClaudeInit(m map[string]json.RawMessage) bool {
 		}
 	}
 	if !loaded {
-		s.recordRestriction(&CapabilityError{Engine: string(Claude), Code: CapabilityServerNotLoaded, Phase: BeforeFirstPrompt, Tools: []string{server}})
+		s.recordSurface(&CapabilityError{Engine: string(Claude), Code: CapabilityServerNotLoaded, Phase: BeforeFirstPrompt, Tools: []string{server}})
 		return true
 	}
 	// Judged as identity, not as text: an advertised tool that did not arrive
@@ -139,20 +144,31 @@ func (s *Session) observeClaudeInit(m map[string]json.RawMessage) bool {
 	// name, and accepting it would be the whole point of the check undone.
 	surface := requestSurface{}
 	for _, name := range frame.Tools {
+		if s.options.Sandbox != nil && !strings.HasPrefix(name, "mcp__") {
+			continue
+		}
 		surface.tools = append(surface.tools, identify(name, server))
 	}
-	failure := judgeSurfaces(string(Claude), toolNames(s.options.Restriction.Tools.Tools), []requestSurface{surface}, false)
+	failure := judgeSurfaces(string(Claude), toolNames(host.Tools), []requestSurface{surface}, false)
 	if failure != nil {
 		failure.Phase = BeforeFirstPrompt
 	}
-	s.recordRestriction(failure)
+	s.recordSurface(failure)
 	return true
 }
 
-// recordRestriction stores the outcome of the startup cross-check. A mismatch
-// ends the session: a harness with tools the caller did not authorize is a
-// disclosure path, and the right response is to stop, not to note it.
-func (s *Session) recordRestriction(failure *CapabilityError) {
+// recordSurface stores the outcome of the startup cross-check. A mismatch ends
+// the session: a harness with tools the caller did not authorize is a
+// disclosure path, and the right response is to stop, not to note it. Only a
+// restricted session reports the outcome as a capability, because only its
+// whole surface was judged.
+func (s *Session) recordSurface(failure *CapabilityError) {
+	if s.options.Restriction == nil {
+		if failure != nil {
+			s.fail(failure)
+		}
+		return
+	}
 	if failure != nil {
 		s.mu.Lock()
 		s.caps.RestrictTools = Capability{Unsupported, "installed harness advertised a different tool surface"}

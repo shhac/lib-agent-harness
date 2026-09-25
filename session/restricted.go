@@ -133,12 +133,6 @@ func reservedClaudeServer(name string) bool {
 // Checked against the installed CLI: with both, its initialization reports
 // `tools: ["mcp__<server>__<tool>"]` and no built-ins.
 func claudeRestrictedArgs(h *toolHost) []string {
-	config, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{
-		h.cfg.Server: map[string]any{
-			"type": "stdio", "command": h.cfg.Bridge.Path,
-			"args": bridgeArgs(h), "env": h.environment(),
-		},
-	}})
 	return []string{
 		// --restricted independently removes the built-in tools that run commands
 		// or code, ignores user, project and local settings files, confines file
@@ -149,11 +143,30 @@ func claudeRestrictedArgs(h *toolHost) []string {
 		// subscription login for an API key; neither is usable for a worker.
 		"--restricted",
 		"--setting-sources=", `--settings={"disableAllHooks":true}`,
-		"--strict-mcp-config", "--mcp-config=" + string(config),
+		"--strict-mcp-config", claudeMCPConfig(h),
 		"--disable-slash-commands", "--no-chrome",
 		"--tools=",
-		"--allowedTools=" + strings.Join(h.cfg.Qualified(), ","),
+		claudeHostedAllowed(h),
 	}
+}
+
+// claudeMCPConfig registers the tool channel's bridge as the session's one
+// MCP server. Restricted and sandboxed sessions both load it this way, beside
+// --strict-mcp-config.
+func claudeMCPConfig(h *toolHost) string {
+	config, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{
+		h.cfg.Server: map[string]any{
+			"type": "stdio", "command": h.cfg.Bridge.Path,
+			"args": bridgeArgs(h), "env": h.environment(),
+		},
+	}})
+	return "--mcp-config=" + string(config)
+}
+
+// claudeHostedAllowed grants permission to exactly the hosted identifiers,
+// which is how an MCP tool becomes usable without a prompt.
+func claudeHostedAllowed(h *toolHost) string {
+	return "--allowedTools=" + strings.Join(h.cfg.Qualified(), ",")
 }
 
 func bridgeArgs(h *toolHost) []string {
@@ -182,22 +195,35 @@ func codexRestrictedArgs(h *toolHost, catalogPath string) ([]string, error) {
 		return nil, err
 	}
 	settings := append([]string{"model_catalog_json=" + catalog}, restrict.CodexSettings()...)
+	server, err := codexHostedServer(h)
+	if err != nil {
+		return nil, err
+	}
+	return codexOverrides(append(settings, server...)), nil
+}
+
+// codexHostedServer registers the tool channel's bridge as an MCP server.
+// Restricted and sandboxed sessions both load it this way.
+func codexHostedServer(h *toolHost) ([]string, error) {
 	server, err := restrict.CodexMCPServer(h.cfg.Server, h.cfg.Bridge.Path, bridgeArgs(h), h.environment())
 	if err != nil {
 		return nil, err
 	}
-	settings = append(settings, server...)
 	// Without this the installed CLI refuses every hosted call with "MCP tool
 	// call requires approval, but approval policy is never" — the tools are
 	// advertised and unusable. It approves this one server, which the daemon owns
 	// and whose tools it implements; no host approval policy is widened, and
 	// approval_policy stays "never" for everything else.
-	settings = append(settings, "mcp_servers."+h.cfg.Server+`.default_tools_approval_mode="approve"`)
+	return append(server, "mcp_servers."+h.cfg.Server+`.default_tools_approval_mode="approve"`), nil
+}
+
+// codexOverrides passes each TOML setting as its own -c override.
+func codexOverrides(settings []string) []string {
 	args := make([]string, 0, len(settings)*2)
 	for _, setting := range settings {
 		args = append(args, "-c", setting)
 	}
-	return args, nil
+	return args
 }
 
 // restrictedCatalogFor narrows an installed catalog to the selected model with

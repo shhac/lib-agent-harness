@@ -195,11 +195,31 @@ func reference(o Options, id string) Ref {
 			Write       bool
 			Read        []string `json:",omitempty"`
 			Web         bool     `json:",omitempty"`
+			ToolServer  string   `json:",omitempty"`
 			RuntimeHome string
-		}{legacy, true, o.Sandbox.Write, o.Sandbox.Read, o.Sandbox.Web, o.RuntimeHome})
+		}{legacy, true, o.Sandbox.Write, o.Sandbox.Read, o.Sandbox.Web, sandboxToolServer(o.Sandbox), o.RuntimeHome})
 	}
 	hash := sha256.Sum256(payload)
 	return Ref{Engine: o.Engine, ID: id, Home: o.Home, WorkDir: o.WorkDir, AccountIdentity: o.AccountIdentity, ConfigHash: hex.EncodeToString(hash[:])}
+}
+
+// hostedTools is the tool channel a session serves, restricted or sandboxed,
+// or nil for a session that hosts no tools.
+func hostedTools(o Options) *ToolHost {
+	switch {
+	case o.Restriction != nil:
+		return &o.Restriction.Tools
+	case o.Sandbox != nil:
+		return o.Sandbox.Tools
+	}
+	return nil
+}
+
+func sandboxToolServer(s *Sandbox) string {
+	if s.Tools == nil {
+		return ""
+	}
+	return s.Tools.Server
 }
 
 // freezeTools takes a deep copy, schemas included. A caller keeps its own

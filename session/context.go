@@ -82,7 +82,7 @@ func (s *Session) markContext(reason ContextReason) {
 	s.reportMarker(err)
 }
 
-// restoreContext reads back a reason a resumed restricted session left due.
+// restoreContext reads back a reason a resumed tool-hosting session left due.
 func (s *Session) restoreContext() {
 	path := contextMarkerPath(s.options)
 	if path == "" {
@@ -101,7 +101,7 @@ func (s *Session) restoreContext() {
 	}
 }
 
-// persistContextLocked mirrors the pending reason to a restricted session's
+// persistContextLocked mirrors the pending reason to a tool-hosting session's
 // directory. Call it with s.mu held.
 func (s *Session) persistContextLocked() error {
 	path := contextMarkerPath(s.options)
@@ -127,11 +127,13 @@ func (s *Session) reportMarker(err error) {
 	s.options.OnDiagnostic(Diagnostic{Engine: string(s.options.Engine), Stage: "context_marker", Code: "context_marker_unwritten", At: time.Now().UTC()})
 }
 
-// contextMarkerPath is where a restricted session keeps its pending reason,
-// beside its launch record. An ordinary session has no private directory.
+// contextMarkerPath is where a session hosting tools keeps its pending reason,
+// beside its launch record. A session that hosts no tools has no private
+// directory.
 func contextMarkerPath(o Options) string {
-	if o.Restriction == nil {
+	host := hostedTools(o)
+	if host == nil {
 		return ""
 	}
-	return pendingContextPath(o.Restriction.Tools.Dir)
+	return pendingContextPath(host.Dir)
 }

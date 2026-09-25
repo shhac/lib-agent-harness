@@ -29,7 +29,7 @@ const (
 // new one, saying which in Opened. It is the call for a caller that keeps one
 // conversation across restarts and rebuilds it when it is lost.
 //
-// A restricted session's private directory is reclaimed first, under its
+// A tool-hosting session's private directory is reclaimed first, under its
 // assignment lease: a harness left running by a previous process is ended when
 // it can be identified, and anything that cannot be confirmed gone is returned
 // as ErrUnreclaimed — Open never starts another harness over an unconfirmed
@@ -82,16 +82,17 @@ func openFresh(ctx context.Context, o Options, reason string, lease *os.File) (*
 }
 
 // reclaimBeforeOpen establishes that nothing from an earlier launch is still
-// running in a restricted session's directory, and returns the assignment
+// running in a tool-hosting session's directory, and returns the assignment
 // lease still held so the launch that follows happens under it: a harness
 // launched by another process between the reclaim and this launch would
 // otherwise have its record overwritten and never be reclaimed. An ordinary
 // session has no lease, and gets nil.
 func reclaimBeforeOpen(ctx context.Context, o Options) (*os.File, error) {
-	if o.Restriction == nil {
+	host := hostedTools(o)
+	if host == nil {
 		return nil, nil
 	}
-	dir := o.Restriction.Tools.Dir
+	dir := host.Dir
 	lease, _, err := reclaimUnderLease(ctx, dir)
 	if err != nil {
 		return nil, err
