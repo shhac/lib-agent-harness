@@ -6,7 +6,6 @@ package session
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"sync"
 	"time"
 )
@@ -59,39 +58,6 @@ func CapabilitiesFor(e Engine) Capabilities {
 	}
 	return Capabilities{Compact: compact, Start: u, Resume: u, Interrupt: u, Steer: u, ReplaceInstructions: u, AppendInstructions: u, Account: u, Quota: u, Context: u}
 }
-
-var (
-	ErrUnsupported = errors.New("harness operation unsupported")
-	ErrClosed      = errors.New("harness session closed")
-	ErrBusy        = errors.New("harness turn already active")
-	ErrStaleTurn   = errors.New("harness turn does not match expected active turn")
-	// ErrToolsUnsettled reports an attempt to start work while a tool call from
-	// the previous turn is still outstanding. Cancelling a call asks its handler
-	// to stop; until the handler returns, what it did is unknown, and authorizing
-	// another turn on top of it would be building on a workspace still in motion.
-	ErrToolsUnsettled     = errors.New("harness tool calls from the previous turn have not settled")
-	ErrIncompatibleResume = errors.New("harness resume configuration does not match reference")
-	ErrBackpressure       = errors.New("harness event buffer exhausted; consume Events while the turn runs")
-	ErrProtocol           = errors.New("invalid harness protocol response")
-	// ErrRejected is a definitive server refusal. No retry is automatic, but
-	// the session remains usable. Provider error text is intentionally omitted.
-	ErrRejected    = errors.New("harness rejected operation")
-	ErrOutputLimit = errors.New("harness output exceeded its bounded frame or text limit")
-	ErrTransport   = errors.New("harness transport failed")
-	ErrTurnFailed  = errors.New("harness turn failed")
-	// ErrLeaseHeld reports that another process already holds this session's
-	// assignment lease. Two processes driving one assignment would spend the
-	// same account twice; the second one stops instead.
-	ErrLeaseHeld = errors.New("another process holds this session's assignment lease")
-)
-
-type UnsupportedError struct {
-	Operation  string
-	Capability Capability
-}
-
-func (e *UnsupportedError) Error() string { return e.Operation + ": " + e.Capability.Reason }
-func (e *UnsupportedError) Unwrap() error { return ErrUnsupported }
 
 type InstructionMode string
 

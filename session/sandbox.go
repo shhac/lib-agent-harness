@@ -51,16 +51,6 @@ const sandboxProfile = "harness_sandbox"
 
 const sandboxProbeTimeout = 60 * time.Second
 
-// Sandbox capability failures.
-const (
-	// CapabilitySandboxUnavailable: the installed harness could not be put
-	// under the requested sandbox, or the check could not be completed.
-	CapabilitySandboxUnavailable = "sandbox_unavailable"
-	// CapabilitySandboxNotEnforced: the sandbox the harness reported, or a
-	// canary run under it, allowed something the session must not do.
-	CapabilitySandboxNotEnforced = "sandbox_not_enforced"
-)
-
 func sandboxClaudeTools(write bool) []string {
 	if write {
 		return []string{"Bash", "Read", "Edit", "Write", "Glob", "Grep"}

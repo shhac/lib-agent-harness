@@ -13,7 +13,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 )
 
 // serve reads the bridge's authentication line, then the protocol stream. A
@@ -205,17 +204,4 @@ func quoteName(name string) string {
 	}
 	out.WriteByte('"')
 	return out.String()
-}
-
-// bound truncates on a rune boundary and says so. Silent truncation would let a
-// tool result look complete when it is not.
-func bound(text string, limit int) string {
-	if len(text) <= limit {
-		return text
-	}
-	end := limit
-	for end > 0 && !utf8.ValidString(text[:end]) {
-		end--
-	}
-	return text[:end] + "\n[truncated: " + strconv.Itoa(len(text)-end) + " further bytes omitted]"
 }

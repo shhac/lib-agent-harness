@@ -25,10 +25,6 @@ const (
 	FreshUnavailable  = "unavailable"  // the conversation is gone or cannot be reopened
 )
 
-// errConversationGone marks a resume that failed because the harness no longer
-// has the conversation, as opposed to one that failed for any other reason.
-var errConversationGone = errors.New("harness conversation is unavailable to resume")
-
 // Open resumes the reference's conversation when it can and otherwise starts a
 // new one, saying which in Opened. It is the call for a caller that keeps one
 // conversation across restarts and rebuilds it when it is lost.
