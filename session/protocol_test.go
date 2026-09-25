@@ -306,3 +306,43 @@ func TestVerificationCacheIsKeyedToTheExactBinaryAndArguments(t *testing.T) {
 		t.Error("a missing binary produced a verification key")
 	}
 }
+
+// A binary left at its default is a bare name the launch finds on PATH, and the
+// verification key has to identify that same file rather than whatever the
+// working directory holds under the name.
+func TestVerificationKeyIdentifiesABareBinaryFromPath(t *testing.T) {
+	o, err := normalize(restrictedOptions(t, Claude))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	binary := filepath.Join(bin, "harness")
+	if err = os.WriteFile(binary, []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	host, err := newToolHost(o.Restriction.Tools, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer host.close()
+	l := &launch{host: host, extra: claudeRestrictedArgs(host)}
+	o.Binary = binary
+	want, err := verificationKey(o, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	work := t.TempDir()
+	if err = os.WriteFile(filepath.Join(work, "harness"), []byte("#!/bin/sh\nexit 2\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(work)
+	t.Setenv("PATH", bin)
+	o.Binary = "harness"
+	got, err := verificationKey(o, l)
+	if err != nil {
+		t.Fatalf("a binary on PATH could not be identified: %v", err)
+	}
+	if got != want {
+		t.Fatal("a bare binary name was identified as something other than the file on PATH")
+	}
+}

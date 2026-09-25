@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -322,16 +321,7 @@ func verifySandbox(ctx context.Context, o Options, l *launch) error {
 // sandboxKey identifies exactly what a sandbox check established: this binary
 // as it is on disk now, with these sandbox arguments.
 func sandboxKey(o Options, l *launch) (string, error) {
-	// The binary is identified as it resolves on disk now, so an upgrade in
-	// place, or a different executable earlier on PATH, is checked again.
-	binary, err := exec.LookPath(o.Binary)
-	if err == nil {
-		binary, err = filepath.EvalSymlinks(binary)
-	}
-	if err != nil {
-		return "", &CapabilityError{Engine: string(o.Engine), Code: CapabilitySandboxUnavailable, Phase: BeforeLaunch}
-	}
-	info, err := os.Stat(binary)
+	binary, info, err := binaryIdentity(o)
 	if err != nil {
 		return "", &CapabilityError{Engine: string(o.Engine), Code: CapabilitySandboxUnavailable, Phase: BeforeLaunch}
 	}

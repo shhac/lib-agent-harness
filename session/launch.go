@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -93,7 +95,7 @@ func prepareLaunch(ctx context.Context, o Options, lease *os.File) (*launch, err
 // and are not part of what the probe judged. The tool identifiers are included,
 // because they are.
 func verificationKey(o Options, l *launch) (string, error) {
-	info, err := os.Stat(o.Binary)
+	binary, info, err := binaryIdentity(o)
 	if err != nil {
 		return "", &CapabilityError{Engine: string(o.Engine), Code: CapabilityProbeFailed, Phase: BeforeLaunch}
 	}
@@ -112,9 +114,28 @@ func verificationKey(o Options, l *launch) (string, error) {
 		Args, Tools           []string
 		Instructions          Instructions
 		Policy                Policy
-	}{o.Engine, o.Binary, o.Model, o.Effort, info.Size(), info.ModTime(), stable, o.Restriction.Tools.Qualified(), o.Instructions, o.Policy})
+	}{o.Engine, binary, o.Model, o.Effort, info.Size(), info.ModTime(), stable, o.Restriction.Tools.Qualified(), o.Instructions, o.Policy})
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+// binaryIdentity is the file the launch will run, as it resolves on disk now:
+// a bare name is found on PATH, as the launch finds it, and a link is followed
+// to its target, so an upgrade in place or a different executable earlier on
+// PATH is a different binary.
+func binaryIdentity(o Options) (string, fs.FileInfo, error) {
+	binary, err := exec.LookPath(o.Binary)
+	if err == nil {
+		binary, err = filepath.EvalSymlinks(binary)
+	}
+	if err != nil {
+		return "", nil, err
+	}
+	info, err := os.Stat(binary)
+	if err != nil {
+		return "", nil, err
+	}
+	return binary, info, nil
 }
 
 // verified remembers capability checks for this process only. Nothing is
