@@ -39,14 +39,27 @@ func shortPrivateDir() (string, error) {
 	return dir, nil
 }
 
+// writePrivate replaces path with an owner-only file holding data. The data is
+// written beside it and renamed into place, so a reader — or a later run after
+// a crash — sees the old content or the new, never a truncated file, and a link
+// planted at path is replaced rather than written through.
 func writePrivate(path string, data []byte) error {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-")
 	if err != nil {
-		return errors.New("tool host could not write its private channel credential")
+		return errors.New("could not write a private file")
 	}
-	if _, err = f.Write(data); err != nil {
-		_ = f.Close()
-		return errors.New("tool host could not write its private channel credential")
+	if _, err = f.Write(data); err == nil {
+		err = f.Sync()
 	}
-	return f.Close()
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Rename(f.Name(), path)
+	}
+	if err != nil {
+		_ = os.Remove(f.Name())
+		return errors.New("could not write a private file")
+	}
+	return nil
 }

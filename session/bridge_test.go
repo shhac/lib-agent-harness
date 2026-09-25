@@ -390,3 +390,39 @@ func TestUnreadableLaunchRecordIsUnreclaimed(t *testing.T) {
 		t.Fatalf("an unreadable launch record was confirmed absent: %+v", out)
 	}
 }
+
+// A launch record is replaced whole, never rewritten in place: a crash midway
+// through the rewrite that names the running harness must leave the earlier
+// record, not an empty one, and a link planted at the record's path is
+// replaced rather than written through.
+func TestLaunchRecordIsReplacedWhole(t *testing.T) {
+	dir := privateDir(t)
+	elsewhere := filepath.Join(privateDir(t), "elsewhere")
+	if err := os.WriteFile(elsewhere, []byte("untouched"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, launchPath(dir)); err != nil {
+		t.Fatal(err)
+	}
+	if err := recordLaunch(dir, launchRecord{Engine: "claude", PID: 999999, Group: 999999, Launch: dir}); err != nil {
+		t.Fatal(err)
+	}
+	if raw, err := os.ReadFile(elsewhere); err != nil || string(raw) != "untouched" {
+		t.Fatalf("the launch record was written through a link: %q %v", raw, err)
+	}
+	info, err := os.Lstat(launchPath(dir))
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 {
+		t.Fatalf("the launch record is not an owner-only file: %v %v", info, err)
+	}
+	record, err := readLaunchRecord(dir)
+	if err != nil || record == nil || record.Group != 999999 {
+		t.Fatalf("the launch record did not round-trip: %+v %v", record, err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("replacing the launch record left other files behind: %v", entries)
+	}
+}
