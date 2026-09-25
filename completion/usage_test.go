@@ -211,3 +211,103 @@ func TestProcessFailureKeepsReportedConsumption(t *testing.T) {
 		t.Fatal("a failed process returned an action proposal")
 	}
 }
+
+// Shapes as Claude 2.1.x stream-json emits them: the assistant message names
+// the serving model, and the result's modelUsage keys each model it used.
+func claudeAssistant(model string) string {
+	return `{"type":"assistant","message":{"id":"msg_1","type":"message","role":"assistant","model":` + fmt.Sprintf("%q", model) + `,"content":[{"type":"text","text":"working"}],"usage":{"input_tokens":3,"output_tokens":1}},"session_id":"s"}`
+}
+
+func claudeModelUsage(entries map[string]string) string {
+	parts := []string{}
+	for model, window := range entries {
+		entry := `{"inputTokens":10,"outputTokens":4,"cacheReadInputTokens":0,"cacheCreationInputTokens":0,"webSearchRequests":0,"costUSD":0.01,"maxOutputTokens":32000`
+		if window != "" {
+			entry += `,"contextWindow":` + window
+		}
+		parts = append(parts, fmt.Sprintf("%q:", model)+entry+"}")
+	}
+	return `{` + strings.Join(parts, ",") + `}`
+}
+
+func claudeResultWithModels(subtype string, isError bool, usage, modelUsage string) string {
+	line := claudeResult(subtype, isError, usage)
+	return strings.TrimSuffix(line, "}") + `,"modelUsage":` + modelUsage + `}`
+}
+
+func TestClaudeContextWindowIsTheServingModelsStatedWindow(t *testing.T) {
+	usage := `{"input_tokens":10,"output_tokens":4}`
+	both := claudeModelUsage(map[string]string{"claude-haiku-4-5": "200000", "claude-opus-4-7": "1000000"})
+	for _, tc := range []struct {
+		name  string
+		data  string
+		want  int
+		known bool
+	}{
+		{"named entry among several", claudeAssistant("claude-opus-4-7") + "\n" + claudeResultWithModels("success", false, usage, both), 1000000, true},
+		{"latest assistant model wins", claudeAssistant("claude-opus-4-7") + "\n" + claudeAssistant("claude-haiku-4-5") + "\n" + claudeResultWithModels("success", false, usage, both), 200000, true},
+		{"sole entry under a different key", claudeAssistant("opus") + "\n" + claudeResultWithModels("success", false, usage, claudeModelUsage(map[string]string{"claude-opus-4-7": "200000"})), 200000, true},
+		{"sole entry after a synthetic message", claudeAssistant("<synthetic>") + "\n" + claudeResultWithModels("error_during_execution", true, usage, claudeModelUsage(map[string]string{"claude-opus-4-7": "200000"})), 200000, true},
+		{"sole entry without assistant messages", claudeResultWithModels("success", false, usage, claudeModelUsage(map[string]string{"claude-opus-4-7": "200000"})), 200000, true},
+		{"failed result with usage", claudeAssistant("claude-opus-4-7") + "\n" + claudeResultWithModels("error_during_execution", true, usage, both), 1000000, true},
+		{"window without complete accounting", claudeResultWithModels("success", false, "", claudeModelUsage(map[string]string{"claude-opus-4-7": "200000"})), 200000, false},
+
+		{"several entries without a match", claudeAssistant("opus") + "\n" + claudeResultWithModels("success", false, usage, both), 0, true},
+		{"modelUsage absent", claudeAssistant("claude-opus-4-7") + "\n" + claudeResult("success", false, usage), 0, true},
+		{"modelUsage empty", claudeResultWithModels("success", false, usage, `{}`), 0, true},
+		{"entry without a window", claudeResultWithModels("success", false, usage, claudeModelUsage(map[string]string{"claude-opus-4-7": ""})), 0, true},
+		{"zero window", claudeResultWithModels("success", false, usage, claudeModelUsage(map[string]string{"claude-opus-4-7": "0"})), 0, true},
+		{"negative window", claudeResultWithModels("success", false, usage, claudeModelUsage(map[string]string{"claude-opus-4-7": "-1"})), 0, true},
+		{"unreadable window", claudeResultWithModels("success", false, usage, `{"claude-opus-4-7":{"contextWindow":"large"}}`), 0, true},
+		{"duplicate terminal reports", claudeResultWithModels("success", false, usage, both) + "\n" + claudeResultWithModels("success", false, usage, both), 0, false},
+		{"window only in a streamed message", `{"type":"assistant","message":{"model":"claude-opus-4-7"},"modelUsage":` + both + `}`, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := terminalUsage("claude", []byte(tc.data))
+			if got.ContextWindow != tc.want || got.Known != tc.known {
+				t.Fatalf("got %+v want window %d known %v", got, tc.want, tc.known)
+			}
+		})
+	}
+}
+
+// Codex exec's JSON stream states no window; nothing in it may be read as one,
+// and its differently shaped fields must not disturb its accounting.
+func TestCodexContextWindowIsUnknown(t *testing.T) {
+	stream := `{"type":"thread.started","thread_id":"t"}` + "\n" +
+		`{"type":"error","message":"reconnecting"}` + "\n" +
+		`{"type":"item.completed","item":{"type":"agent_message","text":"{\"content\":\"done\",\"tool_calls\":[]}"}}` + "\n" +
+		`{"type":"turn.completed","usage":{"input_tokens":30,"cached_input_tokens":20,"output_tokens":5,"reasoning_output_tokens":2},"modelUsage":{"gpt-5":{"contextWindow":272000}}}`
+	got := terminalUsage("codex", []byte(stream))
+	if !got.Known || got.TotalTokens != 35 || got.ContextWindow != 0 {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestClaudeContextWindowSurvivesSuccessParseAndProcessFailure(t *testing.T) {
+	stream := claudeAssistant("claude-opus-4-7") + "\n" + claudeResultWithModels("success", false, `{"input_tokens":10,"output_tokens":4}`, claudeModelUsage(map[string]string{"claude-opus-4-7": "200000"}))
+	_, used, err := parseClaude([]byte(stream), nil)
+	if err != nil || used.ContextWindow != 200000 || !used.Known {
+		t.Fatalf("success parse: %+v %v", used, err)
+	}
+	_, used, err = parseClaude([]byte(strings.Replace(stream, `"subtype":"success","is_error":false`, `"subtype":"error_during_execution","is_error":true`, 1)), nil)
+	if err == nil || used.ContextWindow != 200000 {
+		t.Fatalf("failed parse: %+v %v", used, err)
+	}
+
+	root := t.TempDir()
+	failed := claudeAssistant("claude-opus-4-7") + "\n" + claudeResultWithModels("error_during_execution", true, `{"input_tokens":40,"output_tokens":8}`, claudeModelUsage(map[string]string{"claude-opus-4-7": "1000000"}))
+	cfg := Config{Engine: "claude", ClaudeHome: filepath.Join(root, "login"), ClaudeBin: "test-claude", Model: "opus", WorkDirRoot: root, MaxContextBytes: 100000, Timeout: time.Second}
+	cfg.run = func(_ context.Context, _ string, args []string, _ string, env []string, _ string) ([]byte, error) {
+		for _, entry := range env {
+			if strings.HasPrefix(entry, "ANTHROPIC_BASE_URL=") {
+				return nil, answerClaudeProbe(args, strings.TrimPrefix(entry, "ANTHROPIC_BASE_URL="))
+			}
+		}
+		return []byte(failed), errors.New("exit status 1")
+	}
+	_, used, err = Complete(context.Background(), cfg, []Message{{Role: "user", Content: "Go"}}, nil)
+	if err == nil || !used.Known || used.ContextWindow != 1000000 {
+		t.Fatalf("process failure dropped the window: %+v %v", used, err)
+	}
+}

@@ -18,6 +18,7 @@ import (
 func terminalUsage(engine string, data []byte) Usage {
 	var out Usage
 	terminals := 0
+	servingModel := ""
 	for _, line := range bytes.Split(data, []byte("\n")) {
 		if len(bytes.TrimSpace(line)) == 0 {
 			continue
@@ -30,11 +31,20 @@ func terminalUsage(engine string, data []byte) Usage {
 				CacheRead  *int `json:"cache_read_input_tokens"`
 				CacheWrite *int `json:"cache_creation_input_tokens"`
 			} `json:"usage"`
+			// Raw because Codex uses these names for unrelated shapes (an error
+			// event's message is a string); only Claude's are decoded.
+			Message    json.RawMessage `json:"message"`
+			ModelUsage json.RawMessage `json:"modelUsage"`
 		}
 		// A line we cannot read may be the terminal report, or may hide a second
 		// one. Either way the stream is no longer authoritative about any of it.
 		if json.Unmarshal(line, &event) != nil {
 			return Usage{}
+		}
+		if engine == "claude" && event.Type == "assistant" {
+			if model := claudeMessageModel(event.Message); model != "" {
+				servingModel = model
+			}
 		}
 		if !terminalEvent(engine, event.Type) {
 			continue
@@ -45,6 +55,9 @@ func terminalUsage(engine string, data []byte) Usage {
 		terminals++
 		if terminals > 1 {
 			return Usage{}
+		}
+		if engine == "claude" {
+			out.ContextWindow = claudeContextWindow(event.ModelUsage, servingModel)
 		}
 		if event.Usage == nil {
 			continue
@@ -57,9 +70,44 @@ func terminalUsage(engine string, data []byte) Usage {
 		if !ok {
 			return Usage{}
 		}
+		usage.ContextWindow = out.ContextWindow
 		out = usage
 	}
 	return out
+}
+
+func claudeMessageModel(raw json.RawMessage) string {
+	var message struct {
+		Model string `json:"model"`
+	}
+	if json.Unmarshal(raw, &message) != nil {
+		return ""
+	}
+	return message.Model
+}
+
+// claudeContextWindow reads the window modelUsage states for the model that
+// served the request: the one the latest assistant message names, as the
+// session package does. The requested name can be an alias the provider keyed
+// differently, so a sole entry is that model when no named entry matches;
+// several entries without a match leave the window unknown rather than chosen.
+func claudeContextWindow(raw json.RawMessage, servingModel string) int {
+	var models map[string]struct {
+		ContextWindow *int `json:"contextWindow"`
+	}
+	if json.Unmarshal(raw, &models) != nil {
+		return 0
+	}
+	entry, ok := models[servingModel]
+	if !ok && len(models) == 1 {
+		for _, sole := range models {
+			entry, ok = sole, true
+		}
+	}
+	if !ok || entry.ContextWindow == nil || *entry.ContextWindow <= 0 {
+		return 0
+	}
+	return *entry.ContextWindow
 }
 
 func terminalEvent(engine, eventType string) bool {

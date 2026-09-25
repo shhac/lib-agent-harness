@@ -43,6 +43,12 @@ one terminal report, or whose report is absent, incomplete, negative or too
 large to sum is unknown; a report of explicit zeros is a measurement and stays
 known. Input counts cached input as the provider reports it.
 
+`ContextWindow` is the provider's stated window, in tokens, for the model that
+served the request, read from the same terminal report; zero is unknown, never
+a guess. Claude states it in the result's `modelUsage`, keyed by the model the
+latest assistant message names (a sole entry is used when that name does not
+match). Codex exec's JSON stream states no window, so Codex leaves it zero.
+
 A failed invocation therefore still reports what the provider said it consumed,
 returned alongside the original typed error and never with an action proposal.
 

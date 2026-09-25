@@ -47,6 +47,15 @@ type Usage struct {
 	OutputTokens int  `json:"output_tokens"`
 	TotalTokens  int  `json:"total_tokens"`
 	Known        bool `json:"known"`
+	// ContextWindow is the provider's stated context window, in tokens, for the
+	// model that served the request, taken from the same terminal report as the
+	// token counts (and so also present on a failed request that reported one).
+	// Zero means unknown, never a guess. It is independent of Known: a report
+	// can state the window without complete accounting, and the reverse.
+	//
+	// Claude states it in its result event's modelUsage. Codex exec reports no
+	// window in its JSON event stream, so Codex requests always leave it zero.
+	ContextWindow int `json:"context_window,omitempty"`
 }
 type Tool struct {
 	Type     string   `json:"type"`
