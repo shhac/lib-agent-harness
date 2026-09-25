@@ -23,34 +23,56 @@ func restrictedOptions(t *testing.T, engine Engine) Options {
 	}
 }
 
-// The reference has to survive a restart. The listener path and the channel
-// credential are new every launch; if they contributed, every stored session
-// reference would be unresumable after the owning process restarted.
-func TestReferenceIgnoresEphemeralChannelMaterialButNotTheToolSurface(t *testing.T) {
+// The reference has to survive a restart and a release. The listener path and
+// the channel credential are new every launch, and the tool surface is re-proved
+// on every launch; if either contributed, stored conversations would stop
+// resuming after the owning process restarted or its tools were edited. What
+// the conversation actually lives in — the tool server's name and the runtime
+// home — still has to match.
+func TestReferenceIgnoresChannelMaterialAndToolSurfaceButNotServerOrHome(t *testing.T) {
 	first := restrictedOptions(t, Claude)
 	first, err := normalize(first)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second := first
-	second.Restriction = &Restriction{Tools: first.Restriction.Tools}
-	second.Restriction.Tools.Dir = privateDir(t)
-	second.Restriction.Tools.Bridge.Args = []string{"tool-bridge"}
-	if reference(first, "s1") != reference(second, "s1") {
-		t.Fatal("a new private channel directory invalidated the session reference")
+	with := func(edit func(*Options)) Options {
+		changed := first
+		changed.Restriction = &Restriction{Tools: first.Restriction.Tools}
+		changed.Restriction.Tools.Tools = freezeTools(first.Restriction.Tools.Tools)
+		edit(&changed)
+		return changed
 	}
-	changed := first
-	changed.Restriction = &Restriction{Tools: first.Restriction.Tools}
-	changed.Restriction.Tools.Tools = append(append([]ToolDefinition(nil), first.Restriction.Tools.Tools...), ToolDefinition{Name: "run_command", Schema: map[string]any{"type": "object"}})
-	if reference(first, "s1") == reference(changed, "s1") {
-		t.Fatal("adding a tool did not change the session reference")
+	for name, edit := range map[string]func(*Options){
+		"a new private channel directory": func(o *Options) {
+			o.Restriction.Tools.Dir = privateDir(t)
+			o.Restriction.Tools.Bridge.Args = []string{"tool-bridge"}
+		},
+		"an added tool": func(o *Options) {
+			o.Restriction.Tools.Tools = append(o.Restriction.Tools.Tools, ToolDefinition{Name: "run_command", Schema: map[string]any{"type": "object"}})
+		},
+		"a removed tool": func(o *Options) { o.Restriction.Tools.Tools = o.Restriction.Tools.Tools[:1] },
+		"an edited description": func(o *Options) {
+			o.Restriction.Tools.Tools[0].Description = "read a file, now with more detail"
+		},
+		"an edited schema": func(o *Options) {
+			o.Restriction.Tools.Tools[0].Schema = map[string]any{"type": "object", "required": []any{"path"}}
+		},
+		"reordered tools": func(o *Options) {
+			tools := o.Restriction.Tools.Tools
+			o.Restriction.Tools.Tools = []ToolDefinition{tools[1], tools[0]}
+		},
+	} {
+		if reference(first, "s1") != reference(with(edit), "s1") {
+			t.Errorf("%s invalidated the session reference", name)
+		}
 	}
-	// Order is a caller detail, not a contract change.
-	reordered := first
-	reordered.Restriction = &Restriction{Tools: first.Restriction.Tools}
-	reordered.Restriction.Tools.Tools = []ToolDefinition{first.Restriction.Tools.Tools[1], first.Restriction.Tools.Tools[0]}
-	if reference(first, "s1") != reference(reordered, "s1") {
-		t.Fatal("tool ordering changed the session reference")
+	for name, edit := range map[string]func(*Options){
+		"another tool server":  func(o *Options) { o.Restriction.Tools.Server = "other_workspace" },
+		"another runtime home": func(o *Options) { o.RuntimeHome = t.TempDir() },
+	} {
+		if reference(first, "s1") == reference(with(edit), "s1") {
+			t.Errorf("%s kept the session reference", name)
+		}
 	}
 	// An unrestricted session's reference must be unchanged by this work.
 	plain := Options{Engine: Claude, Binary: "claude", WorkDir: first.WorkDir, Home: first.Home}

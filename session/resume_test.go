@@ -145,3 +145,42 @@ func TestResumingAMissingRestrictedConversationFails(t *testing.T) {
 		})
 	}
 }
+
+// A release that edits its tools still resumes its stored conversations, and
+// the resumed harness is restricted to the new surface, not the stored one.
+func TestRestrictedResumeSurvivesAChangedToolSurface(t *testing.T) {
+	for _, engine := range []Engine{Claude, Codex} {
+		t.Run(string(engine), func(t *testing.T) {
+			o, log := persistentOptions(t, engine)
+			ctx := probeContext(t)
+			s, err := Start(ctx, o)
+			if err != nil {
+				t.Fatal(err)
+			}
+			runTurn(t, ctx, s, "hello")
+			ref := s.Ref()
+			release(t, ctx, s)
+
+			tools := freezeTools(o.Restriction.Tools.Tools)
+			tools[0].Description = "read a file, described differently"
+			tools = append(tools, ToolDefinition{Name: "list_files", Schema: map[string]any{"type": "object"}})
+			o.Restriction = &Restriction{Tools: o.Restriction.Tools}
+			o.Restriction.Tools.Tools = tools
+			resumed, err := Resume(ctx, o, ref)
+			if err != nil {
+				t.Fatalf("a changed tool surface orphaned the conversation: %v", err)
+			}
+			defer release(t, ctx, resumed)
+			launches := logged(t, log, "args:")
+			if engine == Claude {
+				if !strings.Contains(launches[len(launches)-1], "mcp__agent_workspace__list_files") {
+					t.Fatalf("the resumed harness was not given the new surface: %s", launches[len(launches)-1])
+				}
+				if got := resumed.Capabilities().RestrictTools.Availability; got != Native {
+					t.Errorf("the new surface was not cross-checked: %q", got)
+				}
+			}
+			runTurn(t, ctx, resumed, "again")
+		})
+	}
+}

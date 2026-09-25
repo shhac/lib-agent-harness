@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 )
@@ -164,12 +163,21 @@ func normalize(o Options) (Options, error) {
 // to keep resuming, and adding fields "that are empty anyway" would still have
 // changed every one of those digests — an empty field is still a field.
 //
-// A restricted session hashes the same things plus its tool surface: the server
-// name and every tool's name and schema. It deliberately excludes the channel's
-// endpoint. The listener path and the per-launch credential change every time
-// the owning process restarts, so including them would invalidate every stored
-// reference on each restart while proving nothing about what the session can
-// do. The credential never reaches a reference in any form.
+// A restricted session hashes the same things plus that it is restricted, its
+// tool server's name and its runtime home. It deliberately excludes the tools
+// themselves — their names, descriptions and schemas. The restriction is not
+// something a reference vouches for: every launch, Start or Resume, re-proves
+// it against the installed CLI before the caller's login is used, and Claude's
+// startup frame is cross-checked against the tools configured for that launch.
+// So a release that edits a tool's description or adds a tool resumes the
+// stored conversation under the new surface, rather than orphaning it; a
+// transcript that mentions an older tool is harmless.
+//
+// It also excludes the channel's endpoint. The listener path and the per-launch
+// credential change every time the owning process restarts, so including them
+// would invalidate every stored reference on each restart while proving
+// nothing about what the session can do. The credential never reaches a
+// reference in any form.
 func reference(o Options, id string) Ref {
 	// Include nil versus empty tool lists: they have different permission meaning.
 	legacy := struct {
@@ -188,8 +196,7 @@ func reference(o Options, id string) Ref {
 			Restricted  bool
 			ToolServer  string
 			RuntimeHome string
-			HostedTools []ToolDefinition
-		}{legacy, true, o.Restriction.Tools.Server, o.RuntimeHome, hostedTools(o)})
+		}{legacy, true, o.Restriction.Tools.Server, o.RuntimeHome})
 	}
 	if o.Sandbox != nil {
 		// A resume must not open a different sandbox than the one the session
@@ -204,15 +211,6 @@ func reference(o Options, id string) Ref {
 	}
 	hash := sha256.Sum256(payload)
 	return Ref{Engine: o.Engine, ID: id, Home: o.Home, WorkDir: o.WorkDir, AccountIdentity: o.AccountIdentity, ConfigHash: hex.EncodeToString(hash[:])}
-}
-
-func hostedTools(o Options) []ToolDefinition {
-	if o.Restriction == nil {
-		return nil
-	}
-	tools := freezeTools(o.Restriction.Tools.Tools)
-	sort.Slice(tools, func(i, j int) bool { return tools[i].Name < tools[j].Name })
-	return tools
 }
 
 // freezeTools takes a deep copy, schemas included. A caller keeps its own
