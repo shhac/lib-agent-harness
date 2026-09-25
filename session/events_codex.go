@@ -36,7 +36,9 @@ func (s *Session) codexEvent(t *Turn, ref Ref, m map[string]json.RawMessage) {
 	case "thread/tokenUsage/updated":
 		s.codexTokenUsage(t, p)
 	case "thread/compacted":
+		// Deprecated in favour of the contextCompaction item, and still sent.
 		s.invalidateContext(t, "context compacted; awaiting a fresh observation")
+		s.markContext(ContextCompacted)
 	case "turn/completed":
 		s.codexTurnCompleted(t, p)
 	}
@@ -53,6 +55,7 @@ func (s *Session) codexItem(t *Turn, completed bool, p map[string]json.RawMessag
 		kind := "compaction_started"
 		if completed {
 			kind = "compaction_completed"
+			s.markContext(ContextCompacted)
 		}
 		s.emit(t, Event{Kind: kind, ItemID: str(item, "id")})
 		return

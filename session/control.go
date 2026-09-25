@@ -40,6 +40,11 @@ func (s *Session) startTurnScoped(lifetime, request context.Context, in Input) (
 	if in.Text == "" {
 		return nil, errors.New("turn input is empty")
 	}
+	delivery, err := s.callerContext(request)
+	if err != nil {
+		return nil, err
+	}
+	in.Text = delivery.wrap(in.Text)
 	s.mu.Lock()
 	if err := s.claimIdleLocked(); err != nil {
 		s.mu.Unlock()
@@ -64,7 +69,6 @@ func (s *Session) startTurnScoped(lifetime, request context.Context, in Input) (
 	t.result.Context = cloneContext(s.telemetry.Context)
 	ref := s.ref
 	s.mu.Unlock()
-	var err error
 	if s.options.Engine == Codex {
 		err = s.startCodexTurn(request, t, ref, in)
 	} else {
@@ -78,6 +82,7 @@ func (s *Session) startTurnScoped(lifetime, request context.Context, in Input) (
 		}
 		return nil, err
 	}
+	s.contextDelivered(delivery)
 	s.watchTurn(lifetime, t)
 	return t, nil
 }

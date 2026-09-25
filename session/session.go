@@ -33,6 +33,11 @@ type Session struct {
 	// identity. A restricted session waits for it before its first inference.
 	identified chan error
 	done       chan struct{}
+	// contextPending is the reason the caller's context is next due, if any.
+	// contextGeneration moves on every mark, so a turn clears only the mark it
+	// actually carried and never one a compaction set while it was starting.
+	contextPending    ContextReason
+	contextGeneration uint64
 }
 
 // Start opens a persistent native CLI. ctx owns its lifetime; cancelling it
@@ -124,6 +129,11 @@ func open(ctx context.Context, o Options, r *Ref) (*Session, error) {
 		s.fail(err)
 		s.settleFailedLaunch(l)
 		return nil, s.resumeFailure(r != nil, err)
+	}
+	if r == nil {
+		s.markContext(ContextStarted)
+	} else {
+		s.restoreContext()
 	}
 	return s, nil
 }

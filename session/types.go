@@ -148,6 +148,27 @@ type Options struct {
 	// ordinary settings such as a build cache inside the workspace; keys the
 	// harness manages or strips are refused. It is not part of a Ref.
 	Env []string
+	// Context, when set, is asked for the caller's current context at the
+	// start of a turn whose conversation is new or was compacted since the last
+	// turn. Its text is delivered ahead of the turn's input, once per pending
+	// reason. The harness never replays anything itself.
+	//
+	// The turn's text becomes, exactly:
+	//
+	//	<caller-context reason="started">
+	//	…the returned text…
+	//	</caller-context>
+	//
+	//	…the turn's input…
+	//
+	// with reason "started" or "compacted". Empty text sends the input
+	// unchanged. The returned text is inserted verbatim. An error fails
+	// StartTurn and keeps the reason pending; the reason is cleared only once a
+	// turn carrying it has been accepted by the harness. A compaction reported
+	// while a turn runs is delivered with the next one. A restricted session
+	// keeps the pending reason in its tool directory, so it survives a restart
+	// and is read back on Resume; an ordinary session keeps it in memory.
+	Context func(ctx context.Context, reason ContextReason) (string, error)
 	// OnDiagnostic receives bounded, sanitized detail about a failure, once, for
 	// the caller's own private records. It is deliberately not part of any error
 	// value: like provider text, captured harness output does not belong in a
@@ -159,6 +180,14 @@ type Options struct {
 	// EventBuffer defaults to 256; MaxTextBytes defaults to 1 MiB per turn.
 	EventBuffer, MaxTextBytes int
 }
+
+// ContextReason says why a session asks its caller for current context.
+type ContextReason string
+
+const (
+	ContextStarted   ContextReason = "started"   // the conversation is new
+	ContextCompacted ContextReason = "compacted" // its history was compacted since the last turn
+)
 
 // Diagnostic carries what a failure looked like locally. Detail is a bounded,
 // control-stripped tail of the harness's own standard error with credential-

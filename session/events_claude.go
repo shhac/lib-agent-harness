@@ -32,6 +32,7 @@ func (s *Session) claudeEvent(t *Turn, ref Ref, m map[string]json.RawMessage) {
 			// compactions needs to be told one happened; invalidating the occupancy
 			// alone leaves it looking like the number simply moved.
 			s.invalidateContext(t, "context compacted; awaiting a fresh observation")
+			s.markContext(ContextCompacted)
 			s.emit(t, Event{Kind: "compaction_completed", ItemID: str(m, "uuid"), Status: claudeCompactionTrigger(m)})
 		}
 	case "stream_event":
@@ -225,6 +226,15 @@ func validClaudeUsage(raw json.RawMessage) bool {
 // own enumerated value. An unrecognized trigger is reported as unknown rather
 // than passed through: this is a status, not a place for provider text.
 func claudeCompactionTrigger(m map[string]json.RawMessage) string {
+	// Checked against Claude Code 2.1.282: the SDK frame nests it, as
+	// compact_metadata.trigger. The flat spellings are kept for older builds.
+	var metadata map[string]json.RawMessage
+	if json.Unmarshal(m["compact_metadata"], &metadata) == nil {
+		switch trigger := str(metadata, "trigger"); trigger {
+		case "auto", "manual":
+			return trigger
+		}
+	}
 	switch trigger := str(m, "compact_metadata_trigger"); trigger {
 	case "auto", "manual":
 		return trigger
