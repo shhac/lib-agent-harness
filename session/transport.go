@@ -271,64 +271,17 @@ func (w *streamWire) read() {
 	}
 }
 func (w *streamWire) reply(m map[string]json.RawMessage) bool {
-	id := ""
-	r := response{}
-	malformed := func() bool { w.fail(ErrProtocol); return true }
+	parse := parseCodexReply
 	if w.engine == Claude {
-		if str(m, "type") != "control_response" {
-			return false
-		}
-		var data map[string]json.RawMessage
-		if json.Unmarshal(m["response"], &data) != nil || data == nil {
-			return malformed()
-		}
-		id = str(data, "request_id")
-		if id == "" {
-			return malformed()
-		}
-		switch str(data, "subtype") {
-		case "success":
-			r.body = data["response"]
-			if len(r.body) > 0 && string(r.body) != "null" {
-				var payload map[string]json.RawMessage
-				if json.Unmarshal(r.body, &payload) != nil {
-					return malformed()
-				}
-			}
-		case "error":
-			var message string
-			if json.Unmarshal(data["error"], &message) != nil {
-				return malformed()
-			}
-			r.err = ErrRejected
-			if strings.HasPrefix(message, "Unsupported control request subtype:") {
-				r.err = ErrUnsupported
-			}
-		default:
-			return malformed()
-		}
-	} else {
-		if len(m["method"]) != 0 || len(m["id"]) == 0 {
-			return false
-		}
-		id = str(m, "id")
-		if id == "" {
-			return malformed()
-		}
-		r.body = m["result"]
-		if len(m["error"]) != 0 && string(m["error"]) != "null" {
-			var e struct{ Code *int }
-			if json.Unmarshal(m["error"], &e) != nil || e.Code == nil || len(m["result"]) != 0 {
-				return malformed()
-			}
-			if *e.Code == -32601 {
-				r.err = ErrUnsupported
-			} else {
-				r.err = ErrRejected
-			}
-		} else if len(r.body) == 0 {
-			return malformed()
-		}
+		parse = parseClaudeReply
+	}
+	id, r, isReply, err := parse(m)
+	if !isReply {
+		return false
+	}
+	if err != nil {
+		w.fail(err)
+		return true
 	}
 	w.mu.Lock()
 	ch := w.pending[id]
@@ -340,6 +293,72 @@ func (w *streamWire) reply(m map[string]json.RawMessage) bool {
 		}
 	}
 	return true
+}
+
+// parseClaudeReply reads a control_response into the request it answers and
+// its outcome. isReply is false for any other frame, and a reply that cannot be
+// read is ErrProtocol.
+func parseClaudeReply(m map[string]json.RawMessage) (id string, r response, isReply bool, err error) {
+	if str(m, "type") != "control_response" {
+		return "", response{}, false, nil
+	}
+	var data map[string]json.RawMessage
+	if json.Unmarshal(m["response"], &data) != nil || data == nil {
+		return "", response{}, true, ErrProtocol
+	}
+	id = str(data, "request_id")
+	if id == "" {
+		return "", response{}, true, ErrProtocol
+	}
+	switch str(data, "subtype") {
+	case "success":
+		body := data["response"]
+		if len(body) > 0 && string(body) != "null" {
+			var payload map[string]json.RawMessage
+			if json.Unmarshal(body, &payload) != nil {
+				return "", response{}, true, ErrProtocol
+			}
+		}
+		return id, response{body: body}, true, nil
+	case "error":
+		var message string
+		if json.Unmarshal(data["error"], &message) != nil {
+			return "", response{}, true, ErrProtocol
+		}
+		if strings.HasPrefix(message, "Unsupported control request subtype:") {
+			return id, response{err: ErrUnsupported}, true, nil
+		}
+		return id, response{err: ErrRejected}, true, nil
+	default:
+		return "", response{}, true, ErrProtocol
+	}
+}
+
+// parseCodexReply reads a JSON-RPC response into the request it answers and its
+// outcome. isReply is false for a notification or a server request, and a reply
+// that cannot be read is ErrProtocol.
+func parseCodexReply(m map[string]json.RawMessage) (id string, r response, isReply bool, err error) {
+	if len(m["method"]) != 0 || len(m["id"]) == 0 {
+		return "", response{}, false, nil
+	}
+	id = str(m, "id")
+	if id == "" {
+		return "", response{}, true, ErrProtocol
+	}
+	if len(m["error"]) == 0 || string(m["error"]) == "null" {
+		if len(m["result"]) == 0 {
+			return "", response{}, true, ErrProtocol
+		}
+		return id, response{body: m["result"]}, true, nil
+	}
+	var e struct{ Code *int }
+	if json.Unmarshal(m["error"], &e) != nil || e.Code == nil || len(m["result"]) != 0 {
+		return "", response{}, true, ErrProtocol
+	}
+	if *e.Code == -32601 {
+		return id, response{err: ErrUnsupported}, true, nil
+	}
+	return id, response{err: ErrRejected}, true, nil
 }
 
 // All unexpected server-originated operations fail closed. We never grant a

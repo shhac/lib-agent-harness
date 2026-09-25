@@ -238,3 +238,66 @@ func TestProtocolRejectionIsNotMalformed(t *testing.T) {
 		})
 	}
 }
+
+// Every reply shape each engine can send, read without a live wire: whether a
+// frame is a reply at all, which request it answers, and its outcome.
+func TestReplyParsersReadEveryShape(t *testing.T) {
+	type want struct {
+		id      string
+		body    string
+		err     error
+		isReply bool
+		invalid bool
+	}
+	for _, tc := range []struct {
+		name  string
+		parse func(map[string]json.RawMessage) (string, response, bool, error)
+		frame string
+		want  want
+	}{
+		{"claude other frame", parseClaudeReply, `{"type":"stream_event"}`, want{}},
+		{"claude success", parseClaudeReply, `{"type":"control_response","response":{"subtype":"success","request_id":"7","response":{"ok":true}}}`, want{id: "7", body: `{"ok":true}`, isReply: true}},
+		{"claude success without body", parseClaudeReply, `{"type":"control_response","response":{"subtype":"success","request_id":"7"}}`, want{id: "7", isReply: true}},
+		{"claude success with null body", parseClaudeReply, `{"type":"control_response","response":{"subtype":"success","request_id":"7","response":null}}`, want{id: "7", body: "null", isReply: true}},
+		{"claude success with non-object body", parseClaudeReply, `{"type":"control_response","response":{"subtype":"success","request_id":"7","response":[1]}}`, want{isReply: true, invalid: true}},
+		{"claude rejected", parseClaudeReply, `{"type":"control_response","response":{"subtype":"error","request_id":"7","error":"no"}}`, want{id: "7", err: ErrRejected, isReply: true}},
+		{"claude unsupported", parseClaudeReply, `{"type":"control_response","response":{"subtype":"error","request_id":"7","error":"Unsupported control request subtype: x"}}`, want{id: "7", err: ErrUnsupported, isReply: true}},
+		{"claude error without text", parseClaudeReply, `{"type":"control_response","response":{"subtype":"error","request_id":"7","error":{}}}`, want{isReply: true, invalid: true}},
+		{"claude unknown subtype", parseClaudeReply, `{"type":"control_response","response":{"subtype":"maybe","request_id":"7"}}`, want{isReply: true, invalid: true}},
+		{"claude no request id", parseClaudeReply, `{"type":"control_response","response":{"subtype":"success"}}`, want{isReply: true, invalid: true}},
+		{"claude no response", parseClaudeReply, `{"type":"control_response"}`, want{isReply: true, invalid: true}},
+		{"codex notification", parseCodexReply, `{"method":"turn/started","params":{}}`, want{}},
+		{"codex server request", parseCodexReply, `{"id":"3","method":"item/tool/call","params":{}}`, want{}},
+		{"codex result", parseCodexReply, `{"id":"3","result":{"thread":{}}}`, want{id: "3", body: `{"thread":{}}`, isReply: true}},
+		{"codex null error", parseCodexReply, `{"id":"3","error":null,"result":{}}`, want{id: "3", body: `{}`, isReply: true}},
+		{"codex no result", parseCodexReply, `{"id":"3"}`, want{isReply: true, invalid: true}},
+		{"codex rejected", parseCodexReply, `{"id":"3","error":{"code":-32600,"message":"bad"}}`, want{id: "3", err: ErrRejected, isReply: true}},
+		{"codex unsupported", parseCodexReply, `{"id":"3","error":{"code":-32601,"message":"no such method"}}`, want{id: "3", err: ErrUnsupported, isReply: true}},
+		{"codex error without code", parseCodexReply, `{"id":"3","error":{"message":"bad"}}`, want{isReply: true, invalid: true}},
+		{"codex error and result", parseCodexReply, `{"id":"3","error":{"code":1},"result":{}}`, want{isReply: true, invalid: true}},
+		{"codex numeric id", parseCodexReply, `{"id":3,"result":{}}`, want{isReply: true, invalid: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var m map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(tc.frame), &m); err != nil {
+				t.Fatal(err)
+			}
+			id, r, isReply, err := tc.parse(m)
+			if isReply != tc.want.isReply {
+				t.Fatalf("isReply = %v, want %v", isReply, tc.want.isReply)
+			}
+			if tc.want.invalid {
+				if !errors.Is(err, ErrProtocol) {
+					t.Fatalf("a malformed reply was accepted: %q %+v %v", id, r, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("a valid frame was refused: %v", err)
+			}
+			if id != tc.want.id || string(r.body) != tc.want.body || !errors.Is(r.err, tc.want.err) || (tc.want.err == nil && r.err != nil) {
+				t.Fatalf("got id %q body %s err %v, want %+v", id, r.body, r.err, tc.want)
+			}
+		})
+	}
+}
