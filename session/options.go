@@ -194,8 +194,9 @@ func reference(o Options, id string) Ref {
 			Sandboxed   bool
 			Write       bool
 			Read        []string `json:",omitempty"`
+			Web         bool     `json:",omitempty"`
 			RuntimeHome string
-		}{legacy, true, o.Sandbox.Write, o.Sandbox.Read, o.RuntimeHome})
+		}{legacy, true, o.Sandbox.Write, o.Sandbox.Read, o.Sandbox.Web, o.RuntimeHome})
 	}
 	hash := sha256.Sum256(payload)
 	return Ref{Engine: o.Engine, ID: id, Home: o.Home, WorkDir: o.WorkDir, AccountIdentity: o.AccountIdentity, ConfigHash: hex.EncodeToString(hash[:])}

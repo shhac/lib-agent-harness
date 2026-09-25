@@ -36,6 +36,13 @@ type Sandbox struct {
 	// no credentials. None may contain the home directory, which would reopen
 	// all of it.
 	Read []string
+	// Web lets the session search and fetch the web: Claude Code's WebSearch
+	// and WebFetch tools, and Codex's web search. It opens an outward channel
+	// for anything the session can read. The shell's network stays closed:
+	// Claude's WebFetch runs in the CLI process under a permission rule that
+	// names no domain, because a domain rule would also open the shell's
+	// network, and Codex searches through its provider.
+	Web bool
 }
 
 // sandboxProfile is the Codex permission profile a sandboxed session runs
@@ -44,11 +51,17 @@ type Sandbox struct {
 // with a policy that also writes temporary directories.
 const sandboxProfile = "harness_sandbox"
 
-func sandboxClaudeTools(write bool) []string {
+var claudeWebTools = []string{"WebFetch", "WebSearch"}
+
+func sandboxClaudeTools(write, web bool) []string {
+	tools := []string{"Bash", "Read", "Glob", "Grep"}
 	if write {
-		return []string{"Bash", "Read", "Edit", "Write", "Glob", "Grep"}
+		tools = []string{"Bash", "Read", "Edit", "Write", "Glob", "Grep"}
 	}
-	return []string{"Bash", "Read", "Glob", "Grep"}
+	if web {
+		tools = append(tools, claudeWebTools...)
+	}
+	return tools
 }
 
 // sandboxReadDirs resolves each extra readable directory to the path the
@@ -121,10 +134,10 @@ func normalizeSandbox(o Options) (Options, error) {
 	}
 	o.Policy.ClaudePermission = "dontAsk"
 	if o.Policy.ClaudeTools == nil {
-		o.Policy.ClaudeTools = sandboxClaudeTools(o.Sandbox.Write)
+		o.Policy.ClaudeTools = sandboxClaudeTools(o.Sandbox.Write, o.Sandbox.Web)
 		return o, nil
 	}
-	allowed := sandboxClaudeTools(true)
+	allowed := sandboxClaudeTools(true, o.Sandbox.Web)
 	for _, tool := range o.Policy.ClaudeTools {
 		if !slices.Contains(allowed, tool) || (!o.Sandbox.Write && (tool == "Edit" || tool == "Write")) {
 			return o, &UnsupportedError{"tools", Capability{Unsupported, "a sandboxed session cannot enable " + tool}}
@@ -137,10 +150,16 @@ var sandboxDisabledFeatures = []string{"apps", "plugins", "remote_plugin", "hook
 
 // codexSandboxArgs are the overrides a sandboxed Codex harness and its canary
 // both run with. They are the only place the profile is described.
-func codexSandboxArgs(write bool) []string {
+func codexSandboxArgs(s Sandbox) []string {
 	workspace := "read"
-	if write {
+	if s.Write {
 		workspace = "write"
+	}
+	// Codex searches through its provider, not from the shell, so a live
+	// search leaves the profile's network closed.
+	webSearch := `web_search="disabled"`
+	if s.Web {
+		webSearch = `web_search="live"`
 	}
 	settings := []string{
 		`default_permissions="` + sandboxProfile + `"`,
@@ -149,7 +168,7 @@ func codexSandboxArgs(write bool) []string {
 		`permissions.` + sandboxProfile + `.filesystem={":root"="read",":workspace_roots"={"."="` + workspace + `",".git"="read",".codex"="read",".agents"="read"}}`,
 		`permissions.` + sandboxProfile + `.network.enabled=false`,
 		`approval_policy="never"`,
-		`web_search="disabled"`,
+		webSearch,
 		`agents.enabled=false`,
 		`check_for_update_on_startup=false`,
 		`analytics.enabled=false`,
@@ -171,10 +190,9 @@ func codexSandboxArgs(write bool) []string {
 // claudeSandboxSettings is the settings document a sandboxed Claude session
 // and its status check both load, with every other settings source dropped.
 func claudeSandboxSettings(o Options) string {
-	permissions := map[string]any{
-		"defaultMode":                         "dontAsk",
-		"deny":                                []string{"WebFetch", "WebSearch"},
-		"blockReadsOutsideWorkingDirectories": true,
+	var allow, deny []string
+	if !o.Sandbox.Web {
+		deny = append(deny, claudeWebTools...)
 	}
 	filesystem := map[string]any{}
 	if o.Sandbox.Write {
@@ -182,21 +200,33 @@ func claudeSandboxSettings(o Options) string {
 		// stays read-only, as in the Codex profile: hooks or config written
 		// there would run wherever git next runs, outside this sandbox.
 		gitDir := "/" + filepath.Join(o.WorkDir, ".git") + "/**"
-		permissions["allow"] = []string{"Edit(/" + o.WorkDir + "/**)"}
-		permissions["deny"] = []string{"WebFetch", "WebSearch", "Edit(" + gitDir + ")", "Write(" + gitDir + ")"}
+		allow = append(allow, "Edit(/"+o.WorkDir+"/**)")
+		deny = append(deny, "Edit("+gitDir+")", "Write("+gitDir+")")
 		filesystem["denyWrite"] = []string{filepath.Join(o.WorkDir, ".git")}
 	} else {
-		permissions["deny"] = []string{"WebFetch", "WebSearch", "Edit", "Write"}
+		deny = append(deny, "Edit", "Write")
 		// Sandbox paths are plain absolute paths. The shell may otherwise write
 		// to its working directory by default.
 		filesystem["denyWrite"] = []string{o.WorkDir}
 	}
 	if len(o.Sandbox.Read) > 0 {
 		filesystem["allowRead"] = o.Sandbox.Read
-		allow, _ := permissions["allow"].([]string)
 		for _, dir := range o.Sandbox.Read {
 			allow = append(allow, "Read(/"+dir+"/**)")
 		}
+	}
+	if o.Sandbox.Web {
+		// Bare tool names, never WebFetch(domain:...): Claude Code adds every
+		// domain such a rule names to the shell's network allowlist too.
+		// dontAsk refuses a tool with no allow rule, so these are required.
+		allow = append(allow, claudeWebTools...)
+	}
+	permissions := map[string]any{
+		"defaultMode":                         "dontAsk",
+		"deny":                                deny,
+		"blockReadsOutsideWorkingDirectories": true,
+	}
+	if len(allow) > 0 {
 		permissions["allow"] = allow
 	}
 	sandbox := map[string]any{
@@ -240,7 +270,12 @@ func claudeInstructionExcludes(o Options) []string {
 }
 
 func claudeSandboxArgs(o Options) []string {
-	return []string{"--setting-sources=", "--strict-mcp-config", "--disable-slash-commands", "--disallowedTools", "WebFetch,WebSearch,mcp__*", "--settings", claudeSandboxSettings(o)}
+	var disallowed []string
+	if !o.Sandbox.Web {
+		disallowed = append(disallowed, claudeWebTools...)
+	}
+	disallowed = append(disallowed, "mcp__*")
+	return []string{"--setting-sources=", "--strict-mcp-config", "--disable-slash-commands", "--disallowedTools", strings.Join(disallowed, ","), "--settings", claudeSandboxSettings(o)}
 }
 
 // prepareSandbox assembles a sandboxed launch and proves its sandbox against
@@ -251,7 +286,7 @@ func prepareSandbox(ctx context.Context, o Options) (*launch, error) {
 		if _, err := prepareRuntimeHome(o.Home, o.RuntimeHome); err != nil {
 			return nil, err
 		}
-		l.extra = codexSandboxArgs(o.Sandbox.Write)
+		l.extra = codexSandboxArgs(*o.Sandbox)
 	} else {
 		l.extra = claudeSandboxArgs(o)
 	}
@@ -272,7 +307,7 @@ func VerifySandbox(ctx context.Context, o Options) error {
 	if err != nil {
 		return err
 	}
-	l := &launch{extra: codexSandboxArgs(o.Sandbox.Write)}
+	l := &launch{extra: codexSandboxArgs(*o.Sandbox)}
 	if o.Engine == Claude {
 		l.extra = claudeSandboxArgs(o)
 	} else if login, err := credentialDigest(filepath.Join(o.Home, codexCredentialFile)); err != nil || login == nil {

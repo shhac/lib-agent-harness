@@ -4,6 +4,8 @@ package session
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net"
@@ -538,7 +540,7 @@ func mustNormalize(t *testing.T, o Options) Options {
 // The sandbox switches off surfaces that reach past it, and nothing a
 // sandboxed session needs to do its work.
 func TestSandboxKeepsNativeToolsWorking(t *testing.T) {
-	args := strings.Join(codexSandboxArgs(true), " ")
+	args := strings.Join(codexSandboxArgs(Sandbox{Write: true}), " ")
 	for _, off := range []string{"features.apps=false", "features.plugins=false", "features.hooks=false", "features.browser_use=false", "features.computer_use=false", "web_search=\"disabled\""} {
 		if !strings.Contains(args, off) {
 			t.Errorf("outward surface left on: %s", off)
@@ -662,5 +664,113 @@ func TestSandboxReadPathsReopenOnlyWhatIsNamed(t *testing.T) {
 	}
 	if strings.Contains(claudeSandboxSettings(plain), "allowRead") {
 		t.Fatal("a session with no read paths reopened something")
+	}
+}
+
+// Web opens Claude's web tools and nothing else: the shell's network, the
+// filesystem rules and every other flag stay as they are without it.
+func TestSandboxedClaudeWeb(t *testing.T) {
+	type settingsDoc struct {
+		Sandbox     json.RawMessage
+		Permissions struct{ Allow, Deny []string }
+	}
+	read := func(args []string) settingsDoc {
+		var doc settingsDoc
+		if err := json.Unmarshal([]byte(args[slices.Index(args, "--settings")+1]), &doc); err != nil {
+			t.Fatal(err)
+		}
+		return doc
+	}
+	for _, write := range []bool{true, false} {
+		work := t.TempDir()
+		closed := mustNormalize(t, Options{Engine: Claude, WorkDir: work, Sandbox: &Sandbox{Write: write}})
+		open := mustNormalize(t, Options{Engine: Claude, WorkDir: work, Sandbox: &Sandbox{Write: write, Web: true}})
+		closedArgs := commandArgs(closed, "id", false, &launch{extra: claudeSandboxArgs(closed)})
+		openArgs := commandArgs(open, "id", false, &launch{extra: claudeSandboxArgs(open)})
+		want := "--tools=" + strings.Join(append(sandboxClaudeTools(write, false), "WebFetch", "WebSearch"), ",")
+		if !slices.Contains(openArgs, want) {
+			t.Fatalf("write=%v: web tools not enabled: %v", write, openArgs)
+		}
+		if openArgs[slices.Index(openArgs, "--disallowedTools")+1] != "mcp__*" || closedArgs[slices.Index(closedArgs, "--disallowedTools")+1] != "WebFetch,WebSearch,mcp__*" {
+			t.Fatalf("write=%v: disallowed tools wrong: %v / %v", write, openArgs, closedArgs)
+		}
+		closedDoc, openDoc := read(closedArgs), read(openArgs)
+		if string(closedDoc.Sandbox) != string(openDoc.Sandbox) {
+			t.Fatalf("write=%v: web changed the OS sandbox:\n%s\n%s", write, closedDoc.Sandbox, openDoc.Sandbox)
+		}
+		if slices.Contains(openDoc.Permissions.Deny, "WebFetch") || slices.Contains(openDoc.Permissions.Deny, "WebSearch") {
+			t.Fatalf("write=%v: web tools still denied: %v", write, openDoc.Permissions.Deny)
+		}
+		if !slices.Contains(openDoc.Permissions.Allow, "WebFetch") || !slices.Contains(openDoc.Permissions.Allow, "WebSearch") {
+			t.Fatalf("write=%v: dontAsk would refuse the web tools: %v", write, openDoc.Permissions.Allow)
+		}
+		if !slices.Equal(slices.DeleteFunc(slices.Clone(openDoc.Permissions.Allow), func(rule string) bool { return rule == "WebFetch" || rule == "WebSearch" }), closedDoc.Permissions.Allow) {
+			t.Fatalf("write=%v: web changed other allow rules: %v", write, openDoc.Permissions.Allow)
+		}
+		// A WebFetch(domain:...) rule would also open the shell's network.
+		if strings.Contains(openArgs[slices.Index(openArgs, "--settings")+1], "domain:") {
+			t.Fatalf("write=%v: a domain rule would reach the shell's allowlist", write)
+		}
+	}
+	if _, err := normalize(Options{Engine: Claude, WorkDir: t.TempDir(), Sandbox: &Sandbox{Web: true}, Policy: Policy{ClaudeTools: []string{"Bash", "WebSearch"}}}); err != nil {
+		t.Fatalf("a web sandbox refused a web tool: %v", err)
+	}
+}
+
+func TestSandboxedCodexWeb(t *testing.T) {
+	for _, write := range []bool{true, false} {
+		closed := codexSandboxArgs(Sandbox{Write: write})
+		open := codexSandboxArgs(Sandbox{Write: write, Web: true})
+		if !slices.Contains(open, `web_search="live"`) || slices.Contains(open, `web_search="disabled"`) || !slices.Contains(closed, `web_search="disabled"`) {
+			t.Fatalf("write=%v: web search not switched: %v", write, open)
+		}
+		if !slices.Contains(open, "permissions."+sandboxProfile+".network.enabled=false") {
+			t.Fatalf("write=%v: web opened the shell's network", write)
+		}
+		if !slices.Equal(slices.DeleteFunc(slices.Clone(open), func(a string) bool { return a == `web_search="live"` }), slices.DeleteFunc(slices.Clone(closed), func(a string) bool { return a == `web_search="disabled"` })) {
+			t.Fatalf("write=%v: web changed more than web search", write)
+		}
+	}
+}
+
+// A reference names whether the session could reach the web, and a sandbox
+// without it keeps the digest earlier releases wrote.
+func TestSandboxWebIsPartOfTheReference(t *testing.T) {
+	work, home := t.TempDir(), t.TempDir()
+	closed := mustNormalize(t, Options{Engine: Claude, WorkDir: work, Home: home, Sandbox: &Sandbox{Write: true}})
+	open := mustNormalize(t, Options{Engine: Claude, WorkDir: work, Home: home, Sandbox: &Sandbox{Write: true, Web: true}})
+	if reference(closed, "id").ConfigHash == reference(open, "id").ConfigHash {
+		t.Fatal("a resume could open the web without changing the reference")
+	}
+	legacy, _ := json.Marshal(struct {
+		Binary, Model, Effort string
+		Instructions          Instructions
+		Policy                Policy
+		ToolsSpecified        bool
+	}{closed.Binary, closed.Model, closed.Effort, closed.Instructions, closed.Policy, true})
+	earlier, _ := json.Marshal(struct {
+		Legacy      any
+		Sandboxed   bool
+		Write       bool
+		Read        []string `json:",omitempty"`
+		RuntimeHome string
+	}{json.RawMessage(legacy), true, true, nil, closed.RuntimeHome})
+	sum := sha256.Sum256(earlier)
+	if reference(closed, "id").ConfigHash != hex.EncodeToString(sum[:]) {
+		t.Fatal("existing sandboxed references no longer resume")
+	}
+}
+
+func TestSandboxWebEvidenceIsSeparate(t *testing.T) {
+	binary, log := fakeHarness(t, fakeSandboxOK)
+	o := sandboxOptions(t, Codex, binary, true)
+	for _, web := range []bool{false, true} {
+		o.Sandbox = &Sandbox{Write: true, Web: web}
+		if err := VerifySandbox(context.Background(), o); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if invocations(t, log, "canary") != 2 {
+		t.Fatal("a web sandbox reused a closed one's evidence")
 	}
 }

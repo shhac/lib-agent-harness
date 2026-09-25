@@ -180,7 +180,7 @@ func probeCodexSandbox(ctx context.Context, o Options) error {
 	env := disposableEnvironment(o, home)
 	env = slices.DeleteFunc(env, func(entry string) bool { return strings.HasPrefix(entry, "TMPDIR=") })
 	env = append(env, "TMPDIR="+sessionTempDir(), "CANARY_SIBLING="+filepath.Join(sibling, "canary"), "CANARY_NAME="+filepath.Base(root)+".canary", "CANARY_PORT="+strconv.Itoa(port))
-	args := append([]string{"sandbox", "-P", sandboxProfile, "-C", workspace}, codexSandboxArgs(o.Sandbox.Write)...)
+	args := append([]string{"sandbox", "-P", sandboxProfile, "-C", workspace}, codexSandboxArgs(*o.Sandbox)...)
 	args = append(args, "--", "/bin/sh", "-c", canaryScript)
 	out, err := runOnce(ctx, o.Binary, args, workspace, env)
 	if err != nil {
