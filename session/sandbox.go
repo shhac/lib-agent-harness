@@ -84,6 +84,9 @@ func sandboxReadDirs(dirs []string) ([]string, error) {
 }
 
 func normalizeSandbox(o Options) (Options, error) {
+	frozen := *o.Sandbox
+	frozen.Read = append([]string(nil), o.Sandbox.Read...)
+	o.Sandbox = &frozen
 	if o.Restriction != nil {
 		return o, errors.New("a session is either restricted or sandboxed; set only one of Restriction and Sandbox")
 	}

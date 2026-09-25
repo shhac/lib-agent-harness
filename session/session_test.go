@@ -524,3 +524,41 @@ func TestCorrelatedClaudeInterruptPreservesNativeFailure(t *testing.T) {
 		})
 	}
 }
+
+// Policy defaults and the per-engine allowed values, judged without resolving
+// any path or reading the environment.
+func TestNormalizePolicyDefaultsAndRefuses(t *testing.T) {
+	for name, tc := range map[string]struct {
+		in   Options
+		want Policy
+		ok   bool
+	}{
+		"codex defaults":        {Options{Engine: Codex}, Policy{CodexSandbox: "read-only", CodexApproval: "never", ClaudePermission: "dontAsk"}, true},
+		"codex chosen":          {Options{Engine: Codex, Policy: Policy{CodexSandbox: "workspace-write", CodexApproval: "untrusted"}}, Policy{CodexSandbox: "workspace-write", CodexApproval: "untrusted", ClaudePermission: "dontAsk"}, true},
+		"codex bad sandbox":     {Options{Engine: Codex, Policy: Policy{CodexSandbox: "everything"}}, Policy{}, false},
+		"codex bad approval":    {Options{Engine: Codex, Policy: Policy{CodexApproval: "always"}}, Policy{}, false},
+		"claude defaults":       {Options{Engine: Claude}, Policy{CodexSandbox: "read-only", CodexApproval: "never", ClaudePermission: "dontAsk"}, true},
+		"claude chosen":         {Options{Engine: Claude, Policy: Policy{ClaudePermission: "plan"}}, Policy{CodexSandbox: "read-only", CodexApproval: "never", ClaudePermission: "plan"}, true},
+		"claude bad permission": {Options{Engine: Claude, Policy: Policy{ClaudePermission: "bypassPermissions"}}, Policy{}, false},
+		"claude ignores codex":  {Options{Engine: Claude, Policy: Policy{CodexSandbox: "everything"}}, Policy{CodexSandbox: "everything", CodexApproval: "never", ClaudePermission: "dontAsk"}, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := normalizePolicy(tc.in)
+			if (err == nil) != tc.ok {
+				t.Fatalf("want ok=%v, got %v", tc.ok, err)
+			}
+			if tc.ok && !reflect.DeepEqual(got.Policy, tc.want) {
+				t.Fatalf("got %+v, want %+v", got.Policy, tc.want)
+			}
+		})
+	}
+	tools := []string{"Read"}
+	got, err := normalizePolicy(Options{Engine: Claude, Policy: Policy{ClaudeTools: tools}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools[0] = "Bash"
+	if got.Policy.ClaudeTools[0] != "Read" {
+		t.Fatal("the caller's tool list was not frozen")
+	}
+}

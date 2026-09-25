@@ -9,24 +9,61 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
 )
 
+// normalize resolves a caller's options into the ones a session runs with,
+// refusing any it cannot honour. Its stages run in order.
 func normalize(o Options) (Options, error) {
 	if o.Engine != Codex && o.Engine != Claude {
 		return o, &UnsupportedError{"engine", Capability{Unsupported, "unrecognized harness"}}
 	}
+	o, err := normalizePaths(o)
+	if err != nil {
+		return o, err
+	}
+	if o, err = normalizeLimits(o); err != nil {
+		return o, err
+	}
+	if o.Instructions.Mode != "" && o.Instructions.Mode != Replace && o.Instructions.Mode != Append {
+		return o, &UnsupportedError{"instructions", Capability{Unsupported, "instruction mode must be replace or append"}}
+	}
+	if o.Instructions.Text != "" && o.Instructions.Mode == "" {
+		return o, errors.New("instructions require an explicit replace or append mode")
+	}
+	if err = validateEnv(o.Env); err != nil {
+		return o, err
+	}
+	o.Env = append([]string(nil), o.Env...)
+	// The sandbox goes before the policy defaults: it refuses a policy the
+	// caller set, and once defaults are applied it could not tell which that was.
+	if o.Sandbox != nil {
+		if o, err = normalizeSandbox(o); err != nil {
+			return o, err
+		}
+	}
+	if o, err = normalizePolicy(o); err != nil {
+		return o, err
+	}
+	if o.Restriction != nil {
+		if o, err = normalizeRestriction(o); err != nil {
+			return o, err
+		}
+	}
+	return o, nil
+}
+
+// normalizePaths resolves the binary, working directory and harness home,
+// defaulting each from this process's environment.
+func normalizePaths(o Options) (Options, error) {
 	if o.Binary == "" {
 		o.Binary = string(o.Engine)
 	}
+	var err error
 	if o.WorkDir == "" {
-		var err error
-		o.WorkDir, err = os.Getwd()
-		if err != nil {
+		if o.WorkDir, err = os.Getwd(); err != nil {
 			return o, errors.New("working directory unavailable")
 		}
 	}
-	var err error
 	o.WorkDir, err = filepath.Abs(o.WorkDir)
 	if err != nil {
 		return o, errors.New("invalid working directory")
@@ -51,6 +88,10 @@ func normalize(o Options) (Options, error) {
 	if err != nil {
 		return o, errors.New("invalid harness home")
 	}
+	return o, nil
+}
+
+func normalizeLimits(o Options) (Options, error) {
 	if o.EventBuffer <= 0 {
 		o.EventBuffer = 256
 	}
@@ -63,24 +104,12 @@ func normalize(o Options) (Options, error) {
 	if o.MaxTextBytes > 16<<20 {
 		return o, errors.New("turn text limit exceeds limit")
 	}
-	if o.Instructions.Mode != "" && o.Instructions.Mode != Replace && o.Instructions.Mode != Append {
-		return o, &UnsupportedError{"instructions", Capability{Unsupported, "instruction mode must be replace or append"}}
-	}
-	if o.Instructions.Text != "" && o.Instructions.Mode == "" {
-		return o, errors.New("instructions require an explicit replace or append mode")
-	}
-	if err = validateEnv(o.Env); err != nil {
-		return o, err
-	}
-	o.Env = append([]string(nil), o.Env...)
-	if o.Sandbox != nil {
-		frozen := *o.Sandbox
-		frozen.Read = append([]string(nil), o.Sandbox.Read...)
-		o.Sandbox = &frozen
-		if o, err = normalizeSandbox(o); err != nil {
-			return o, err
-		}
-	}
+	return o, nil
+}
+
+// normalizePolicy applies the native policy defaults and refuses a value the
+// engine does not recognise.
+func normalizePolicy(o Options) (Options, error) {
 	if o.Policy.CodexSandbox == "" {
 		o.Policy.CodexSandbox = "read-only"
 	}
@@ -111,47 +140,6 @@ func normalize(o Options) (Options, error) {
 	// Freeze caller-owned slices before fingerprinting or launching.
 	if o.Policy.ClaudeTools != nil {
 		o.Policy.ClaudeTools = append([]string{}, o.Policy.ClaudeTools...)
-	}
-	if o.Restriction != nil {
-		if !restrictedPlatform() {
-			return o, &CapabilityError{Engine: string(o.Engine), Code: CapabilityUnsupportedPlatform, Phase: BeforeLaunch}
-		}
-		// Two tool policies would silently disagree about what this session may
-		// do. The restriction owns the surface, so the other one has to be absent.
-		if o.Policy.ClaudeTools != nil {
-			return o, errors.New("a restricted session owns its tool surface; leave Policy.ClaudeTools unset")
-		}
-		if o.Instructions.Mode == Replace {
-			return o, errors.New("a restricted session keeps the harness's coding instructions; append scoped instructions instead of replacing them")
-		}
-		if o.Engine == Codex && o.Model == "" {
-			return o, errors.New("a restricted Codex session requires an explicit model to restrict in the installed catalog")
-		}
-		if err = o.Restriction.Tools.validate(); err != nil {
-			return o, err
-		}
-		if o.Engine == Claude && reservedClaudeServer(o.Restriction.Tools.Server) {
-			// Checked against the installed CLI: this name is accepted and then
-			// silently not loaded, leaving a session with no tools at all. Refusing
-			// it here says so, rather than letting the launch check discover a
-			// missing surface and report it as a build problem.
-			return o, &CapabilityError{Engine: string(o.Engine), Code: CapabilityServerNameReserved, Phase: BeforeLaunch, Tools: []string{o.Restriction.Tools.Server}}
-		}
-		if o.RuntimeHome == "" {
-			return o, errors.New("a restricted session requires a durable private runtime home; set Options.RuntimeHome")
-		}
-		if o.RuntimeHome, err = filepath.Abs(o.RuntimeHome); err != nil {
-			return o, errors.New("invalid restricted session runtime home")
-		}
-		// Copy the whole restriction rather than writing through the caller's
-		// pointer: normalizing must not edit the value a caller still holds, and
-		// two launches sharing one Restriction must not see each other's defaults.
-		frozen := *o.Restriction
-		if frozen.Probe <= 0 {
-			frozen.Probe = 60 * time.Second
-		}
-		frozen.Tools.Tools = freezeTools(frozen.Tools.Tools)
-		o.Restriction = &frozen
 	}
 	return o, nil
 }
@@ -303,17 +291,6 @@ func baseEnvironment(o Options) []string {
 		}
 	}
 	return append(env, key+"="+selected)
-}
-
-// reservedClaudeServer names tool-server names the installed harness keeps for
-// itself. A reserved name is not rejected at launch; it is accepted and then
-// not loaded, which is why it is worth naming here.
-func reservedClaudeServer(name string) bool {
-	switch name {
-	case "workspace", "claude", "anthropic":
-		return true
-	}
-	return false
 }
 
 // validateEnv refuses additions the harness manages itself: credentials and

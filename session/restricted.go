@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -62,6 +63,64 @@ func VerifyRestriction(ctx context.Context, o Options) error {
 	}
 	l.host.close()
 	return nil
+}
+
+// normalizeRestriction refuses a restricted configuration that could not be
+// honoured as asked, and freezes the restriction the session will run with.
+func normalizeRestriction(o Options) (Options, error) {
+	if !restrictedPlatform() {
+		return o, &CapabilityError{Engine: string(o.Engine), Code: CapabilityUnsupportedPlatform, Phase: BeforeLaunch}
+	}
+	// Two tool policies would silently disagree about what this session may
+	// do. The restriction owns the surface, so the other one has to be absent.
+	if o.Policy.ClaudeTools != nil {
+		return o, errors.New("a restricted session owns its tool surface; leave Policy.ClaudeTools unset")
+	}
+	if o.Instructions.Mode == Replace {
+		return o, errors.New("a restricted session keeps the harness's coding instructions; append scoped instructions instead of replacing them")
+	}
+	if o.Engine == Codex && o.Model == "" {
+		return o, errors.New("a restricted Codex session requires an explicit model to restrict in the installed catalog")
+	}
+	if err := o.Restriction.Tools.validate(); err != nil {
+		return o, err
+	}
+	if o.Engine == Claude && reservedClaudeServer(o.Restriction.Tools.Server) {
+		// Checked against the installed CLI: this name is accepted and then
+		// silently not loaded, leaving a session with no tools at all. Refusing
+		// it here says so, rather than letting the launch check discover a
+		// missing surface and report it as a build problem.
+		return o, &CapabilityError{Engine: string(o.Engine), Code: CapabilityServerNameReserved, Phase: BeforeLaunch, Tools: []string{o.Restriction.Tools.Server}}
+	}
+	if o.RuntimeHome == "" {
+		return o, errors.New("a restricted session requires a durable private runtime home; set Options.RuntimeHome")
+	}
+	runtimeHome, err := filepath.Abs(o.RuntimeHome)
+	if err != nil {
+		return o, errors.New("invalid restricted session runtime home")
+	}
+	o.RuntimeHome = runtimeHome
+	// Copy the whole restriction rather than writing through the caller's
+	// pointer: normalizing must not edit the value a caller still holds, and
+	// two launches sharing one Restriction must not see each other's defaults.
+	frozen := *o.Restriction
+	if frozen.Probe <= 0 {
+		frozen.Probe = 60 * time.Second
+	}
+	frozen.Tools.Tools = freezeTools(frozen.Tools.Tools)
+	o.Restriction = &frozen
+	return o, nil
+}
+
+// reservedClaudeServer names tool-server names the installed harness keeps for
+// itself. A reserved name is not rejected at launch; it is accepted and then
+// not loaded, which is why it is worth naming here.
+func reservedClaudeServer(name string) bool {
+	switch name {
+	case "workspace", "claude", "anthropic":
+		return true
+	}
+	return false
 }
 
 // claudeRestrictedArgs disables every inherited customization surface and
