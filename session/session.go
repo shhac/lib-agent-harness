@@ -355,7 +355,10 @@ func (s *Session) Close() { s.fail(ErrClosed) }
 // the launch marker recovery would otherwise reserve against. It returns the
 // reclamation outcome: a marker is only cleared on positive evidence, so a
 // harness that cannot be confirmed terminated keeps its marker and its
-// ErrUnreclaimed, which is what tells a later run to hold.
+// ErrUnreclaimed, which is what tells a later run to hold. Closing gives up the
+// assignment lease; if another session has taken it by the time Release would
+// reclaim, the assignment is that session's, and Release returns ErrLeaseHeld
+// without touching it.
 func (s *Session) Release(ctx context.Context) (Reclamation, error) {
 	s.mu.Lock()
 	host := s.tools
@@ -385,10 +388,11 @@ func (s *Session) Release(ctx context.Context) (Reclamation, error) {
 	// caller's hands becomes a worker that looks stuck every time it finishes.
 	s.awaitReaped(ctx)
 	dir := host.cfg.Dir
-	out, err := Reclaim(ctx, dir)
-	if err != nil || !out.Confirmed {
+	lease, out, err := reclaimUnderLease(ctx, dir)
+	if err != nil {
 		return out, err
 	}
+	defer lease.Close()
 	// The harness is gone, so its home is no longer being written to. If it
 	// refreshed the login, return that to the source now rather than leaving the
 	// next worker to rediscover an expired one.

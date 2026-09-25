@@ -86,31 +86,42 @@ func openFresh(ctx context.Context, o Options, reason string) (*Session, Opened,
 
 // reclaimBeforeOpen establishes that nothing from an earlier launch is still
 // running in a restricted session's directory.
-//
-// The lease is taken first and held throughout. Reclaim ends a harness it can
-// identify, and without the lease that could be a harness another live session
-// is driving right now; with it, any harness found belongs to a process that no
-// longer holds the assignment.
 func reclaimBeforeOpen(ctx context.Context, o Options) error {
 	if o.Restriction == nil {
 		return nil
 	}
 	dir := o.Restriction.Tools.Dir
-	lease, err := holdLease(filepath.Join(dir, "session.lease"))
+	lease, _, err := reclaimUnderLease(ctx, dir)
 	if err != nil {
 		return err
 	}
 	defer lease.Close()
-	out, err := Reclaim(ctx, dir)
-	if err != nil {
-		return err
-	}
-	if !out.Confirmed {
-		return ErrUnreclaimed
-	}
 	// Confirmed absent, so the marker has done its job. Leaving it would have a
 	// later reclaim judge a group identifier the system may since have reused.
 	return clearLaunchRecord(dir)
+}
+
+// reclaimUnderLease takes the assignment lease and then reclaims dir, returning
+// the lease still held when nothing from an earlier launch remains.
+//
+// The lease comes first. Reclaim ends a harness it can identify, and without
+// the lease that could be a harness another live session is driving right now;
+// with it, any harness found belongs to a process that no longer holds the
+// assignment. A lease another session holds is returned as ErrLeaseHeld.
+func reclaimUnderLease(ctx context.Context, dir string) (*os.File, Reclamation, error) {
+	lease, err := holdLease(filepath.Join(dir, "session.lease"))
+	if err != nil {
+		return nil, Reclamation{}, err
+	}
+	out, err := Reclaim(ctx, dir)
+	if err == nil && !out.Confirmed {
+		err = ErrUnreclaimed
+	}
+	if err != nil {
+		_ = lease.Close()
+		return nil, out, err
+	}
+	return lease, out, nil
 }
 
 // claudeConversationStored reports whether the installed Claude CLI would find

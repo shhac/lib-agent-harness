@@ -300,3 +300,76 @@ func TestAssignmentLeaseExcludesASecondHolder(t *testing.T) {
 	}
 	_ = second.Close()
 }
+
+// standInBridge starts a live process in its own group, holding the bridge lock
+// for launch the way a running harness's bridge does, and returns its pid.
+func standInBridge(t *testing.T, lock, launch string) int {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=^$")
+	cmd.Env = append(os.Environ(), holdLockEnv+"="+lock, holdLaunchEnv+"="+launch)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	reaped := make(chan struct{})
+	go func() { defer close(reaped); _ = cmd.Wait() }()
+	t.Cleanup(func() { _ = cmd.Process.Kill(); <-reaped })
+	ready := bufio.NewScanner(stdout)
+	if !ready.Scan() || ready.Text() != "held" {
+		t.Fatalf("stand-in bridge did not take the lock: %v", ready.Err())
+	}
+	requireAlive(t, cmd.Process.Pid)
+	return cmd.Process.Pid
+}
+
+// Release gives up the assignment lease when it closes, and another session may
+// take it and launch before Release gets round to reclaiming. What Release then
+// finds on disk is that session's live harness, and it must be left alone.
+func TestReleaseLeavesAnAssignmentAnotherSessionTook(t *testing.T) {
+	dir := privateDir(t)
+	o, err := normalize(Options{
+		Engine: Claude, Binary: "/usr/bin/true", WorkDir: t.TempDir(), Home: t.TempDir(), RuntimeHome: t.TempDir(),
+		Restriction: &Restriction{Tools: ToolHost{
+			Server: "agent_workspace", Handler: echoHandler(t), Dir: dir,
+			Bridge: Bridge{Path: "/usr/bin/true"},
+			Tools:  []ToolDefinition{{Name: "read_file", Schema: map[string]any{"type": "object"}}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, err := newToolHost(o.Restriction.Tools)
+	if err != nil {
+		t.Fatal(err)
+	}
+	released := &Session{options: o, tools: host, done: make(chan struct{}), opGate: make(chan struct{}, 1)}
+	// The released session's harness has ended and its lease is free. Another
+	// session takes the lease and launches a harness of its own.
+	host.close()
+	lease, err := holdLease(filepath.Join(dir, "session.lease"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.Close()
+	launch := filepath.Join(privateDir(t), "launch")
+	live := standInBridge(t, lockPath(dir), launch)
+	if err = recordLaunch(dir, launchRecord{Engine: "claude", PID: live, Group: live, Launch: launch}); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := released.Release(context.Background())
+	if !errors.Is(err, ErrLeaseHeld) {
+		t.Fatalf("release did not report the assignment held elsewhere: %+v %v", out, err)
+	}
+	if out.Terminated || out.Confirmed {
+		t.Fatalf("release reclaimed an assignment it no longer held: %+v", out)
+	}
+	requireAlive(t, live)
+	if _, err = os.Stat(launchPath(dir)); err != nil {
+		t.Fatal("release cleared another session's launch record")
+	}
+}
