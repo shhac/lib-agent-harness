@@ -96,7 +96,8 @@ func Reclaim(ctx context.Context, dir string) (Reclamation, error) {
 	}
 	record, err := readLaunchRecord(dir)
 	if err != nil {
-		return out, err
+		// A launch happened, and what it left running cannot be told. Reserve it.
+		return out, errors.Join(ErrUnreclaimed, err)
 	}
 	if record == nil {
 		// Nothing was ever launched here. That is positive evidence, not a guess.

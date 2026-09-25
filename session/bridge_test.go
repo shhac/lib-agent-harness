@@ -373,3 +373,20 @@ func TestReleaseLeavesAnAssignmentAnotherSessionTook(t *testing.T) {
 		t.Fatal("release cleared another session's launch record")
 	}
 }
+
+// A launch record that cannot be read says a launch happened and nothing about
+// what it left running, so the assignment is reserved like any other harness
+// that cannot be confirmed gone.
+func TestUnreadableLaunchRecordIsUnreclaimed(t *testing.T) {
+	dir := privateDir(t)
+	if err := os.WriteFile(launchPath(dir), []byte(`{"engine":"claude","pid":`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := Reclaim(context.Background(), dir)
+	if !errors.Is(err, ErrUnreclaimed) {
+		t.Fatalf("an unreadable launch record was not reported as unreclaimed: %+v %v", out, err)
+	}
+	if out.Confirmed {
+		t.Fatalf("an unreadable launch record was confirmed absent: %+v", out)
+	}
+}
