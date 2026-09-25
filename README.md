@@ -103,6 +103,67 @@ still wrapping `ErrTransport`. Captured standard error never enters an error
 value; set `OnDiagnostic` to receive a bounded, control-stripped, credential-
 redacted tail for your own private records.
 
+## Long-lived conversations: Open and caller context
+
+`session.Open(ctx, options, ref)` is for a caller that keeps one conversation
+across its own restarts. It resumes the reference's conversation when it can
+and otherwise starts a new one, and `Opened` says which:
+
+```go
+s, opened, err := session.Open(ctx, options, storedRef) // storedRef may be nil
+if err != nil { return err } // hold: ErrUnreclaimed, ErrLeaseHeld, capability, transport
+switch {
+case opened.Resumed:                                   // same conversation
+case opened.Fresh == session.FreshIncompatible:        // another engine or configuration
+case opened.Fresh == session.FreshUnavailable:         // the harness no longer has it
+}
+save(s.Ref())
+```
+
+- A restricted session's `Dir` is reclaimed first, under its assignment lease.
+  A harness Open cannot confirm gone is returned as `ErrUnreclaimed`, and a lease
+  another session holds as `ErrLeaseHeld`: Open never starts a harness over one
+  that may still be running, and never reclaims one a live session is driving.
+- **Claude**: the transcript must exist before `--resume` is tried. Claude Code
+  keeps it at `<config dir>/projects/<key>/<id>.jsonl`, where the config
+  directory is `Options.Home` and the key is the resolved working directory with
+  every character that is not an ASCII letter or digit replaced by `-` (cut to
+  200 and suffixed with a hash when longer), and its resume also accepts a single
+  match in any other project folder. Open applies the same rule. A resumed Claude
+  that exits during startup also counts as unavailable.
+- **Codex**: a `thread/resume` the server refuses counts as unavailable.
+- Anything else is returned with no session.
+
+A restricted session's reference no longer covers its tools. The restriction is
+re-proved on every launch and Claude's startup frame is cross-checked against the
+tools configured for that launch, so a release that edits a tool's description,
+schema or set resumes stored conversations under the new surface. The tool
+server's name and the runtime home still have to match. (References stored for
+restricted sessions by versions before v0.4.0 stop matching once.)
+
+`Options.Context` lets the caller refresh what a long conversation knows about
+its domain without the harness ever replaying history itself. It is asked at the
+start of a turn whose conversation is new (`ContextStarted`) or was compacted
+since the last turn (`ContextCompacted`: Claude's `compact_boundary`, auto or
+manual, or Codex's `contextCompaction` item, including a `Compact` turn). The
+text goes ahead of that turn's input:
+
+```text
+<caller-context reason="compacted">
+…your text, verbatim…
+</caller-context>
+
+…the turn's input…
+```
+
+Empty text sends the input unchanged. A handler error fails `StartTurn` and
+keeps the reason pending; it clears only once a turn carrying it has been
+accepted, so each pending reason is delivered once. A compaction during a turn
+is delivered with the next one. A restricted session keeps the pending reason in
+`Dir/context.pending` (owner-only, beside the launch record), so a restart
+between the compaction and the next turn does not lose it; an ordinary session
+keeps it in memory.
+
 ## Restricted sessions with caller-hosted tools
 
 `Options.Restriction` opts one session into a stricter contract: the harness's
@@ -514,4 +575,11 @@ Cancellation closes the session, as with `StartTurn`.
 request, or unsupported on an explicit method rejection. Claude reports
 unsupported: its interactive `/compact` command is not a verified stream-json
 control operation. The library never substitutes a summarization prompt.
+
+In a restricted Claude session it stays unsupported for a second reason:
+`--disable-slash-commands` removes `/compact` along with every other command,
+and lifting that would need its own review of the whole command surface. Claude
+still compacts automatically. A caller that wants a manual compaction rebuilds
+instead: summarize the conversation itself, `Open` a fresh session (no
+reference), and return the summary from `Options.Context` for `ContextStarted`.
 The protocol reference is the [Codex App Server manual compaction section](https://learn.chatgpt.com/docs/app-server).
