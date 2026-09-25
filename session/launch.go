@@ -20,14 +20,17 @@ import (
 // with a disposable login and a provider that refuses to infer, and only then
 // handed to the real launch. A caller's login is never present while the
 // question "does this build actually drop its own tools" is still open.
-func prepareLaunch(ctx context.Context, o Options) (*launch, error) {
+//
+// lease is the assignment lease when the caller already holds it, or nil for
+// the tool host to take; either way the launch owns it from here.
+func prepareLaunch(ctx context.Context, o Options, lease *os.File) (*launch, error) {
 	if o.Sandbox != nil {
 		return prepareSandbox(ctx, o)
 	}
 	if o.Restriction == nil {
 		return nil, nil
 	}
-	host, err := newToolHost(o.Restriction.Tools)
+	host, err := newToolHost(o.Restriction.Tools, lease)
 	if err != nil {
 		return nil, err
 	}

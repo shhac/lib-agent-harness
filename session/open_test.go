@@ -307,3 +307,54 @@ func TestOpenHoldsAnOrphanedHarness(t *testing.T) {
 		t.Fatalf("want only the orphan launched, got %d", n)
 	}
 }
+
+// Open reclaims and launches as one critical section. Between confirming that
+// nothing from an earlier launch remains and the harness it starts, no other
+// process can take the assignment and launch a harness whose record this
+// launch would then overwrite.
+func TestOpenHoldsTheLeaseFromReclaimToLaunch(t *testing.T) {
+	o, _ := persistentOptions(t, Claude)
+	ctx := probeContext(t)
+	n := mustNormalize(t, o)
+	path := filepath.Join(n.Restriction.Tools.Dir, "session.lease")
+	leaseFree := func() bool {
+		t.Helper()
+		other, err := holdLease(path)
+		if err != nil {
+			if !errors.Is(err, ErrLeaseHeld) {
+				t.Fatal(err)
+			}
+			return false
+		}
+		_ = other.Close()
+		return true
+	}
+	lease, err := reclaimBeforeOpen(ctx, n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if leaseFree() {
+		t.Fatal("the lease was free between reclaim and launch")
+	}
+	s, _, err := openFresh(ctx, o, "", lease)
+	if err != nil {
+		t.Fatalf("the launch did not take over the lease its reclaim held: %v", err)
+	}
+	if leaseFree() {
+		t.Fatal("the lease was free while the session ran")
+	}
+	release(t, ctx, s)
+	if !leaseFree() {
+		t.Fatal("release kept the lease")
+	}
+	// A launch refused before it starts gives back the lease it was handed.
+	if lease, err = reclaimBeforeOpen(ctx, n); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = open(ctx, o, &Ref{Engine: Claude, ID: "elsewhere"}, lease); !errors.Is(err, ErrIncompatibleResume) {
+		t.Fatalf("an incompatible resume was not refused: %v", err)
+	}
+	if !leaseFree() {
+		t.Fatal("a refused launch kept the lease it was handed")
+	}
+}

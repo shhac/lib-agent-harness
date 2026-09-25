@@ -195,7 +195,7 @@ func TestToolHostWorksBeneathADeepApplicationStateDirectory(t *testing.T) {
 		Server: "workspace", Handler: echoHandler(t), Dir: deep,
 		Tools:  []ToolDefinition{{Name: "read_file", Schema: map[string]any{"type": "object"}}},
 		Bridge: Bridge{Path: "/usr/bin/true"},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("a realistic application state path was rejected: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestUnrestrictedLaunchIsUnchanged(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		l, err := prepareLaunch(ctx, o)
+		l, err := prepareLaunch(ctx, o, nil)
 		if l != nil || err != nil {
 			t.Fatalf("%s: an unrestricted session prepared a restricted runtime: %v %v", engine, l, err)
 		}
@@ -254,7 +254,7 @@ func TestVerificationCacheIsKeyedToTheExactBinaryAndArguments(t *testing.T) {
 		t.Fatal(err)
 	}
 	o.Binary = binary
-	host, err := newToolHost(o.Restriction.Tools)
+	host, err := newToolHost(o.Restriction.Tools, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,13 +266,13 @@ func TestVerificationCacheIsKeyedToTheExactBinaryAndArguments(t *testing.T) {
 	}
 	// One live host per assignment: a second one on the same directory is
 	// refused, which is the lease doing its job.
-	if _, err = newToolHost(o.Restriction.Tools); !errors.Is(err, ErrLeaseHeld) {
+	if _, err = newToolHost(o.Restriction.Tools, nil); !errors.Is(err, ErrLeaseHeld) {
 		t.Fatalf("a second host took the same assignment: %v", err)
 	}
 	// The channel's ephemeral paths change every launch and must not participate.
 	next := o.Restriction.Tools
 	next.Dir = privateDir(t)
-	second, err := newToolHost(next)
+	second, err := newToolHost(next, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

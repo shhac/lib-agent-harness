@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 )
@@ -42,27 +43,35 @@ type Session struct {
 
 // Start opens a persistent native CLI. ctx owns its lifetime; cancelling it
 // terminates the process tree. Startup performs a handshake, not inference.
-func Start(ctx context.Context, o Options) (*Session, error) { return open(ctx, o, nil) }
+func Start(ctx context.Context, o Options) (*Session, error) { return open(ctx, o, nil, nil) }
 
 // Resume reopens exactly the configuration described by a saved reference. An
 // account label cannot detect a user logging a different account into the same
 // home; the caller must update AccountIdentity when doing so.
-func Resume(ctx context.Context, o Options, r Ref) (*Session, error) { return open(ctx, o, &r) }
-func open(ctx context.Context, o Options, r *Ref) (*Session, error) {
+func Resume(ctx context.Context, o Options, r Ref) (*Session, error) { return open(ctx, o, &r, nil) }
+
+// open starts or resumes a session. lease is the assignment lease when the
+// caller already holds it, so that reclaiming and launching are one critical
+// section; open owns it from here, and a nil lease is taken by the tool host.
+func open(ctx context.Context, o Options, r *Ref, lease *os.File) (*Session, error) {
+	refuse := func(err error) (*Session, error) {
+		_ = lease.Close()
+		return nil, err
+	}
 	o, err := normalize(o)
 	if err != nil {
-		return nil, err
+		return refuse(err)
 	}
 	if err = ctx.Err(); err != nil {
-		return nil, err
+		return refuse(err)
 	}
 	if r != nil && !compatible(o, *r) {
-		return nil, ErrIncompatibleResume
+		return refuse(ErrIncompatibleResume)
 	}
 	// The restricted runtime is prepared and proved first. Nothing below this
 	// point runs with the caller's login until the harness has demonstrated,
 	// against a provider that refuses to infer, that it dropped its own tools.
-	l, err := prepareLaunch(ctx, o)
+	l, err := prepareLaunch(ctx, o, lease)
 	if err != nil {
 		return nil, err
 	}

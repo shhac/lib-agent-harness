@@ -56,7 +56,7 @@ func VerifyRestriction(ctx context.Context, o Options) error {
 	if err != nil {
 		return err
 	}
-	l, err := prepareLaunch(ctx, normalized)
+	l, err := prepareLaunch(ctx, normalized, nil)
 	if err != nil {
 		return err
 	}

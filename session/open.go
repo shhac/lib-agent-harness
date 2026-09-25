@@ -49,19 +49,20 @@ func Open(ctx context.Context, o Options, ref *Ref) (*Session, Opened, error) {
 	if err != nil {
 		return nil, Opened{}, err
 	}
-	if err = reclaimBeforeOpen(ctx, n); err != nil {
+	lease, err := reclaimBeforeOpen(ctx, n)
+	if err != nil {
 		return nil, Opened{}, err
 	}
 	if ref == nil {
-		return openFresh(ctx, o, "")
+		return openFresh(ctx, o, "", lease)
 	}
 	if !compatible(n, *ref) {
-		return openFresh(ctx, o, FreshIncompatible)
+		return openFresh(ctx, o, FreshIncompatible, lease)
 	}
 	if n.Engine == Claude && !claudeConversationStored(n, ref.ID) {
-		return openFresh(ctx, o, FreshUnavailable)
+		return openFresh(ctx, o, FreshUnavailable, lease)
 	}
-	s, err := Resume(ctx, o, *ref)
+	s, err := open(ctx, o, ref, lease)
 	if err == nil {
 		return s, Opened{Resumed: true}, nil
 	}
@@ -70,14 +71,14 @@ func Open(ctx context.Context, o Options, ref *Ref) (*Session, Opened, error) {
 	}
 	// The failed resume launched a harness. It was settled on the way out, but
 	// only confirmed absence authorizes another launch in its place.
-	if err = reclaimBeforeOpen(ctx, n); err != nil {
+	if lease, err = reclaimBeforeOpen(ctx, n); err != nil {
 		return nil, Opened{}, err
 	}
-	return openFresh(ctx, o, FreshUnavailable)
+	return openFresh(ctx, o, FreshUnavailable, lease)
 }
 
-func openFresh(ctx context.Context, o Options, reason string) (*Session, Opened, error) {
-	s, err := Start(ctx, o)
+func openFresh(ctx context.Context, o Options, reason string, lease *os.File) (*Session, Opened, error) {
+	s, err := open(ctx, o, nil, lease)
 	if err != nil {
 		return nil, Opened{}, err
 	}
@@ -85,20 +86,27 @@ func openFresh(ctx context.Context, o Options, reason string) (*Session, Opened,
 }
 
 // reclaimBeforeOpen establishes that nothing from an earlier launch is still
-// running in a restricted session's directory.
-func reclaimBeforeOpen(ctx context.Context, o Options) error {
+// running in a restricted session's directory, and returns the assignment
+// lease still held so the launch that follows happens under it: a harness
+// launched by another process between the reclaim and this launch would
+// otherwise have its record overwritten and never be reclaimed. An ordinary
+// session has no lease, and gets nil.
+func reclaimBeforeOpen(ctx context.Context, o Options) (*os.File, error) {
 	if o.Restriction == nil {
-		return nil
+		return nil, nil
 	}
 	dir := o.Restriction.Tools.Dir
 	lease, _, err := reclaimUnderLease(ctx, dir)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer lease.Close()
 	// Confirmed absent, so the marker has done its job. Leaving it would have a
 	// later reclaim judge a group identifier the system may since have reused.
-	return clearLaunchRecord(dir)
+	if err = clearLaunchRecord(dir); err != nil {
+		_ = lease.Close()
+		return nil, err
+	}
+	return lease, nil
 }
 
 // reclaimUnderLease takes the assignment lease and then reclaims dir, returning

@@ -67,8 +67,16 @@ type toolHost struct {
 	wg         sync.WaitGroup
 }
 
-func newToolHost(cfg ToolHost) (*toolHost, error) {
-	if err := cfg.validate(); err != nil {
+// newToolHost opens the tool channel under the assignment lease. A caller that
+// already holds the lease passes it, and the host owns it from then on; a nil
+// lease is taken here. Either way, a host that fails to open releases it.
+func newToolHost(cfg ToolHost, lease *os.File) (_ *toolHost, err error) {
+	defer func() {
+		if err != nil {
+			_ = lease.Close()
+		}
+	}()
+	if err = cfg.validate(); err != nil {
 		return nil, err
 	}
 	if cfg.MaxResultBytes <= 0 {
@@ -85,15 +93,17 @@ func newToolHost(cfg ToolHost) (*toolHost, error) {
 	socket := filepath.Join(socketDir, "t.sock")
 	settled := make(chan struct{})
 	close(settled)
-	h := &toolHost{cfg: cfg, socket: socket, socketDir: socketDir, tools: map[string]ToolDefinition{}, pending: map[string]*hostedCall{}, gate: make(chan struct{}, 1), done: make(chan struct{}), settled: settled}
 	// The assignment lease is taken before anything is launched, so a second
 	// process cannot drive this assignment during the window before a bridge
 	// exists. It is released when the host closes, or by the operating system if
 	// this process dies.
-	if h.lease, err = holdLease(filepath.Join(cfg.Dir, "session.lease")); err != nil {
-		_ = os.RemoveAll(socketDir)
-		return nil, err
+	if lease == nil {
+		if lease, err = holdLease(filepath.Join(cfg.Dir, "session.lease")); err != nil {
+			_ = os.RemoveAll(socketDir)
+			return nil, err
+		}
 	}
+	h := &toolHost{cfg: cfg, socket: socket, socketDir: socketDir, lease: lease, tools: map[string]ToolDefinition{}, pending: map[string]*hostedCall{}, gate: make(chan struct{}, 1), done: make(chan struct{}), settled: settled}
 	for _, t := range cfg.Tools {
 		h.tools[t.Name] = t
 	}

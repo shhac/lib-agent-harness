@@ -342,7 +342,7 @@ func TestReleaseLeavesAnAssignmentAnotherSessionTook(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host, err := newToolHost(o.Restriction.Tools)
+	host, err := newToolHost(o.Restriction.Tools, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -90,7 +90,7 @@ func TestRestrictedClaudeArgumentsDisableInheritedSurfaces(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host, err := newToolHost(o.Restriction.Tools)
+	host, err := newToolHost(o.Restriction.Tools, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestRestrictedCodexArgumentsRemoveNativeToolSurfaces(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host, err := newToolHost(o.Restriction.Tools)
+	host, err := newToolHost(o.Restriction.Tools, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +352,7 @@ func TestFailedPreparationReleasesTheToolChannel(t *testing.T) {
 	putSynthetic(t, o.Home, codexCredentialFile, "synthetic-login")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	l, err := prepareLaunch(ctx, o)
+	l, err := prepareLaunch(ctx, o, nil)
 	if l != nil || err == nil {
 		t.Fatalf("a session was prepared without a usable harness: %v %v", l, err)
 	}

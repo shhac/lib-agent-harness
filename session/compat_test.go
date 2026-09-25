@@ -123,7 +123,7 @@ func TestConfirmedFailedLaunchSettlesItsMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 	session := &Session{options: o, done: make(chan struct{}), opGate: make(chan struct{}, 1)}
-	host, err := newToolHost(o.Restriction.Tools)
+	host, err := newToolHost(o.Restriction.Tools, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestLiveLaunchIsNotSettledAsFailed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host, err := newToolHost(o.Restriction.Tools)
+	host, err := newToolHost(o.Restriction.Tools, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

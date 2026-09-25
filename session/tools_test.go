@@ -40,7 +40,7 @@ func testHost(t *testing.T, handler ToolHandler, tools ...ToolDefinition) *toolH
 	if len(tools) == 0 {
 		tools = []ToolDefinition{{Name: "read_file", Description: "read", Schema: map[string]any{"type": "object"}}}
 	}
-	h, err := newToolHost(ToolHost{Server: "workspace", Tools: tools, Handler: handler, Dir: privateDir(t), Bridge: Bridge{Path: "/usr/bin/true", Args: []string{"tool-bridge"}}})
+	h, err := newToolHost(ToolHost{Server: "workspace", Tools: tools, Handler: handler, Dir: privateDir(t), Bridge: Bridge{Path: "/usr/bin/true", Args: []string{"tool-bridge"}}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
