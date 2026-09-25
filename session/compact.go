@@ -19,7 +19,7 @@ func (s *Session) Compact(ctx context.Context) (*Turn, error) {
 	if s.options.Engine != Codex && !s.closed {
 		c := s.caps.Compact
 		s.mu.Unlock()
-		return nil, &UnsupportedError{"compact", c}
+		return nil, &UnsupportedError{string(opCompact), c}
 	}
 	// Compaction is not a turn that authorizes tool work, so unlike StartTurn it
 	// neither waits for hosted tools to settle nor reopens their channel.
@@ -33,12 +33,7 @@ func (s *Session) Compact(ctx context.Context) (*Turn, error) {
 	s.mu.Unlock()
 	body, err := s.transport.request(ctx, "thread/compact/start", map[string]any{"threadId": ref.ID})
 	if err != nil {
-		if definitiveRejection(err) {
-			t.finish("rejected", err)
-		} else {
-			s.fail(err)
-		}
-		return nil, s.operationError("compact", err)
+		return nil, s.controlFailed(opCompact, t, err)
 	}
 	var reply map[string]json.RawMessage
 	if json.Unmarshal(body, &reply) != nil || reply == nil {
@@ -46,9 +41,7 @@ func (s *Session) Compact(ctx context.Context) (*Turn, error) {
 		return nil, ErrProtocol
 	}
 	s.invalidateContext(t, "context compaction requested; awaiting a fresh observation")
-	s.mu.Lock()
-	s.caps.Compact = Capability{Native, "thread/compact/start acknowledged by installed harness"}
-	s.mu.Unlock()
+	s.setCapability(&s.caps.Compact, Capability{Native, "thread/compact/start acknowledged by installed harness"})
 	// The id arrives later, with turn/started.
 	s.replayStarting(t, "")
 	s.watchTurn(ctx, t)

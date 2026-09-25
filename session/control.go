@@ -208,10 +208,7 @@ func (s *Session) interrupt(ctx context.Context, expected string) error {
 		t.mu.Lock()
 		t.interruptRequested = false
 		t.mu.Unlock()
-		if !definitiveRejection(err) {
-			s.fail(err)
-		}
-		return s.operationError("interrupt", err)
+		return s.controlFailed(opInterrupt, nil, err)
 	}
 	result, waitErr := t.Wait(ctx)
 	if waitErr != nil {
@@ -220,9 +217,7 @@ func (s *Session) interrupt(ctx context.Context, expected string) error {
 	if result.Status != "interrupted" {
 		return ErrStaleTurn
 	}
-	s.mu.Lock()
-	s.caps.Interrupt = Capability{Native, "acknowledged interrupt and terminal turn event"}
-	s.mu.Unlock()
+	s.setCapability(&s.caps.Interrupt, Capability{Native, "acknowledged interrupt and terminal turn event"})
 	return nil
 }
 
@@ -267,17 +262,12 @@ func (s *Session) Steer(ctx context.Context, expected string, in Input, o SteerO
 		if err != nil {
 			return SteerResult{}, err
 		}
-		s.mu.Lock()
-		s.caps.Steer = Capability{Composed, "interrupt-and-continue succeeded in the installed harness"}
-		s.mu.Unlock()
+		s.setCapability(&s.caps.Steer, Capability{Composed, "interrupt-and-continue succeeded in the installed harness"})
 		return SteerResult{Composed, next}, nil
 	}
 	body, err := s.transport.request(ctx, "turn/steer", map[string]any{"threadId": s.Ref().ID, "expectedTurnId": expected, "input": codexInput(in.Text)})
 	if err != nil {
-		if !definitiveRejection(err) {
-			s.fail(err)
-		}
-		return SteerResult{}, s.operationError("steer", err)
+		return SteerResult{}, s.controlFailed(opSteer, nil, err)
 	}
 	var reply struct {
 		TurnID string `json:"turnId"`
@@ -286,28 +276,56 @@ func (s *Session) Steer(ctx context.Context, expected string, in Input, o SteerO
 		s.fail(ErrProtocol)
 		return SteerResult{}, ErrProtocol
 	}
-	s.mu.Lock()
-	s.caps.Steer = Capability{Native, "turn/steer acknowledged by installed harness"}
-	s.mu.Unlock()
+	s.setCapability(&s.caps.Steer, Capability{Native, "turn/steer acknowledged by installed harness"})
 	return SteerResult{Native, t}, nil
 }
 
-func (s *Session) operationError(operation string, err error) error {
+// controlOp names a control request whose native method an installed harness
+// may lack.
+type controlOp string
+
+const (
+	opInterrupt controlOp = "interrupt"
+	opSteer     controlOp = "steer"
+	opCompact   controlOp = "compact"
+)
+
+// controlFailed is how every control request answers a failed request. A
+// definitive rejection leaves the session usable, and ends as rejected the turn
+// the request would have started, if any; anything else ends the session. A
+// method the harness lacks is also recorded as unsupported.
+func (s *Session) controlFailed(op controlOp, started *Turn, err error) error {
+	if !definitiveRejection(err) {
+		s.fail(err)
+	} else if started != nil {
+		started.finish("rejected", err)
+	}
+	return s.operationError(op, err)
+}
+
+func (s *Session) operationError(op controlOp, err error) error {
 	if !errors.Is(err, ErrUnsupported) {
 		return err
 	}
 	c := Capability{Unsupported, "method unavailable in installed harness"}
 	s.mu.Lock()
-	switch operation {
-	case "compact":
+	switch op {
+	case opCompact:
 		s.caps.Compact = c
-	case "steer":
+	case opSteer:
 		s.caps.Steer = c
-	case "interrupt":
+	case opInterrupt:
 		s.caps.Interrupt = c
 	}
 	s.mu.Unlock()
-	return &UnsupportedError{operation, c}
+	return &UnsupportedError{string(op), c}
+}
+
+// setCapability records what a control established about the harness.
+func (s *Session) setCapability(field *Capability, c Capability) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	*field = c
 }
 
 func definitiveRejection(err error) bool {
