@@ -262,7 +262,8 @@ s, opened, err := session.Open(ctx, session.Options{
   same closing-tool and settlement rules as restricted CLI sessions.
 - **Each turn:** the whole history is resent (Chat Completions keeps no server
   state) until the model answers without tool calls, bounded by
-  `Options.Loop`.
+  `Options.Loop`, which also carries an optional per-response `MaxOutputTokens`
+  cap.
 - **State:** the conversation is an fsynced transcript under
   `RuntimeHome/sessions/<id>`, locked while open, and never holds a
   credential.
