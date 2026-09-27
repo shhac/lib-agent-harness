@@ -227,3 +227,35 @@ func TestConfigurationCannotNameTheCredential(t *testing.T) {
 		t.Fatal("configuration escaped the runtime home")
 	}
 }
+
+func TestDigestIdentifiesWithoutFollowingLinks(t *testing.T) {
+	dir := private(t)
+	if sum, err := Digest(filepath.Join(dir, credential)); err != nil || sum != nil {
+		t.Fatalf("a missing login has a digest: %x %v", sum, err)
+	}
+	put(t, dir, credential, `"login"`)
+	first, err := Digest(filepath.Join(dir, credential))
+	if err != nil || len(first) == 0 {
+		t.Fatalf("%x %v", first, err)
+	}
+	if strings.Contains(string(first), "login") {
+		t.Fatal("the digest reveals the credential")
+	}
+	if err = os.Symlink(filepath.Join(dir, credential), filepath.Join(dir, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if code(func() error { _, err := Digest(filepath.Join(dir, "link")); return err }()) != CodeLoginUnreadable {
+		t.Fatal("a digest followed a symbolic link")
+	}
+}
+
+func TestWriteBackWithoutARuntimeHomeReturnsNothing(t *testing.T) {
+	source := private(t)
+	put(t, source, credential, `"login"`)
+	if err := home(source, filepath.Join(t.TempDir(), "never-made")).WriteBack(); err != nil {
+		t.Fatal(err)
+	}
+	if text(t, source) != `"login"` {
+		t.Fatal("the source login changed")
+	}
+}

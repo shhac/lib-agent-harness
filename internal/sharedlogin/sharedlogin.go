@@ -163,6 +163,10 @@ func (h Home) WriteBack() error {
 	if !supported() {
 		return failure(CodeUnsupported)
 	}
+	if _, err := os.Lstat(h.Runtime); errors.Is(err, os.ErrNotExist) {
+		// A runtime home that was never made holds no refresh to return.
+		return nil
+	}
 	unlock, err := lock(filepath.Join(h.Runtime, lockFile))
 	if err != nil {
 		return failure(CodeRuntimeUnusable)
@@ -193,6 +197,20 @@ func (h Home) WriteBack() error {
 		return failure(CodeLoginShare)
 	}
 	return writeRecord(h.Runtime, refreshedDigest)
+}
+
+// Digest identifies the credential at path without revealing it. A missing
+// file is nil; anything else that cannot be read, including a symbolic link,
+// is an error.
+func Digest(path string) ([]byte, error) {
+	if !supported() {
+		return nil, failure(CodeUnsupported)
+	}
+	data, err := readCredential(path)
+	if err != nil || data == nil {
+		return nil, err
+	}
+	return digest(data), nil
 }
 
 // read is readCredential with the caller's validity check: an invalid file
