@@ -145,7 +145,7 @@ only where the engine states them.
 
 ```go
 s, err := session.Start(ctx, session.Options{
-    Provider: harness.Provider{Engine: harness.Claude}, // or Codex
+    Provider: harness.Provider{Engine: harness.Claude}, // or Codex, or Grok with Policy.GrokPermission
     Model: "haiku",
     Effort: "low",
     WorkDir: workspace,
@@ -168,6 +168,16 @@ have explicit replacement/append semantics, and resume references bind the
 session to its configured home, working directory, and policy. Keep references
 in private application state; local paths are not public metadata. Account
 identity labels are caller assertions, not cryptographic account verification.
+
+Grok sessions run `grok agent --no-leader stdio` over the Agent Client Protocol.
+Creating one runs the operator's configured Grok hooks. Grok's agent mode asks
+permission only where a permission rule or its mode says to, and otherwise runs
+edits and shell commands itself, so a Grok session has no permission default:
+set `Policy.GrokPermission` to `session.GrokDenyWhenAsked` or
+`session.GrokAllowWhenAsked`, which answer the requests Grok does send. Neither
+is a read-only mode. A model or effort Grok would substitute is refused before
+the first prompt. Steering is composed (cancel, then prompt). Restricted,
+sandboxed and compacted Grok sessions, and Grok quota, are unsupported.
 
 Consume turn events while the turn runs. `Wait` does not drain the stream;
 backpressure fails explicitly instead of silently dropping tool activity.
