@@ -9,6 +9,8 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/shhac/lib-agent-harness"
 )
 
 // Provider variables are seeded with obvious synthetic values so that a
@@ -46,23 +48,23 @@ func TestModelTransportInvokesEachEngineWithItsOwnInvocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
-		engine    string
+		engine    harness.Engine
 		homeKey   string
 		wantModel string
 		wantArgs  []string
 		absent    []string
 	}{
-		{"codex", "CODEX_HOME", "fixture-codex-model",
+		{harness.Codex, "CODEX_HOME", "fixture-codex-model",
 			[]string{"app-server", "--listen", "stdio://", "-c", "analytics.enabled=false"},
 			[]string{"--input-format", "--safe-mode"}},
-		{"claude", "CLAUDE_CONFIG_DIR", "fixture-claude-model",
+		{harness.Claude, "CLAUDE_CONFIG_DIR", "fixture-claude-model",
 			[]string{"--safe-mode", "-p", "--input-format", "stream-json", "--output-format", "--verbose"},
 			[]string{"app-server", "--listen"}},
 	} {
-		t.Run(tc.engine, func(t *testing.T) {
+		t.Run(string(tc.engine), func(t *testing.T) {
 			seedSyntheticProviderKeys(t)
 			home := t.TempDir()
-			cfg := Config{Engine: tc.engine, CodexBin: binary, ClaudeBin: binary, CodexHome: home, ClaudeHome: home}
+			cfg := Config{Provider: cliProvider(tc.engine, binary, home)}
 			models, err := DiscoverModels(context.Background(), cfg)
 			if err != nil {
 				t.Fatalf("discovery failed: %v", err)
@@ -94,7 +96,9 @@ func TestModelTransportInvokesEachEngineWithItsOwnInvocation(t *testing.T) {
 }
 
 // Discovery must not hand one engine the other's environment. Claude discovery
-// in particular must not carry CODEX_HOME.
+// in particular must not carry CODEX_HOME, even one set in the parent: a
+// Provider can no longer name the other engine's home, so the ambient one is
+// the remaining route.
 func TestModelTransportDoesNotCrossEngineEnvironments(t *testing.T) {
 	seedSyntheticProviderKeys(t)
 	binary, err := os.Executable()
@@ -102,7 +106,8 @@ func TestModelTransportDoesNotCrossEngineEnvironments(t *testing.T) {
 		t.Fatal(err)
 	}
 	claudeHome, codexHome := t.TempDir(), t.TempDir()
-	cfg := Config{Engine: "claude", ClaudeBin: binary, CodexBin: binary, ClaudeHome: claudeHome, CodexHome: codexHome}
+	t.Setenv("CODEX_HOME", codexHome)
+	cfg := Config{Provider: cliProvider(harness.Claude, binary, claudeHome)}
 	if _, err := DiscoverModels(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -129,10 +134,10 @@ func TestModelTransportCancellationUnblocksPipesAndReapsChild(t *testing.T) {
 		cfg    func(home string) Config
 	}{
 		{"codex", func(home string) Config {
-			return Config{Engine: "codex", CodexBin: binary, CodexHome: home}
+			return Config{Provider: cliProvider(harness.Codex, binary, home)}
 		}},
 		{"claude", func(home string) Config {
-			return Config{Engine: "claude", ClaudeBin: binary, ClaudeHome: home}
+			return Config{Provider: cliProvider(harness.Claude, binary, home)}
 		}},
 	} {
 		t.Run(tc.engine, func(t *testing.T) {

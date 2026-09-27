@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/shhac/lib-agent-harness"
 )
 
 // A transport without native agents must still carry the caller's delegation
@@ -19,10 +21,10 @@ func TestApplicationDelegationAcrossConstrainedTransports(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"codex", "claude"} {
-		t.Run(name, func(t *testing.T) {
+	for _, name := range cliEngines {
+		t.Run(string(name), func(t *testing.T) {
 			tools := []Tool{{Type: "function", Function: Function{Name: "delegate", Description: "Commission an approved application worker"}}}
-			cfg := Config{Engine: name, Model: "test-model", Effort: "high", CodexBin: binary, ClaudeBin: binary, CodexHome: t.TempDir(), ClaudeHome: t.TempDir(), WorkDirRoot: t.TempDir()}
+			cfg := Config{Provider: cliProvider(name, binary, t.TempDir()), Model: "test-model", Effort: "high", WorkDirRoot: t.TempDir()}
 			cfg.run = func(_ context.Context, _ string, args []string, _ string, env []string, input string) ([]byte, error) {
 				if args[0] == "debug" {
 					return []byte(testCatalog), nil
@@ -50,7 +52,7 @@ func TestApplicationDelegationAcrossConstrainedTransports(t *testing.T) {
 					t.Fatal("transport conflates native and application authority")
 				}
 				action := map[string]any{"content": "", "tool_calls": []any{map[string]string{"name": "delegate", "arguments": `{"task":"bounded work"}`}}}
-				if name == "claude" {
+				if name == harness.Claude {
 					raw, _ := json.Marshal(map[string]any{"type": "result", "subtype": "success", "structured_output": action})
 					return raw, nil
 				}
@@ -58,8 +60,8 @@ func TestApplicationDelegationAcrossConstrainedTransports(t *testing.T) {
 				event, _ := json.Marshal(map[string]any{"type": "item.completed", "item": map[string]any{"type": "agent_message", "text": string(raw)}})
 				return append(event, []byte("\n{\"type\":\"turn.completed\"}\n")...), nil
 			}
-			result, _, err := Complete(context.Background(), cfg, []Message{{Role: "user", Content: "Proceed with the approved work"}}, tools)
-			if err != nil || len(result.ToolCalls) != 1 || result.ToolCalls[0].Function.Name != "delegate" {
+			result, err := Complete(context.Background(), cfg, []Message{{Role: "user", Content: "Proceed with the approved work"}}, tools)
+			if err != nil || len(result.Message.ToolCalls) != 1 || result.Message.ToolCalls[0].Function.Name != "delegate" {
 				t.Fatalf("delegation proposal lost: %+v, %v", result, err)
 			}
 		})

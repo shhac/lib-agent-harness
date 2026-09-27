@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/shhac/lib-agent-harness/internal/tomltest"
+
+	"github.com/shhac/lib-agent-harness"
 )
 
 const testCatalog = `{"models":[{"slug":"test-model","supported_reasoning_levels":[{"effort":"high"}],"shell_type":"unified_exec","apply_patch_tool_type":"freeform","experimental_supported_tools":["clock"],"tool_mode":"code_mode_only"}]}`
@@ -97,7 +99,7 @@ func TestCodexTransportProposesOnlyCallerTools(t *testing.T) {
 	t.Setenv("CODEX_HOME", t.TempDir())
 	calls := 0
 	reservations := 0
-	cfg := Config{Engine: "codex", Model: "test-model", Effort: "high", CodexBin: "sh", BeforeRequest: func(context.Context) error { reservations++; return nil }}
+	cfg := Config{Provider: cliProvider(harness.Codex, "sh", ""), Model: "test-model", Effort: "high", BeforeRequest: func(context.Context) error { reservations++; return nil }}
 	cfg.run = func(ctx context.Context, bin string, args []string, dir string, env []string, input string) ([]byte, error) {
 		calls++
 		if args[0] == "debug" {
@@ -120,11 +122,11 @@ func TestCodexTransportProposesOnlyCallerTools(t *testing.T) {
 		return []byte(`{"type":"item.completed","item":{"type":"agent_message","text":"{\"content\":\"\",\"tool_calls\":[{\"name\":\"only_this_tool\",\"arguments\":\"{}\"}]}"}}` + "\n" + `{"type":"turn.completed","usage":{"input_tokens":20,"output_tokens":5}}`), nil
 	}
 	tools := []Tool{{Type: "function", Function: Function{Name: "only_this_tool"}}}
-	message, usage, err := Complete(context.Background(), cfg, []Message{{Role: "user", Content: "work"}}, tools)
+	message, usage, err := messageAndUsage(Complete(context.Background(), cfg, []Message{{Role: "user", Content: "work"}}, tools))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if calls != 3 || reservations != 1 || len(message.ToolCalls) != 1 || message.ToolCalls[0].Function.Name != "only_this_tool" || !usage.Known || usage.TotalTokens != 25 {
+	if calls != 3 || reservations != 1 || len(message.ToolCalls) != 1 || message.ToolCalls[0].Function.Name != "only_this_tool" || !usage.Known || usage.Total() != 25 {
 		t.Fatalf("calls=%d reservations=%d result=%+v usage=%+v", calls, reservations, message, usage)
 	}
 }
@@ -153,7 +155,7 @@ func TestCodexProbeFailsBeforeBillableCall(t *testing.T) {
 	t.Setenv("CODEX_HOME", t.TempDir())
 	for _, request := range []string{`{"model":"test-model","reasoning":{"effort":"high"},"tools":[{"name":"shell"}]}`, `{"model":"substitute","reasoning":{"effort":"high"}}`, `{"model":"test-model","reasoning":{"effort":"low"}}`} {
 		t.Run(request, func(t *testing.T) {
-			cfg := Config{Engine: "codex", Model: "test-model", Effort: "high", CodexBin: "sh", BeforeRequest: func(context.Context) error { t.Fatal("reserved a live call after unsafe probe"); return nil }}
+			cfg := Config{Provider: cliProvider(harness.Codex, "sh", ""), Model: "test-model", Effort: "high", BeforeRequest: func(context.Context) error { t.Fatal("reserved a live call after unsafe probe"); return nil }}
 			cfg.run = func(ctx context.Context, bin string, args []string, dir string, env []string, input string) ([]byte, error) {
 				if args[0] == "debug" {
 					return []byte(testCatalog), nil
@@ -168,7 +170,7 @@ func TestCodexProbeFailsBeforeBillableCall(t *testing.T) {
 				}
 				return nil, errors.New("rejected")
 			}
-			if _, _, err := Complete(context.Background(), cfg, nil, Tools()); err == nil {
+			if _, err := Complete(context.Background(), cfg, nil, Tools()); err == nil {
 				t.Fatal("unsafe probe accepted")
 			}
 		})
@@ -182,7 +184,7 @@ func TestCodexRejectsUnsafeOrPartialOutput(t *testing.T) {
 		`{"type":"item.completed","item":{"type":"agent_message","text":"{}"}}`,
 		`{"type":"item.completed","item":{"type":"agent_message","text":"{\"content\":\"\",\"tool_calls\":[{\"name\":\"shell\",\"arguments\":\"{}\"}]}"}}` + "\n" + `{"type":"turn.completed"}`,
 	} {
-		if _, _, err := parseCodex([]byte(events), Tools()); err == nil {
+		if _, err := parseCodex([]byte(events), Tools()); err == nil {
 			t.Fatalf("accepted unsafe response %s", events)
 		}
 	}
@@ -197,7 +199,7 @@ func TestInstalledCodexCapabilityProbe(t *testing.T) {
 		t.Skip("set AGENT_HARNESS_TEST_CODEX to test installed CLI without inference")
 	}
 	dir := t.TempDir()
-	cfg := Config{Engine: "codex", CodexBin: bin, Model: "gpt-6-astra", Effort: "high", Timeout: 20 * time.Second}
+	cfg := Config{Provider: cliProvider(harness.Codex, bin, ""), Model: "gpt-6-astra", Effort: "high", Timeout: 20 * time.Second}
 	catalog, err := runCLI(context.Background(), cfg, bin, []string{"debug", "models", "--bundled"}, dir, codexCatalogEnvironment(dir), "")
 	if err != nil {
 		t.Fatal(err)
@@ -227,7 +229,7 @@ func TestInstalledCodexStructuredResponse(t *testing.T) {
 		t.Skip("set AGENT_HARNESS_TEST_CODEX for local-only protocol smoke")
 	}
 	dir := t.TempDir()
-	cfg := Config{Engine: "codex", Model: "gpt-6-astra", Effort: "high", Timeout: 20 * time.Second}
+	cfg := Config{Provider: harness.Provider{Engine: harness.Codex}, Model: "gpt-6-astra", Effort: "high", Timeout: 20 * time.Second}
 	catalog, err := runCLI(context.Background(), cfg, bin, []string{"debug", "models", "--bundled"}, dir, codexCatalogEnvironment(dir), "")
 	if err != nil {
 		t.Fatal(err)
@@ -293,11 +295,11 @@ func TestInstalledCodexStructuredResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Codex fake protocol: %v; %s", err, output)
 	}
-	result, usage, err := parseCodex(output, Tools())
+	result, usage, err := messageAndUsage(parseCodex(output, Tools()))
 	if err != nil {
 		t.Fatalf("parse: %v; %s", err, output)
 	}
-	if result.Content != "Ready." || !usage.Known || usage.TotalTokens != 18 || requests.Load() != 1 {
+	if result.Content != "Ready." || !usage.Known || usage.Total() != 18 || requests.Load() != 1 {
 		t.Fatalf("result=%+v usage=%+v requests=%d", result, usage, requests.Load())
 	}
 }
@@ -306,7 +308,7 @@ func TestCodexEnvelopeRequiresCompleteFields(t *testing.T) {
 	for _, envelope := range []string{`{"tool_calls":[{"name":"read_state","arguments":"{}"}]}`, `{"content":null,"tool_calls":[{"name":"read_state","arguments":"{}"}]}`, `{"content":"answer"}`, `{"content":"answer","tool_calls":null}`} {
 		item, _ := json.Marshal(map[string]any{"type": "item.completed", "item": map[string]any{"type": "agent_message", "text": envelope}})
 		events := append(item, []byte("\n"+`{"type":"turn.completed"}`)...)
-		if _, _, err := parseCodex(events, Tools()); err == nil {
+		if _, err := parseCodex(events, Tools()); err == nil {
 			t.Fatalf("accepted malformed envelope %s", envelope)
 		}
 	}
@@ -341,11 +343,11 @@ func TestCodexGlobalInstructionsFailBeforeProcessOrInference(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(home, name), []byte("unrelated owner coding instructions"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			cfg := Config{Engine: "codex", Model: "test-model", Effort: "high", run: func(context.Context, string, []string, string, []string, string) ([]byte, error) {
+			cfg := Config{Provider: harness.Provider{Engine: harness.Codex}, Model: "test-model", Effort: "high", run: func(context.Context, string, []string, string, []string, string) ([]byte, error) {
 				t.Fatal("started subprocess with global instructions")
 				return nil, nil
 			}, BeforeRequest: func(context.Context) error { t.Fatal("reserved model with global instructions"); return nil }}
-			if _, _, err := Complete(context.Background(), cfg, nil, Tools()); err == nil || !strings.Contains(err.Error(), "dedicated Codex home") {
+			if _, err := Complete(context.Background(), cfg, nil, Tools()); err == nil || !strings.Contains(err.Error(), "dedicated Codex home") {
 				t.Fatalf("missing actionable isolation failure: %v", err)
 			}
 		})
@@ -402,14 +404,14 @@ func TestConfiguredCodexHomeGuardChecksSelectedDirectory(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(selected, filename), []byte("Selected-home coding instructions"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			cfg := Config{Engine: "codex", CodexHome: selected, Model: "test-model", Effort: "high", run: func(context.Context, string, []string, string, []string, string) ([]byte, error) {
+			cfg := Config{Provider: cliProvider(harness.Codex, "", selected), Model: "test-model", Effort: "high", run: func(context.Context, string, []string, string, []string, string) ([]byte, error) {
 				t.Error("ran subprocess before checking configured home")
 				return nil, errors.New("unexpected process")
 			}, BeforeRequest: func(context.Context) error {
 				t.Error("reserved inference before checking configured home")
 				return errors.New("unexpected reservation")
 			}}
-			if _, _, err := Complete(context.Background(), cfg, nil, Tools()); err == nil {
+			if _, err := Complete(context.Background(), cfg, nil, Tools()); err == nil {
 				t.Fatal("selected global instructions were ignored")
 			}
 		})
@@ -433,7 +435,7 @@ func TestConcurrentCodexRequestsKeepTheirSelectedHomes(t *testing.T) {
 	for _, home := range homes {
 		go func(selected string) {
 			calls := 0
-			cfg := Config{Engine: "codex", CodexHome: selected, CodexBin: "sh", Model: "test-model", Effort: "high"}
+			cfg := Config{Provider: cliProvider(harness.Codex, "sh", selected), Model: "test-model", Effort: "high"}
 			cfg.run = func(ctx context.Context, _ string, args []string, dir string, env []string, _ string) ([]byte, error) {
 				calls++
 				if args[0] == "debug" {
@@ -471,7 +473,7 @@ func TestConcurrentCodexRequestsKeepTheirSelectedHomes(t *testing.T) {
 				}
 				return []byte(`{"type":"item.completed","item":{"type":"agent_message","text":"{\"content\":\"Ready.\",\"tool_calls\":[]}"}}` + "\n" + `{"type":"turn.completed"}`), nil
 			}
-			result, _, err := Complete(ctx, cfg, []Message{{Role: "user", Content: "Hello"}}, Tools())
+			result, _, err := messageAndUsage(Complete(ctx, cfg, []Message{{Role: "user", Content: "Hello"}}, Tools()))
 			if err == nil && (result.Content != "Ready." || calls != 3) {
 				err = fmt.Errorf("unexpected transport result: calls=%d result=%+v", calls, result)
 			}

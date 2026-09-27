@@ -10,34 +10,36 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/shhac/lib-agent-harness"
 )
 
 func TestCodexFailureClassification(t *testing.T) {
 	for _, tc := range []struct {
 		text string
-		kind ErrorKind
+		kind harness.Cause
 	}{
-		{"Selected model is at capacity. Please try a different model.", ErrorOverloaded},
-		{"unexpected status 503 Service Unavailable: secret-body, url: secret", ErrorUnavailable},
-		{"unexpected status 429 Too Many Requests: secret", ErrorRateLimited},
-		{"exceeded retry limit, last status: 503 Service Unavailable, request id: secret", ErrorUnavailable},
-		{"unexpected status 401 Unauthorized: secret", ErrorAuthentication},
-		{"unexpected status 402 Payment Required: secret", ErrorUnknown},
-		{"request timed out secret", ErrorUnknown},
-		{"agent says unexpected status 503 Service Unavailable: secret", ErrorUnknown},
+		{"Selected model is at capacity. Please try a different model.", harness.CauseOverloaded},
+		{"unexpected status 503 Service Unavailable: secret-body, url: secret", harness.CauseUnavailable},
+		{"unexpected status 429 Too Many Requests: secret", harness.CauseRateLimited},
+		{"exceeded retry limit, last status: 503 Service Unavailable, request id: secret", harness.CauseUnavailable},
+		{"unexpected status 401 Unauthorized: secret", harness.CauseAuthentication},
+		{"unexpected status 402 Payment Required: secret", harness.CauseUnknown},
+		{"request timed out secret", harness.CauseUnknown},
+		{"agent says unexpected status 503 Service Unavailable: secret", harness.CauseUnknown},
 	} {
 		t.Run(string(tc.kind)+tc.text[:8], func(t *testing.T) {
 			msg, _ := json.Marshal(tc.text)
 			data := []byte(`{"type":"turn.failed","error":{"message":` + string(msg) + `}}`)
-			_, _, err := parseCodex(data, nil)
+			_, err := parseCodex(data, nil)
 			var failure *RequestError
-			if !errors.As(err, &failure) || failure.Kind != tc.kind {
+			if !errors.As(err, &failure) || failure.Cause != tc.kind {
 				t.Fatalf("%v", err)
 			}
 			if strings.Contains(err.Error(), "secret") {
 				t.Fatal("leaked provider data")
 			}
-			if failure.Retryable() != (tc.kind == ErrorOverloaded || tc.kind == ErrorUnavailable || tc.kind == ErrorRateLimited) {
+			if failure.Retryable() != (tc.kind == harness.CauseOverloaded || tc.kind == harness.CauseUnavailable || tc.kind == harness.CauseRateLimited) {
 				t.Fatal("retryability")
 			}
 			for _, prefix := range []string{`{"type":"item.completed","item":{"type":"agent_message","text":"partial"}}`, `{"type":"turn.completed"}`, `invalid`} {
@@ -52,12 +54,12 @@ func TestCodexFailureClassification(t *testing.T) {
 func TestClaudeFailureClassification(t *testing.T) {
 	for _, tc := range []struct {
 		native string
-		kind   ErrorKind
-	}{{"overloaded", ErrorOverloaded}, {"rate_limit", ErrorRateLimited}, {"server_error", ErrorUnavailable}, {"authentication_failed", ErrorAuthentication}, {"billing_error", ErrorUnknown}, {"invalid_request", ErrorUnknown}} {
+		kind   harness.Cause
+	}{{"overloaded", harness.CauseOverloaded}, {"rate_limit", harness.CauseRateLimited}, {"server_error", harness.CauseUnavailable}, {"authentication_failed", harness.CauseAuthentication}, {"billing_error", harness.CauseUnknown}, {"invalid_request", harness.CauseUnknown}} {
 		data := []byte(`{"type":"assistant","error":"` + tc.native + `","message":{"content":[{"type":"text","text":"secret"}]}}` + "\n" + `{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["secret"]}`)
-		_, _, err := parseClaude(data, nil)
+		_, err := parseClaude(data, nil)
 		var failure *RequestError
-		if !errors.As(err, &failure) || failure.Kind != tc.kind {
+		if !errors.As(err, &failure) || failure.Cause != tc.kind {
 			t.Fatalf("%s: %v", tc.native, err)
 		}
 		if strings.Contains(err.Error(), "secret") {
@@ -122,20 +124,20 @@ func TestClaudeTerminalDiagnosticsStaySafeAndNonretryable(t *testing.T) {
 	// prose, payloads, unknown enum values and permission arguments are discarded.
 	for _, tc := range []struct {
 		name, assistant, subtype, reason, stop string
-		kind                                   ErrorKind
+		kind                                   harness.Cause
 		code                                   string
 	}{
-		{"structure", "", "error_max_structured_output_retries", "", "", ErrorStructuredOutputLimit, "error_max_structured_output_retries"},
-		{"structure-after-overload", "overloaded", "error_max_structured_output_retries", "", "", ErrorStructuredOutputLimit, "error_max_structured_output_retries"},
-		{"context", "invalid_request", "error_during_execution", "prompt_too_long", "", ErrorContextLimit, "prompt_too_long"},
-		{"context-stop", "", "error_during_execution", "", "model_context_window_exceeded", ErrorContextLimit, "model_context_window_exceeded"},
-		{"model", "model_not_found", "error_during_execution", "", "", ErrorModelUnavailable, "model_not_found"},
-		{"organization", "oauth_org_not_allowed", "error_during_execution", "", "", ErrorPermissionDenied, "oauth_org_not_allowed"},
-		{"turns", "", "error_max_turns", "", "", ErrorUnknown, "error_max_turns"},
-		{"budget", "", "error_max_budget_usd", "", "", ErrorUnknown, "error_max_budget_usd"},
-		{"execution", "", "error_during_execution", "", "", ErrorUnknown, "error_during_execution"},
-		{"partial-overload", "overloaded", "error_during_execution", "", "", ErrorUnknown, "overloaded"},
-		{"unknown-values", "secret-credential", "secret-subtype", "secret-reason", "secret-stop", ErrorUnknown, ""},
+		{"structure", "", "error_max_structured_output_retries", "", "", harness.CauseStructuredOutputLimit, "error_max_structured_output_retries"},
+		{"structure-after-overload", "overloaded", "error_max_structured_output_retries", "", "", harness.CauseStructuredOutputLimit, "error_max_structured_output_retries"},
+		{"context", "invalid_request", "error_during_execution", "prompt_too_long", "", harness.CauseContextLimit, "prompt_too_long"},
+		{"context-stop", "", "error_during_execution", "", "model_context_window_exceeded", harness.CauseContextLimit, "model_context_window_exceeded"},
+		{"model", "model_not_found", "error_during_execution", "", "", harness.CauseModelUnavailable, "model_not_found"},
+		{"organization", "oauth_org_not_allowed", "error_during_execution", "", "", harness.CausePermissionDenied, "oauth_org_not_allowed"},
+		{"turns", "", "error_max_turns", "", "", harness.CauseUnknown, "error_max_turns"},
+		{"budget", "", "error_max_budget_usd", "", "", harness.CauseUnknown, "error_max_budget_usd"},
+		{"execution", "", "error_during_execution", "", "", harness.CauseUnknown, "error_during_execution"},
+		{"partial-overload", "overloaded", "error_during_execution", "", "", harness.CauseUnknown, "overloaded"},
+		{"unknown-values", "secret-credential", "secret-subtype", "secret-reason", "secret-stop", harness.CauseUnknown, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			result, _ := json.Marshal(map[string]any{"type": "result", "is_error": true, "subtype": tc.subtype, "terminal_reason": tc.reason, "stop_reason": tc.stop, "errors": []string{"secret-error"}, "permission_denials": []any{map[string]any{"tool_name": "secret-tool", "tool_input": "secret-data"}}})
@@ -145,16 +147,16 @@ func TestClaudeTerminalDiagnosticsStaySafeAndNonretryable(t *testing.T) {
 				data = append(data, append(b, '\n')...)
 			}
 			data = append(data, result...)
-			_, _, err := parseClaude(data, nil)
+			_, err := parseClaude(data, nil)
 			var failure *RequestError
-			if !errors.As(err, &failure) || failure.Kind != tc.kind || failure.Code != tc.code || failure.Engine != "claude" || failure.Phase != PhaseResponse || failure.ExitCode != nil || failure.Retryable() {
+			if !errors.As(err, &failure) || failure.Cause != tc.kind || failure.Code != tc.code || failure.Engine != "claude" || failure.Phase != PhaseResponse || failure.ExitCode != nil || failure.Retryable() {
 				t.Fatalf("unexpected diagnostic: %#v (%v)", failure, err)
 			}
 			encoded, _ := json.Marshal(failure)
 			if strings.Contains(string(encoded)+fmt.Sprintf("%#v", failure)+err.Error(), "secret") {
 				t.Fatal("diagnostic retained untrusted data")
 			}
-			if other := claudeTerminalDiagnostic(data); other == nil || other.Kind != failure.Kind || other.Code != failure.Code || other.Retryable() {
+			if other := claudeTerminalDiagnostic(data); other == nil || other.Cause != failure.Cause || other.Code != failure.Code || other.Retryable() {
 				t.Fatalf("exit failure diagnostic differs: %#v", other)
 			}
 		})
@@ -165,19 +167,19 @@ func TestProcessDiagnosticsDoNotBorrowRetryPermission(t *testing.T) {
 	data := []byte(`{"type":"assistant","error":"overloaded"}` + "\n" + `{"type":"result","is_error":true,"subtype":"error_during_execution"}`)
 	for _, tc := range []struct {
 		err  error
-		kind ErrorKind
+		kind harness.Cause
 		code string
 	}{
-		{context.DeadlineExceeded, ErrorTimeout, "deadline_exceeded"},
-		{errOutputLimit, ErrorUnknown, "output_limit"},
-		{errors.New("secret transport failure"), ErrorUnknown, ""},
+		{context.DeadlineExceeded, harness.CauseTimeout, "deadline_exceeded"},
+		{errOutputLimit, harness.CauseUnknown, "output_limit"},
+		{errors.New("secret transport failure"), harness.CauseUnknown, ""},
 	} {
 		err := processRequestFailure("claude", data, tc.err)
 		var failure *RequestError
-		if !errors.As(err, &failure) || failure.Kind != tc.kind || failure.Code != tc.code || failure.Phase != PhaseProcess || failure.ExitCode != nil || failure.Retryable() {
+		if !errors.As(err, &failure) || failure.Cause != tc.kind || failure.Code != tc.code || failure.Phase != PhaseProcess || failure.ExitCode != nil || failure.Retryable() {
 			t.Fatalf("%#v", failure)
 		}
-		if errors.Is(err, context.DeadlineExceeded) != (tc.kind == ErrorTimeout) {
+		if errors.Is(err, context.DeadlineExceeded) != (tc.kind == harness.CauseTimeout) {
 			t.Fatal("lost timeout identity")
 		}
 		if strings.Contains(fmt.Sprintf("%#v", failure), "secret") {
@@ -192,7 +194,7 @@ func TestProcessDiagnosticsDoNotBorrowRetryPermission(t *testing.T) {
 func TestCodexPreflightModelDiagnostic(t *testing.T) {
 	_, err := restrictedCatalog([]byte(`{"models":[]}`), "secret-model-name", "high")
 	var failure *RequestError
-	if !errors.As(err, &failure) || failure.Kind != ErrorModelUnavailable || failure.Code != "model_not_in_catalog" || failure.Engine != "codex" || failure.Phase != PhasePreflight || failure.Retryable() {
+	if !errors.As(err, &failure) || failure.Cause != harness.CauseModelUnavailable || failure.Code != "model_not_in_catalog" || failure.Engine != "codex" || failure.Phase != PhasePreflight || failure.Retryable() {
 		t.Fatalf("%#v", failure)
 	}
 	if strings.Contains(err.Error(), "secret") {
@@ -201,7 +203,10 @@ func TestCodexPreflightModelDiagnostic(t *testing.T) {
 }
 
 func TestMalformedResponsesHaveSafeDiagnostics(t *testing.T) {
-	for _, tc := range []struct{ engine, data, code string }{
+	for _, tc := range []struct {
+		engine     harness.Engine
+		data, code string
+	}{
 		{"claude", `{"type":"result","subtype":"success","structured_output":{"secret":"secret"}}`, "invalid_action_envelope"},
 		{"claude", "secret malformed JSON", "malformed_event_json"},
 		{"claude", "", "missing_terminal_result"},
@@ -210,10 +215,10 @@ func TestMalformedResponsesHaveSafeDiagnostics(t *testing.T) {
 		{"codex", "", "missing_terminal_result"},
 	} {
 		var err error
-		if tc.engine == "claude" {
-			_, _, err = parseClaude([]byte(tc.data), nil)
+		if tc.engine == harness.Claude {
+			_, err = parseClaude([]byte(tc.data), nil)
 		} else {
-			_, _, err = parseCodex([]byte(tc.data), nil)
+			_, err = parseCodex([]byte(tc.data), nil)
 		}
 		var f *RequestError
 		if !errors.As(err, &f) || f.Code != tc.code || f.Phase != PhaseResponse || f.Engine != tc.engine || f.Retryable() {
@@ -229,10 +234,83 @@ func TestMalformedResponsesHaveSafeDiagnostics(t *testing.T) {
 func TestClaudeTerminalLimitsNeverBorrowEarlierOverload(t *testing.T) {
 	for _, subtype := range []string{"error_max_turns", "error_max_budget_usd", "error_max_structured_output_retries", "future_subtype"} {
 		data := []byte(`{"type":"assistant","error":"overloaded"}` + "\n" + `{"type":"result","is_error":true,"subtype":"` + subtype + `"}`)
-		_, _, err := parseClaude(data, nil)
+		_, err := parseClaude(data, nil)
 		var f *RequestError
 		if !errors.As(err, &f) || f.Retryable() {
 			t.Fatalf("%s improperly retryable: %#v", subtype, f)
 		}
+	}
+}
+
+// Every RequestError reports itself in the shared vocabulary, so a caller can
+// classify a completion failure the same way as any other mode's.
+func TestRequestErrorFacts(t *testing.T) {
+	exitCode := 2
+	for _, tc := range []struct {
+		name   string
+		err    *RequestError
+		family harness.Family
+	}{
+		{"unusable engine", preflightFailure(harness.Grok, "unsupported_engine"), harness.FailureCapability},
+		{"advertised native tools", &RequestError{Cause: harness.CauseUnknown, Engine: harness.Claude, Phase: PhaseResponse, Code: "unexpected_native_tool_catalog"}, harness.FailureRequest},
+		{"attempted native tool", &RequestError{Cause: harness.CauseUnknown, Engine: harness.Claude, Phase: PhaseResponse, Code: "unexpected_native_tool_call"}, harness.FailureRequest},
+		{"codex native tool event", &RequestError{Cause: harness.CauseUnknown, Engine: harness.Codex, Phase: PhaseResponse, Code: "unexpected_native_tool"}, harness.FailureRequest},
+		{"probe tool surface", preflightFailure(harness.Codex, "probe_unexpected_tools"), harness.FailureCapability},
+		{"probe changed model", preflightFailure(harness.Codex, "probe_changed_model"), harness.FailureCapability},
+		{"probe unmapped mismatch", preflightFailure(harness.Claude, "probe_mismatch"), harness.FailureCapability},
+		{"effort catalog", preflightFailure(harness.Codex, "missing_effort_catalog"), harness.FailureCapability},
+		{"unsupported effort", preflightFailure(harness.Codex, "unsupported_effort"), harness.FailureCapability},
+		{"dialect", preflightFailure(harness.OpenAICompatible, "api_dialect_unsupported"), harness.FailureCapability},
+		{"effort parameter", preflightFailure(harness.OpenAICompatible, "api_effort_parameter_unsupported"), harness.FailureCapability},
+
+		{"model required", preflightFailure(harness.Codex, "model_required"), harness.FailurePreflight},
+		{"probe timeout", preflightFailure(harness.Claude, "probe_timeout"), harness.FailurePreflight},
+		{"missing executable", preflightFailure(harness.Claude, "executable_not_found"), harness.FailurePreflight},
+		{"dialect required", preflightFailure(harness.OpenAICompatible, "api_dialect_required"), harness.FailurePreflight},
+		{"credential source", &RequestError{Cause: harness.CauseAuthentication, Engine: harness.OpenAICompatible, Phase: PhasePreflight, Code: "credential_unavailable"}, harness.FailurePreflight},
+		{"context bytes", &RequestError{Cause: harness.CauseContextLimit, Engine: harness.Codex, Phase: PhasePreflight, Code: "context_bytes"}, harness.FailurePreflight},
+
+		{"process exit", &RequestError{Cause: harness.CauseUnknown, Engine: harness.Codex, Phase: PhaseProcess, ExitCode: &exitCode}, harness.FailureProcess},
+		{"process timeout", &RequestError{Cause: harness.CauseTimeout, Engine: harness.Claude, Phase: PhaseProcess, Code: "deadline_exceeded"}, harness.FailureProcess},
+
+		{"transport", &RequestError{Cause: harness.CauseUnknown, Engine: harness.OpenAICompatible, Phase: PhaseTransport, Code: "transport_failed"}, harness.FailureRequest},
+		{"rate limited", &RequestError{Cause: harness.CauseRateLimited, Engine: harness.OpenAICompatible, Phase: PhaseResponse, Code: "http_429", RetryAfter: 7 * time.Second}, harness.FailureRequest},
+		{"terminal failure", &RequestError{Cause: harness.CauseContextLimit, Engine: harness.Claude, Phase: PhaseResponse, Code: "prompt_too_long", ExitCode: &exitCode}, harness.FailureRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			facts, ok := harness.ErrorFacts(fmt.Errorf("caller context: %w", tc.err))
+			want := harness.Facts{
+				Engine:     tc.err.Engine,
+				Operation:  harness.Complete,
+				Family:     tc.family,
+				Cause:      tc.err.Cause,
+				Phase:      string(tc.err.Phase),
+				Code:       tc.err.Code,
+				ExitCode:   tc.err.ExitCode,
+				RetryAfter: tc.err.RetryAfter,
+				Retryable:  tc.err.Retryable(),
+			}
+			if !ok || facts != want {
+				t.Fatalf("facts %+v, want %+v", facts, want)
+			}
+		})
+	}
+}
+
+// Facts come from what Complete actually returned, end to end.
+func TestCompleteFailuresCarryFacts(t *testing.T) {
+	_, err := Complete(context.Background(), Config{Provider: harness.Provider{Engine: harness.Grok}}, nil, nil)
+	facts, ok := harness.ErrorFacts(err)
+	if !ok || facts.Engine != harness.Grok || facts.Family != harness.FailureCapability || facts.Code != "unsupported_engine" || facts.Operation != harness.Complete || facts.Retryable {
+		t.Fatalf("%+v", facts)
+	}
+	_, err = Complete(context.Background(), apiConfig(respondWith(429, ``, "Retry-After", "3")), userMessage, nil)
+	facts, ok = harness.ErrorFacts(err)
+	if !ok || facts.Family != harness.FailureRequest || facts.Cause != harness.CauseRateLimited || facts.Phase != "response" || facts.RetryAfter != 3*time.Second || !facts.Retryable {
+		t.Fatalf("%+v", facts)
+	}
+	encoded, _ := json.Marshal(facts)
+	if strings.Contains(string(encoded), "secret") {
+		t.Fatal("facts retained provider text or credential")
 	}
 }

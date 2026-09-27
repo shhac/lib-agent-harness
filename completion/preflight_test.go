@@ -11,9 +11,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/shhac/lib-agent-harness"
 )
 
-func requireDiagnostic(t *testing.T, err error, engine string, phase ErrorPhase, code string) *RequestError {
+func requireDiagnostic(t *testing.T, err error, engine harness.Engine, phase ErrorPhase, code string) *RequestError {
 	t.Helper()
 	var failure *RequestError
 	if !errors.As(err, &failure) || failure.Engine != engine || failure.Phase != phase || failure.Code != code {
@@ -37,19 +39,19 @@ func TestCompletePreflightDiagnostics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, engine := range []string{"claude", "codex"} {
+	for _, engine := range []harness.Engine{harness.Claude, harness.Codex} {
 		for _, scenario := range []struct{ name, code string }{
 			{"missing model", "model_required"},
 			{"limits", "invalid_limits"},
-			{"home", engine + "_home_invalid"},
+			{"home", string(engine) + "_home_invalid"},
 			{"scratch", "scratch_directory"},
 			{"tool catalog", "invalid_tool_catalog"},
 			{"probe startup", "probe_no_requests"},
 			{"probe timeout", "probe_timeout"},
 			{"missing executable", "executable_not_found"},
 		} {
-			t.Run(engine+"/"+scenario.name, func(t *testing.T) {
-				cfg := Config{Engine: engine, Model: "test-model", Effort: "high", CodexHome: t.TempDir(), ClaudeHome: t.TempDir(), CodexBin: binary, ClaudeBin: binary}
+			t.Run(string(engine)+"/"+scenario.name, func(t *testing.T) {
+				cfg := Config{Provider: cliProvider(engine, binary, t.TempDir()), Model: "test-model", Effort: "high"}
 				cfg.BeforeRequest = func(context.Context) error { t.Fatal("preflight failure reached request hook"); return nil }
 				cfg.run = func(_ context.Context, _ string, args []string, _ string, _ []string, _ string) ([]byte, error) {
 					if len(args) > 0 && args[0] == "debug" {
@@ -67,18 +69,16 @@ func TestCompletePreflightDiagnostics(t *testing.T) {
 				case "limits":
 					cfg.MaxContextBytes = -1
 				case "home":
-					cfg.ClaudeHome = "secret-relative"
-					cfg.CodexHome = "secret-relative"
+					cfg.Provider.CLI.Home = "secret-relative"
 				case "scratch":
 					cfg.WorkDirRoot = filepath.Join(t.TempDir(), "secret-missing")
 				case "tool catalog":
 					tools = []Tool{{Type: "secret-invalid"}}
 				case "missing executable":
-					cfg.ClaudeBin = filepath.Join(t.TempDir(), "secret-missing")
-					cfg.CodexBin = cfg.ClaudeBin
+					cfg.Provider.CLI.Binary = filepath.Join(t.TempDir(), "secret-missing")
 					cfg.run = nil
 				}
-				_, _, err := Complete(context.Background(), cfg, []Message{{Role: "user", Content: "secret prompt"}}, tools)
+				_, err := Complete(context.Background(), cfg, []Message{{Role: "user", Content: "secret prompt"}}, tools)
 				requireDiagnostic(t, err, engine, PhasePreflight, scenario.code)
 				if scenario.name == "probe timeout" && !errors.Is(err, context.DeadlineExceeded) {
 					t.Fatal("lost deadline identity")
@@ -86,7 +86,7 @@ func TestCompletePreflightDiagnostics(t *testing.T) {
 			})
 		}
 	}
-	_, _, err = Complete(context.Background(), Config{Engine: "secret-engine"}, nil, nil)
+	_, err = Complete(context.Background(), Config{Provider: harness.Provider{Engine: "secret-engine"}}, nil, nil)
 	requireDiagnostic(t, err, "", PhasePreflight, "unsupported_engine")
 }
 
@@ -106,11 +106,11 @@ func TestCodexCatalogDiagnostics(t *testing.T) {
 		{name: "unsupported effort", catalog: testCatalog, effort: "secret", code: "unsupported_effort"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := Config{Engine: "codex", CodexBin: binary, CodexHome: t.TempDir(), Model: "test-model", Effort: tc.effort}
+			cfg := Config{Provider: cliProvider(harness.Codex, binary, t.TempDir()), Model: "test-model", Effort: tc.effort}
 			cfg.run = func(context.Context, string, []string, string, []string, string) ([]byte, error) {
 				return []byte(tc.catalog), tc.err
 			}
-			_, _, err := Complete(context.Background(), cfg, nil, nil)
+			_, err := Complete(context.Background(), cfg, nil, nil)
 			requireDiagnostic(t, err, "codex", PhasePreflight, tc.code)
 		})
 	}
@@ -128,7 +128,7 @@ func TestStartDiagnosticsDiscardOSPaths(t *testing.T) {
 		{&exec.Error{Name: "secret", Err: exec.ErrDot}, "executable_relative"},
 		{&os.PathError{Op: "fork/exec", Path: "secret", Err: errors.New("secret")}, "process_start_failed"},
 	} {
-		for _, engine := range []string{"claude", "codex"} {
+		for _, engine := range []harness.Engine{harness.Claude, harness.Codex} {
 			requireDiagnostic(t, processRequestFailure(engine, []byte("secret"), tc.err), engine, PhaseProcess, tc.code)
 		}
 	}
@@ -164,11 +164,11 @@ func TestCompletionPreservesCallerBeforeRequestError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, engine := range []string{"claude", "codex"} {
-		t.Run(engine, func(t *testing.T) {
+	for _, engine := range []harness.Engine{harness.Claude, harness.Codex} {
+		t.Run(string(engine), func(t *testing.T) {
 			sentinel := errors.New("caller reservation denied")
 			hookErr := fmt.Errorf("caller context: %w", sentinel)
-			cfg := Config{Engine: engine, Model: "test-model", Effort: "high", CodexBin: binary, ClaudeBin: binary, CodexHome: t.TempDir(), BeforeRequest: func(context.Context) error { return hookErr }}
+			cfg := Config{Provider: cliProvider(engine, binary, t.TempDir()), Model: "test-model", Effort: "high", BeforeRequest: func(context.Context) error { return hookErr }}
 			cfg.run = func(_ context.Context, _ string, args []string, _ string, env []string, _ string) ([]byte, error) {
 				if args[0] == "debug" {
 					return []byte(testCatalog), nil
@@ -190,10 +190,64 @@ func TestCompletionPreservesCallerBeforeRequestError(t *testing.T) {
 				t.Fatal("inference ran after rejected hook")
 				return nil, nil
 			}
-			_, _, err := Complete(context.Background(), cfg, nil, nil)
+			_, err := Complete(context.Background(), cfg, nil, nil)
 			if err != hookErr || !errors.Is(err, sentinel) {
 				t.Fatalf("caller hook error replaced: %v", err)
 			}
 		})
+	}
+}
+
+// An engine completion cannot run is refused before anything else: before the
+// provider, model or limits are read, and before any process, credential or
+// request.
+func TestCompleteRefusesUnusableEnginesFirst(t *testing.T) {
+	for _, tc := range []struct {
+		engine harness.Engine
+		want   harness.Engine
+	}{
+		{harness.Grok, harness.Grok},
+		{"", ""},
+		{"secret-engine", ""},
+	} {
+		t.Run(string(tc.engine), func(t *testing.T) {
+			cfg := Config{
+				Provider:        harness.Provider{Engine: tc.engine, CLI: harness.CLI{Binary: "secret-binary", Home: "secret-relative"}, API: harness.API{BaseURL: "http://secret.invalid"}},
+				MaxContextBytes: -1,
+				BeforeRequest:   func(context.Context) error { t.Fatal("unsupported engine reached the request hook"); return nil },
+				run: func(context.Context, string, []string, string, []string, string) ([]byte, error) {
+					t.Fatal("unsupported engine started a process")
+					return nil, nil
+				},
+			}
+			_, err := Complete(context.Background(), cfg, userMessage, nil)
+			requireDiagnostic(t, err, tc.want, PhasePreflight, "unsupported_engine")
+		})
+	}
+}
+
+// A provider that sets the half its engine does not read is refused rather
+// than half-read, before any process, credential or request.
+func TestCompleteRefusesAMalformedProvider(t *testing.T) {
+	for _, engine := range cliEngines {
+		t.Run(string(engine), func(t *testing.T) {
+			cfg := Config{Provider: cliProvider(engine, "secret-binary", ""), Model: "test-model"}
+			cfg.Provider.API.Credentials = func(context.Context) (string, error) { t.Fatal("credential resolved"); return "", nil }
+			cfg.run = func(context.Context, string, []string, string, []string, string) ([]byte, error) {
+				t.Fatal("malformed provider started a process")
+				return nil, nil
+			}
+			_, err := Complete(context.Background(), cfg, userMessage, nil)
+			requireDiagnostic(t, err, engine, PhasePreflight, "api_config_for_cli_engine")
+		})
+	}
+	api := respondWith(200, chatBody(chatChoice(`"stop"`, `{"content":"ok"}`)))
+	cfg := apiConfig(api)
+	cfg.Provider.CLI.Home = "/secret-home"
+	cfg.Provider.API.Credentials = func(context.Context) (string, error) { t.Fatal("credential resolved"); return "", nil }
+	_, err := Complete(context.Background(), cfg, userMessage, nil)
+	requireDiagnostic(t, err, harness.OpenAICompatible, PhasePreflight, "cli_config_for_api_engine")
+	if api.count() != 0 {
+		t.Fatal("malformed provider reached the transport")
 	}
 }

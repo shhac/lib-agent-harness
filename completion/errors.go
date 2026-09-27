@@ -9,23 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/claudeproto"
-)
-
-// ErrorKind identifies a failure without retaining provider text or credentials.
-type ErrorKind string
-
-const (
-	ErrorOverloaded            ErrorKind = "overloaded"
-	ErrorRateLimited           ErrorKind = "rate_limited"
-	ErrorUnavailable           ErrorKind = "unavailable"
-	ErrorAuthentication        ErrorKind = "authentication"
-	ErrorContextLimit          ErrorKind = "context_limit"
-	ErrorModelUnavailable      ErrorKind = "model_unavailable"
-	ErrorStructuredOutputLimit ErrorKind = "structured_output_limit"
-	ErrorPermissionDenied      ErrorKind = "permission_denied"
-	ErrorTimeout               ErrorKind = "timeout"
-	ErrorUnknown               ErrorKind = "unknown"
 )
 
 // ErrorPhase identifies where a failure was observed, not whether it spent quota.
@@ -42,11 +27,11 @@ const (
 // RequestError describes a failed inference. RetryAfter is zero when the native
 // protocol supplies no trustworthy delay. The library never retries requests.
 type RequestError struct {
-	Kind       ErrorKind
+	Cause      harness.Cause
 	RetryAfter time.Duration
 	// Engine, Phase and Code contain only library constants or recognized native
 	// enums. Unknown native values are omitted, never copied from provider text.
-	Engine string
+	Engine harness.Engine
 	Phase  ErrorPhase
 	Code   string
 	// ExitCode is present only when the process actually exited with this status.
@@ -58,27 +43,27 @@ func (e *RequestError) Error() string {
 	if detail := e.diagnosticDetail(); detail != "" {
 		return detail
 	}
-	switch e.Kind {
-	case ErrorOverloaded:
+	switch e.Cause {
+	case harness.CauseOverloaded:
 		return "model provider overloaded"
-	case ErrorRateLimited:
+	case harness.CauseRateLimited:
 		return "model provider rate limited"
-	case ErrorUnavailable:
+	case harness.CauseUnavailable:
 		return "model provider unavailable"
-	case ErrorAuthentication:
+	case harness.CauseAuthentication:
 		return "model authentication failed"
-	case ErrorContextLimit:
+	case harness.CauseContextLimit:
 		return "model context limit reached"
-	case ErrorModelUnavailable:
-		if e.Engine == EngineOpenAICompatible {
+	case harness.CauseModelUnavailable:
+		if e.Engine == harness.OpenAICompatible {
 			return "selected model is unavailable at the configured endpoint; check the model name and account access"
 		}
 		return "selected model is unavailable; check the installed CLI model catalog and account access"
-	case ErrorStructuredOutputLimit:
+	case harness.CauseStructuredOutputLimit:
 		return "model exhausted structured output attempts"
-	case ErrorPermissionDenied:
+	case harness.CausePermissionDenied:
 		return "model request permission denied"
-	case ErrorTimeout:
+	case harness.CauseTimeout:
 		return "model request timed out; outcome or usage may be unknown"
 	default:
 		return "model request failed; outcome or usage may be unknown"
@@ -87,7 +72,7 @@ func (e *RequestError) Error() string {
 
 // Unwrap preserves deadline detection without retaining a raw subprocess error.
 func (e *RequestError) Unwrap() error {
-	if e != nil && e.Kind == ErrorTimeout {
+	if e != nil && e.Cause == harness.CauseTimeout {
 		return context.DeadlineExceeded
 	}
 	return nil
@@ -95,13 +80,13 @@ func (e *RequestError) Unwrap() error {
 
 // processRequestFailure records only safe process facts. A timeout/cancellation
 // cannot borrow retry permission from output printed before the process stopped.
-func processRequestFailure(engine string, data []byte, err error) error {
+func processRequestFailure(engine harness.Engine, data []byte, err error) error {
 	if errors.Is(err, context.Canceled) {
 		return context.Canceled
 	}
-	failure := &RequestError{Kind: ErrorUnknown, Engine: engine, Phase: PhaseProcess}
+	failure := &RequestError{Cause: harness.CauseUnknown, Engine: engine, Phase: PhaseProcess}
 	if errors.Is(err, context.DeadlineExceeded) {
-		failure.Kind, failure.Code = ErrorTimeout, "deadline_exceeded"
+		failure.Cause, failure.Code = harness.CauseTimeout, "deadline_exceeded"
 		return failure
 	}
 	if errors.Is(err, errOutputLimit) {
@@ -116,12 +101,12 @@ func processRequestFailure(engine string, data []byte, err error) error {
 		code := exit.ExitCode()
 		if code > 0 {
 			var terminal *RequestError
-			if engine == "claude" {
+			if engine == harness.Claude {
 				terminal = claudeRequestFailure(data)
 			} else {
 				terminal = codexRequestFailure(data)
 			}
-			if terminal == nil && engine == "claude" {
+			if terminal == nil && engine == harness.Claude {
 				terminal = claudeTerminalDiagnostic(data)
 			}
 			if terminal != nil {
@@ -134,25 +119,25 @@ func processRequestFailure(engine string, data []byte, err error) error {
 }
 
 func claudeTerminalFailure(subtype, reason, stop, assistantError string) *RequestError {
-	f := &RequestError{Kind: ErrorUnknown, Engine: "claude", Phase: PhaseResponse, Code: claudeproto.ResultSubtype(subtype)}
+	f := &RequestError{Cause: harness.CauseUnknown, Engine: harness.Claude, Phase: PhaseResponse, Code: claudeproto.ResultSubtype(subtype)}
 	if code := claudeproto.ErrorCode(assistantError); code != "" {
 		f.Code = code
 	}
 	switch assistantError {
 	case "authentication_failed", "cloud_credential_error":
-		f.Kind = ErrorAuthentication
+		f.Cause = harness.CauseAuthentication
 	case "oauth_org_not_allowed", "account_on_hold", "verification_required":
-		f.Kind = ErrorPermissionDenied
+		f.Cause = harness.CausePermissionDenied
 	case "model_not_found":
-		f.Kind = ErrorModelUnavailable
+		f.Cause = harness.CauseModelUnavailable
 	}
 	// These terminal facts take precedence over earlier assistant errors. None
 	// permit automatic retry even if a transient rejection occurred earlier.
 	if subtype == "error_max_structured_output_retries" || reason == "structured_output_retry_exhausted" {
-		f.Kind, f.Code = ErrorStructuredOutputLimit, "error_max_structured_output_retries"
+		f.Cause, f.Code = harness.CauseStructuredOutputLimit, "error_max_structured_output_retries"
 	}
 	if reason == "prompt_too_long" || stop == "model_context_window_exceeded" {
-		f.Kind, f.Code = ErrorContextLimit, "model_context_window_exceeded"
+		f.Cause, f.Code = harness.CauseContextLimit, "model_context_window_exceeded"
 		if reason == "prompt_too_long" {
 			f.Code = reason
 		}
@@ -197,7 +182,56 @@ func claudeTerminalDiagnostic(data []byte) *RequestError {
 // Retryable reports only explicit provider transient rejections with no partial
 // output. It is permission to apply caller retry policy, not proof of zero spend.
 func (e *RequestError) Retryable() bool {
-	return e != nil && (e.Kind == ErrorOverloaded || e.Kind == ErrorRateLimited || e.Kind == ErrorUnavailable)
+	return e != nil && (e.Cause == harness.CauseOverloaded || e.Cause == harness.CauseRateLimited || e.Cause == harness.CauseUnavailable)
+}
+
+// HarnessFacts reports the failure in the vocabulary every mode shares.
+func (e *RequestError) HarnessFacts() harness.Facts {
+	return harness.Facts{
+		Engine:     e.Engine,
+		Operation:  harness.Complete,
+		Family:     e.family(),
+		Cause:      e.Cause,
+		Phase:      string(e.Phase),
+		Code:       e.Code,
+		ExitCode:   e.ExitCode,
+		RetryAfter: e.RetryAfter,
+		Retryable:  e.Retryable(),
+	}
+}
+
+// family keeps capability for refusals made before any request: a native
+// tool seen in a response is the same fault, but that request may have been
+// billed, which a capability failure promises it was not.
+func (e *RequestError) family() harness.Family {
+	if capabilityCode(e.Code) && e.Phase == PhasePreflight {
+		return harness.FailureCapability
+	}
+	switch e.Phase {
+	case PhasePreflight:
+		return harness.FailurePreflight
+	case PhaseProcess:
+		return harness.FailureProcess
+	}
+	return harness.FailureRequest
+}
+
+// capabilityCode names refusals the same configuration will always repeat:
+// the engine cannot complete here, the installed CLI's tool surface could not
+// be proven closed, or the endpoint or model does not offer what was asked.
+// Timeouts, missing files and credential failures can clear, so they are not.
+func capabilityCode(code string) bool {
+	switch code {
+	case "unsupported_engine",
+		"unexpected_native_tool", "unexpected_native_tool_catalog", "unexpected_native_tool_call",
+		"probe_mismatch", "probe_invalid_request", "probe_unexpected_tools", "probe_invalid_schema",
+		"probe_changed_schema", "probe_changed_effort", "probe_instruction_type",
+		"probe_unexpected_instructions", "probe_missing_instructions", "probe_changed_model",
+		"missing_effort_catalog", "unsupported_effort",
+		"api_dialect_unsupported", "api_effort_parameter_unsupported":
+		return true
+	}
+	return false
 }
 
 // Claude emits synthetic assistant error messages followed by an error result.
@@ -205,7 +239,7 @@ func (e *RequestError) Retryable() bool {
 // Unknown result text, transport failures and malformed frames are not evidence
 // of an overload.
 func claudeRequestFailure(data []byte) *RequestError {
-	kind := ErrorUnknown
+	cause := harness.CauseUnknown
 	var assistantError, subtype, reason, stop string
 	failed, marked := false, false
 	for _, line := range bytes.Split(data, []byte("\n")) {
@@ -246,13 +280,13 @@ func claudeRequestFailure(data []byte) *RequestError {
 			assistantError = e.Error
 			switch e.Error {
 			case "rate_limit":
-				kind = ErrorRateLimited
+				cause = harness.CauseRateLimited
 			case "overloaded":
-				kind = ErrorOverloaded
+				cause = harness.CauseOverloaded
 			case "server_error":
-				kind = ErrorUnavailable
+				cause = harness.CauseUnavailable
 			case "authentication_failed":
-				kind = ErrorAuthentication
+				cause = harness.CauseAuthentication
 			}
 		case "result":
 			if !e.IsError || e.Subtype == "success" || len(e.Structured) > 0 {
@@ -278,8 +312,8 @@ func claudeRequestFailure(data []byte) *RequestError {
 	}
 	if failed && marked {
 		failure := claudeTerminalFailure(subtype, reason, stop, assistantError)
-		if failure.Kind == ErrorUnknown && subtype == "error_during_execution" {
-			failure.Kind = kind
+		if failure.Cause == harness.CauseUnknown && subtype == "error_during_execution" {
+			failure.Cause = cause
 		}
 		return failure
 	}
@@ -320,26 +354,26 @@ func codexRequestFailure(data []byte) *RequestError {
 	if terminal == "" {
 		return nil
 	}
-	kind := ErrorUnknown
+	cause := harness.CauseUnknown
 	code := "turn.failed"
 	switch terminal {
 	case "Selected model is at capacity. Please try a different model.":
-		kind, code = ErrorOverloaded, "model_capacity"
+		cause, code = harness.CauseOverloaded, "model_capacity"
 	case "Codex ran out of room in the model's context window. Start a new thread or clear earlier history before retrying.":
-		kind, code = ErrorContextLimit, "context_window_exceeded"
+		cause, code = harness.CauseContextLimit, "context_window_exceeded"
 	default:
 		for _, status := range []struct {
-			code string
-			kind ErrorKind
+			code  string
+			cause harness.Cause
 		}{
-			{"429 Too Many Requests", ErrorRateLimited}, {"503 Service Unavailable", ErrorUnavailable}, {"529 <unknown status code>", ErrorOverloaded},
-			{"401 Unauthorized", ErrorAuthentication}, {"403 Forbidden", ErrorPermissionDenied},
+			{"429 Too Many Requests", harness.CauseRateLimited}, {"503 Service Unavailable", harness.CauseUnavailable}, {"529 <unknown status code>", harness.CauseOverloaded},
+			{"401 Unauthorized", harness.CauseAuthentication}, {"403 Forbidden", harness.CausePermissionDenied},
 		} {
 			if strings.HasPrefix(terminal, "unexpected status "+status.code+": ") || terminal == "exceeded retry limit, last status: "+status.code || strings.HasPrefix(terminal, "exceeded retry limit, last status: "+status.code+", request id: ") {
-				kind, code = status.kind, "http_"+strings.Fields(status.code)[0]
+				cause, code = status.cause, "http_"+strings.Fields(status.code)[0]
 				break
 			}
 		}
 	}
-	return &RequestError{Kind: kind, Engine: "codex", Phase: PhaseResponse, Code: code}
+	return &RequestError{Cause: cause, Engine: harness.Codex, Phase: PhaseResponse, Code: code}
 }

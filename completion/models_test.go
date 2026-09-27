@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/shhac/lib-agent-harness"
 )
 
 const modelCatalogFixture = `{"id":1,"result":{}}
@@ -56,11 +58,11 @@ func TestModelCatalogProtocolAndPagination(t *testing.T) {
 }
 
 func TestModelDiscoveryPreservesProfileAndSanitizesErrors(t *testing.T) {
-	cfg := Config{Engine: "codex", CodexHome: "/test/chosen-login", CodexBin: "chosen-codex"}
+	cfg := Config{Provider: cliProvider(harness.Codex, "chosen-codex", "/test/chosen-login")}
 	called := false
 	_, err := discoverModels(context.Background(), cfg, func(ctx context.Context, actual Config, exchange func(io.Reader, io.Writer) error) error {
 		called = true
-		if actual.CodexHome != cfg.CodexHome || actual.CodexBin != cfg.CodexBin {
+		if actual.Provider.Engine != cfg.Provider.Engine || actual.Provider.CLI != cfg.Provider.CLI {
 			t.Fatal(actual)
 		}
 		deadline, ok := ctx.Deadline()
@@ -72,12 +74,26 @@ func TestModelDiscoveryPreservesProfileAndSanitizesErrors(t *testing.T) {
 	if !called || err == nil || strings.Contains(err.Error(), "secret-token") {
 		t.Fatal(err)
 	}
-	cfg.Engine = "openai-compatible"
-	called = false
-	_, err = discoverModels(context.Background(), cfg, func(context.Context, Config, func(io.Reader, io.Writer) error) error { called = true; return nil })
-	if called || err == nil {
-		t.Fatal("unsupported engine invoked Codex")
+	for _, engine := range []harness.Engine{harness.OpenAICompatible, harness.Grok, "secret-engine"} {
+		cfg.Provider.Engine = engine
+		called = false
+		_, err = discoverModels(context.Background(), cfg, func(context.Context, Config, func(io.Reader, io.Writer) error) error { called = true; return nil })
+		if called || err == nil {
+			t.Fatalf("%s: unsupported engine invoked a CLI", engine)
+		}
 	}
+}
+
+// A provider that sets the half its engine does not read is refused rather
+// than half-read, before any catalog subprocess starts.
+func TestModelDiscoveryRefusesAMalformedProvider(t *testing.T) {
+	cfg := Config{Provider: cliProvider(harness.Codex, "chosen-codex", "")}
+	cfg.Provider.API.BaseURL = "https://gateway.invalid/v1"
+	_, err := discoverModels(context.Background(), cfg, func(context.Context, Config, func(io.Reader, io.Writer) error) error {
+		t.Fatal("malformed provider reached the catalog transport")
+		return nil
+	})
+	requireDiagnostic(t, err, harness.Codex, PhasePreflight, "api_config_for_cli_engine")
 }
 
 func TestModelCatalogFailsClosed(t *testing.T) {

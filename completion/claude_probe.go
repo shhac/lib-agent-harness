@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/shhac/lib-agent-harness"
 )
 
 // probeClaude verifies the installed CLI's outbound tool and instruction surface
@@ -22,7 +24,7 @@ func probeClaude(ctx context.Context, cfg Config, bin string, args []string, dir
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return preflightFailure("claude", "probe_listen_failed")
+		return preflightFailure(harness.Claude, "probe_listen_failed")
 	}
 	var mu sync.Mutex
 	requests := 0
@@ -65,25 +67,25 @@ func probeClaude(ctx context.Context, cfg Config, bin string, args []string, dir
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if failure := probeRunFailure("claude", ctx, runErr); failure != nil {
+	if failure := probeRunFailure(harness.Claude, ctx, runErr); failure != nil {
 		return failure
 	}
 	mu.Lock()
 	defer mu.Unlock()
 	if probeCtx.Err() != nil {
-		return preflightFailure("claude", "probe_timeout")
+		return preflightFailure(harness.Claude, "probe_timeout")
 	}
 	if requests == 0 {
-		return preflightFailure("claude", "probe_no_requests")
+		return preflightFailure(harness.Claude, "probe_no_requests")
 	}
 	// Claude may retry a rejected request using a compatibility fallback, even
 	// with MAX_RETRIES=0. Every request must still prove the same restricted
 	// tool, schema, system instruction and effort surface. Bound local retries.
 	if requests > 4 || preflights > 4 {
-		return preflightFailure("claude", "probe_request_limit")
+		return preflightFailure(harness.Claude, "probe_request_limit")
 	}
 	if mismatch != "" {
-		return preflightFailure("claude", claudeProbeCode(mismatch))
+		return preflightFailure(harness.Claude, claudeProbeCode(mismatch))
 	}
 	return nil
 }

@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 
+	"github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/restrict"
 )
 
@@ -22,47 +23,46 @@ import (
 // alone executes the supplied tools. The preflight checks the actual outbound
 // request against a local, uncredentialed rejecting provider before paid work.
 // This fails closed when a CLI upgrade changes tool construction or overrides.
-func codexComplete(ctx context.Context, cfg Config, messages []Message, tools []Tool) (Message, Usage, error) {
-	var empty Message
-	var usage Usage
-	home, err := resolveCodexHome(cfg.CodexHome)
+func codexComplete(ctx context.Context, cfg Config, messages []Message, tools []Tool) (Result, error) {
+	var empty Result
+	home, err := resolveCodexHome(cfg.Provider.CLI.Home)
 	if err != nil {
-		return empty, usage, err
+		return empty, err
 	}
 	if err := ValidateCodexHome(home); err != nil {
-		return empty, usage, err
+		return empty, err
 	}
-	bin := cfg.CodexBin
+	bin := cfg.Provider.CLI.Binary
 	if bin == "" {
-		bin = "codex"
+		bin = string(harness.Codex)
 	}
 	bin, err = exec.LookPath(bin)
 	if err != nil {
-		if failure := startFailure("codex", PhasePreflight, err); failure != nil {
-			return empty, usage, failure
+		if failure := startFailure(harness.Codex, PhasePreflight, err); failure != nil {
+			return empty, failure
 		}
-		return empty, usage, preflightFailure("codex", "executable_not_found")
+		return empty, preflightFailure(harness.Codex, "executable_not_found")
 	}
 	bin, err = filepath.Abs(bin)
 	if err != nil {
-		return empty, usage, preflightFailure("codex", "executable_unresolved")
+		return empty, preflightFailure(harness.Codex, "executable_unresolved")
 	}
 	workRoot := ""
 	if cfg.WorkDirRoot != "" {
 		workRoot, err = ensureDirectory(cfg.WorkDirRoot, "model-runs")
 		if err != nil {
-			return empty, usage, preflightFailure("codex", "scratch_directory")
+			return empty, preflightFailure(harness.Codex, "scratch_directory")
 		}
 	}
 	dir, err := os.MkdirTemp(workRoot, "agent-harness-model-")
 	if err != nil {
-		return empty, usage, preflightFailure("codex", "scratch_directory")
+		return empty, preflightFailure(harness.Codex, "scratch_directory")
 	}
 	defer os.RemoveAll(dir)
 	cleanEnv := codexCatalogEnvironment(dir)
 	authEnv, err := CodexEnvironment(home)
 	if err != nil {
-		return empty, usage, err
+		return empty, err
 	}
 	// Snapshot the selected login environment once for both probe and inference.
 	// Process-local environment mutation would mix independently configured callers.
@@ -70,55 +70,55 @@ func codexComplete(ctx context.Context, cfg Config, messages []Message, tools []
 	catalog, err := runCLI(ctx, cfg, bin, []string{"debug", "models", "--bundled"}, dir, cleanEnv, "")
 	if err != nil {
 		if ctx.Err() != nil {
-			return empty, usage, ctx.Err()
+			return empty, ctx.Err()
 		}
 		if errors.Is(err, context.Canceled) {
-			return empty, usage, context.Canceled
+			return empty, context.Canceled
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
-			return empty, usage, preflightFailure("codex", "catalog_timeout")
+			return empty, preflightFailure(harness.Codex, "catalog_timeout")
 		}
-		if failure := startFailure("codex", PhasePreflight, err); failure != nil {
-			return empty, usage, failure
+		if failure := startFailure(harness.Codex, PhasePreflight, err); failure != nil {
+			return empty, failure
 		}
-		return empty, usage, preflightFailure("codex", "catalog_read_failed")
+		return empty, preflightFailure(harness.Codex, "catalog_read_failed")
 	}
 	if cfg.Effort == "" {
 		cfg.Effort = restrict.CodexCatalogEffort(catalog, cfg.Model)
 	}
 	restricted, err := restrictedCatalog(catalog, cfg.Model, cfg.Effort)
 	if err != nil {
-		return empty, usage, err
+		return empty, err
 	}
 	catalogPath := filepath.Join(dir, "models.json")
 	schemaPath := filepath.Join(dir, "response-schema.json")
 	instructionsPath := filepath.Join(dir, "instructions.txt")
 	schema, err := actionSchema(tools)
 	if err != nil {
-		return empty, usage, preflightFailure("codex", "invalid_tool_catalog")
+		return empty, preflightFailure(harness.Codex, "invalid_tool_catalog")
 	}
 	for path, data := range map[string][]byte{catalogPath: restricted, schemaPath: schema, instructionsPath: []byte(codexInstructions)} {
 		if err := os.WriteFile(path, data, 0600); err != nil {
-			return empty, usage, preflightFailure("codex", "scratch_write")
+			return empty, preflightFailure(harness.Codex, "scratch_write")
 		}
 	}
 	args, err := codexArgs(cfg, dir, catalogPath, schemaPath, instructionsPath)
 	if err != nil {
-		return empty, usage, preflightFailure("codex", "scratch_directory")
+		return empty, preflightFailure(harness.Codex, "scratch_directory")
 	}
 	if err := probeCodex(ctx, cfg, bin, args, dir, authEnv); err != nil {
-		return empty, usage, err
+		return empty, err
 	}
 	payload, err := json.Marshal(map[string]any{"messages": messages, "available_tools": tools})
 	if err != nil || len(payload) > cfg.MaxContextBytes {
-		return empty, usage, &RequestError{Kind: ErrorContextLimit, Engine: "codex", Phase: PhasePreflight, Code: "context_bytes"}
+		return empty, &RequestError{Cause: harness.CauseContextLimit, Engine: harness.Codex, Phase: PhasePreflight, Code: "context_bytes"}
 	}
 	if err := ctx.Err(); err != nil {
-		return empty, usage, err
+		return empty, err
 	}
 	if cfg.BeforeRequest != nil {
 		if err := cfg.BeforeRequest(ctx); err != nil {
-			return empty, usage, err
+			return empty, err
 		}
 	}
 	output, err := runCLI(ctx, cfg, bin, args, dir, authEnv, string(payload))
@@ -128,7 +128,7 @@ func codexComplete(ctx context.Context, cfg Config, messages []Message, tools []
 		}
 		// A request that ended badly can still have been billed. Report whatever
 		// the provider stated it consumed, and no action proposal.
-		return empty, terminalUsage("codex", output), processRequestFailure("codex", output, err)
+		return terminalAccounting(harness.Codex, output), processRequestFailure(harness.Codex, output, err)
 	}
 	return parseCodex(output, tools)
 }
@@ -171,12 +171,12 @@ func restrictedCatalog(data []byte, model, effort string) ([]byte, error) {
 	}
 	var reason *restrict.Error
 	if !errors.As(err, &reason) {
-		return nil, preflightFailure("codex", "invalid_model_catalog")
+		return nil, preflightFailure(harness.Codex, "invalid_model_catalog")
 	}
 	if reason.Code == restrict.ModelNotInCatalog {
-		return nil, &RequestError{Kind: ErrorModelUnavailable, Engine: "codex", Phase: PhasePreflight, Code: reason.Code}
+		return nil, &RequestError{Cause: harness.CauseModelUnavailable, Engine: harness.Codex, Phase: PhasePreflight, Code: reason.Code}
 	}
-	return nil, preflightFailure("codex", reason.Code)
+	return nil, preflightFailure(harness.Codex, reason.Code)
 }
 
 // toolCatalog is the single rule for an application tool catalog, whichever
@@ -228,12 +228,12 @@ func resolveCodexHome(home string) (string, error) {
 	if home == "" {
 		userHome, err := os.UserHomeDir()
 		if err != nil {
-			return "", preflightFailure("codex", "codex_home_unresolved")
+			return "", preflightFailure(harness.Codex, "codex_home_unresolved")
 		}
 		home = filepath.Join(userHome, ".codex")
 	}
 	if !filepath.IsAbs(home) {
-		return "", preflightFailure("codex", "codex_home_invalid")
+		return "", preflightFailure(harness.Codex, "codex_home_invalid")
 	}
 	return filepath.Clean(home), nil
 }
@@ -241,7 +241,7 @@ func resolveCodexHome(home string) (string, error) {
 func validateSelectedCodexHome(home string) error {
 	info, err := os.Stat(home)
 	if err != nil || !info.IsDir() {
-		return preflightFailure("codex", "codex_home_unavailable")
+		return preflightFailure(harness.Codex, "codex_home_unavailable")
 	}
 	for _, name := range []string{"AGENTS.override.md", "AGENTS.md"} {
 		info, err := os.Stat(filepath.Join(home, name))
@@ -249,12 +249,12 @@ func validateSelectedCodexHome(home string) error {
 			continue
 		}
 		if err != nil {
-			return preflightFailure("codex", "codex_home_inspection")
+			return preflightFailure(harness.Codex, "codex_home_inspection")
 		}
 		if info.Size() == 0 && info.Mode().IsRegular() {
 			continue
 		}
-		return preflightFailure("codex", "codex_home_instructions")
+		return preflightFailure(harness.Codex, "codex_home_instructions")
 	}
 	return nil
 }
@@ -278,12 +278,11 @@ func codexCatalogEnvironment(dir string) []string {
 	return append(isolatedOperatingEnvironment(nativeOperatingEnvironment(), runtime.GOOS, dir), "CODEX_HOME="+dir)
 }
 
-func parseCodex(data []byte, tools []Tool) (Message, Usage, error) {
+func parseCodex(data []byte, tools []Tool) (Result, error) {
 	if failure := codexRequestFailure(data); failure != nil {
-		return Message{}, terminalUsage("codex", data), failure
+		return terminalAccounting(harness.Codex, data), failure
 	}
-	var result Message
-	var usage Usage
+	var content string
 	completed := false
 	for _, line := range bytes.Split(data, []byte("\n")) {
 		if len(bytes.TrimSpace(line)) == 0 {
@@ -295,39 +294,36 @@ func parseCodex(data []byte, tools []Tool) (Message, Usage, error) {
 				Type string `json:"type"`
 				Text string `json:"text"`
 			} `json:"item"`
-			Usage *struct {
-				Input  int `json:"input_tokens"`
-				Output int `json:"output_tokens"`
-			} `json:"usage"`
 		}
 		if json.Unmarshal(line, &event) != nil {
-			return result, usage, &RequestError{Kind: ErrorUnknown, Engine: "codex", Phase: PhaseResponse, Code: "malformed_event_json"}
+			return Result{}, &RequestError{Cause: harness.CauseUnknown, Engine: harness.Codex, Phase: PhaseResponse, Code: "malformed_event_json"}
 		}
 		switch event.Type {
 		case "turn.failed", "error":
-			return Message{}, terminalUsage("codex", data), &RequestError{Kind: ErrorUnknown, Engine: "codex", Phase: PhaseResponse, Code: event.Type}
+			return terminalAccounting(harness.Codex, data), &RequestError{Cause: harness.CauseUnknown, Engine: harness.Codex, Phase: PhaseResponse, Code: event.Type}
 		case "item.started", "item.completed":
 			if event.Item.Type != "agent_message" && event.Item.Type != "reasoning" && event.Item.Type != "error" {
-				return result, usage, &RequestError{Kind: ErrorUnknown, Engine: "codex", Phase: PhaseResponse, Code: "unexpected_native_tool"}
+				return Result{}, &RequestError{Cause: harness.CauseUnknown, Engine: harness.Codex, Phase: PhaseResponse, Code: "unexpected_native_tool"}
 			}
 			if event.Type == "item.completed" && event.Item.Type == "agent_message" {
 				// Match output-last-message: commentary may precede the final answer.
 				// Only the last completed message is an action proposal; none execute here.
-				result.Content = event.Item.Text
+				content = event.Item.Text
 			}
 		case "turn.completed":
 			completed = true
 		}
 	}
 	if !completed {
-		return Message{}, usage, &RequestError{Kind: ErrorUnknown, Engine: "codex", Phase: PhaseResponse, Code: "missing_terminal_result"}
+		return Result{}, &RequestError{Cause: harness.CauseUnknown, Engine: harness.Codex, Phase: PhaseResponse, Code: "missing_terminal_result"}
 	}
-	usage = terminalUsage("codex", data)
-	result, err := parseActionEnvelope([]byte(result.Content), tools)
+	accounting := terminalAccounting(harness.Codex, data)
+	message, err := parseActionEnvelope([]byte(content), tools)
 	if err != nil {
-		return Message{}, usage, &RequestError{Kind: ErrorUnknown, Engine: "codex", Phase: PhaseResponse, Code: "invalid_action_envelope"}
+		return accounting, &RequestError{Cause: harness.CauseUnknown, Engine: harness.Codex, Phase: PhaseResponse, Code: "invalid_action_envelope"}
 	}
-	return result, usage, nil
+	accounting.Message = message
+	return accounting, nil
 }
 
 // parseActionEnvelope validates proposals before either CLI can invoke app tools.

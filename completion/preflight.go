@@ -5,18 +5,20 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+
+	"github.com/shhac/lib-agent-harness"
 )
 
 // preflightFailure retains only library-owned codes, never a raw error cause.
-func preflightFailure(engine, code string) *RequestError {
-	if engine != "claude" && engine != "codex" && engine != EngineOpenAICompatible {
+func preflightFailure(engine harness.Engine, code string) *RequestError {
+	if engine.Transport() == "" {
 		engine = ""
 	}
-	kind := ErrorUnknown
+	cause := harness.CauseUnknown
 	if code == "probe_timeout" || code == "catalog_timeout" {
-		kind = ErrorTimeout
+		cause = harness.CauseTimeout
 	}
-	return &RequestError{Kind: kind, Engine: engine, Phase: PhasePreflight, Code: code}
+	return &RequestError{Cause: cause, Engine: engine, Phase: PhasePreflight, Code: code}
 }
 
 func (e *RequestError) diagnosticDetail() string {
@@ -29,12 +31,16 @@ func (e *RequestError) diagnosticDetail() string {
 		return "Claude advertised or attempted an unexpected native tool; this older diagnostic does not distinguish the two"
 
 	case "executable_not_found":
-		if e.Engine == "claude" {
+		if e.Engine == harness.Claude {
 			return "Claude executable not found; install Claude Code and sign in"
 		}
 		return "Codex executable not found; install Codex and run codex login"
 	case "unsupported_engine":
 		return "unsupported engine; use codex, claude or openai-compatible"
+	case "api_config_for_cli_engine":
+		return "a CLI engine reads Provider.CLI; clear Provider.API"
+	case "cli_config_for_api_engine":
+		return "an API engine reads Provider.API; clear Provider.CLI"
 	case "model_required":
 		return "model is required"
 	case "invalid_limits":
@@ -111,9 +117,9 @@ func (e *RequestError) diagnosticDetail() string {
 		return "CLI capability check failed to prove tool-free inference; check installed CLI compatibility (no account inference was attempted)"
 
 	case "api_dialect_required":
-		return "API dialect is required; select completion.OpenAIChatCompletions explicitly"
+		return "API dialect is required; select harness.OpenAIChatCompletions explicitly"
 	case "api_dialect_unsupported":
-		return "unsupported API dialect; completion.OpenAIChatCompletions is the only supported dialect"
+		return "unsupported API dialect; harness.OpenAIChatCompletions is the only supported dialect"
 	case "api_base_url_invalid":
 		return "API base URL must be an absolute https URL without user information, query or fragment"
 	case "api_base_url_insecure":
@@ -125,9 +131,9 @@ func (e *RequestError) diagnosticDetail() string {
 	case "api_unauthenticated_remote":
 		return "Unauthenticated is allowed only for a loopback API base URL"
 	case "api_effort_parameter_required":
-		return "reasoning effort needs APIConfig.EffortParameter: EffortReasoningEffort (OpenAI, xAI) or EffortReasoningObject (Vercel AI Gateway, OpenRouter)"
+		return "reasoning effort needs API.EffortParameter: harness.EffortReasoningEffort (OpenAI, xAI) or harness.EffortReasoningObject (Vercel AI Gateway, OpenRouter)"
 	case "api_effort_parameter_unsupported":
-		return "unsupported APIConfig.EffortParameter; use EffortReasoningEffort or EffortReasoningObject"
+		return "unsupported API.EffortParameter; use harness.EffortReasoningEffort or harness.EffortReasoningObject"
 	case "api_effort_invalid":
 		return "reasoning effort must be a short lowercase level such as low, medium or high"
 	case "invalid_messages":
@@ -146,7 +152,7 @@ func (e *RequestError) diagnosticDetail() string {
 
 // startFailure inspects only OS error identity and type; paths and error text
 // are never retained. Exit errors are handled by the response parser instead.
-func startFailure(engine string, phase ErrorPhase, err error) *RequestError {
+func startFailure(engine harness.Engine, phase ErrorPhase, err error) *RequestError {
 	code := ""
 	var pathError *os.PathError
 	switch {
@@ -167,10 +173,10 @@ func startFailure(engine string, phase ErrorPhase, err error) *RequestError {
 	if code == "" {
 		return nil
 	}
-	return &RequestError{Kind: ErrorUnknown, Engine: engine, Phase: phase, Code: code}
+	return &RequestError{Cause: harness.CauseUnknown, Engine: engine, Phase: phase, Code: code}
 }
 
-func probeRunFailure(engine string, ctx context.Context, err error) error {
+func probeRunFailure(engine harness.Engine, ctx context.Context, err error) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}

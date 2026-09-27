@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/shhac/lib-agent-harness"
 )
 
 func TestCodexScratchUsesSelectedStateAndIsRemoved(t *testing.T) {
@@ -15,7 +17,7 @@ func TestCodexScratchUsesSelectedStateAndIsRemoved(t *testing.T) {
 		t.Fatal(err)
 	}
 	var observed string
-	cfg := Config{Engine: "codex", Model: "test-model", CodexBin: "sh", CodexHome: t.TempDir(), WorkDirRoot: root}
+	cfg := Config{Provider: cliProvider(harness.Codex, "sh", t.TempDir()), Model: "test-model", WorkDirRoot: root}
 	cfg.run = func(_ context.Context, _ string, _ []string, dir string, _ []string, _ string) ([]byte, error) {
 		observed = dir
 		if filepath.Dir(dir) != filepath.Join(root, "model-runs") {
@@ -30,7 +32,7 @@ func TestCodexScratchUsesSelectedStateAndIsRemoved(t *testing.T) {
 		}
 		return nil, errors.New("stop synthetic catalog lookup")
 	}
-	if _, _, err := Complete(context.Background(), cfg, nil, nil); err == nil {
+	if _, err := Complete(context.Background(), cfg, nil, nil); err == nil {
 		t.Fatal("expected synthetic failure")
 	}
 	if observed == "" {
@@ -50,12 +52,12 @@ func TestCodexRejectsScratchParentSymlinkBeforeSubprocess(t *testing.T) {
 	if err := os.Symlink(repository, filepath.Join(root, "model-runs")); err != nil {
 		t.Fatal(err)
 	}
-	cfg := Config{Engine: "codex", Model: "test-model", CodexBin: "sh", CodexHome: t.TempDir(), WorkDirRoot: root}
+	cfg := Config{Provider: cliProvider(harness.Codex, "sh", t.TempDir()), Model: "test-model", WorkDirRoot: root}
 	cfg.run = func(context.Context, string, []string, string, []string, string) ([]byte, error) {
 		t.Fatal("subprocess ran through unsafe scratch path")
 		return nil, nil
 	}
-	if _, _, err := Complete(context.Background(), cfg, nil, nil); err == nil {
+	if _, err := Complete(context.Background(), cfg, nil, nil); err == nil {
 		t.Fatal("accepted scratch parent symlink")
 	}
 	entries, _ := os.ReadDir(repository)

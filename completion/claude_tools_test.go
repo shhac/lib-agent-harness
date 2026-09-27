@@ -40,7 +40,7 @@ func TestClaudeUnavailableToolRecovery(t *testing.T) {
 		{"not recovered", []string{init, call, denied}, "missing_terminal_result"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			msg, usage, err := parseClaude([]byte(strings.Join(tc.events, "\n")), nil)
+			msg, usage, err := messageAndUsage(parseClaude([]byte(strings.Join(tc.events, "\n")), nil))
 			if tc.code == "" {
 				if err != nil || msg.Content != "Recovered" {
 					t.Fatalf("message=%+v err=%v", msg, err)
@@ -62,7 +62,7 @@ func TestClaudeUnavailableToolRecovery(t *testing.T) {
 				}
 			}
 			wantKnown := tc.name != "not recovered"
-			if usage.Known != wantKnown || (wantKnown && usage.TotalTokens != 15) {
+			if usage.Known != wantKnown || (wantKnown && usage.Total() != 15) {
 				t.Fatalf("terminal accounting lost: %+v", usage)
 			}
 		})
@@ -70,8 +70,8 @@ func TestClaudeUnavailableToolRecovery(t *testing.T) {
 }
 
 func TestClaudeInvalidEnvelopePreservesUsage(t *testing.T) {
-	_, usage, err := parseClaude([]byte(`{"type":"result","subtype":"success","structured_output":{},"usage":{"input_tokens":10,"output_tokens":5}}`), nil)
-	if err == nil || !usage.Known || usage.TotalTokens != 15 {
+	_, usage, err := messageAndUsage(parseClaude([]byte(`{"type":"result","subtype":"success","structured_output":{},"usage":{"input_tokens":10,"output_tokens":5}}`), nil))
+	if err == nil || !usage.Known || usage.Total() != 15 {
 		t.Fatalf("usage=%+v err=%v", usage, err)
 	}
 }

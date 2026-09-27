@@ -11,12 +11,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
-)
 
-// EngineOpenAICompatible selects a remote endpoint speaking an explicit OpenAI
-// dialect instead of an installed CLI. The caller's API configuration is used;
-// no native login or ambient API key is.
-const EngineOpenAICompatible = "openai-compatible"
+	"github.com/shhac/lib-agent-harness"
+)
 
 const (
 	apiResponseLimit   = 2 << 20
@@ -35,35 +32,42 @@ var apiTransport http.RoundTripper = func() http.RoundTripper {
 	return transport
 }()
 
-func openAIComplete(ctx context.Context, cfg Config, messages []Message, tools []Tool) (Message, Usage, error) {
-	endpoint, err := validateAPIConfig(cfg)
-	if err != nil {
-		return Message{}, Usage{}, err
+// openAIComplete serves a harness.OpenAICompatible provider, whose
+// configuration Complete has already checked with Provider.Problem. The
+// caller's API configuration is used; no native login or ambient API key is.
+func openAIComplete(ctx context.Context, cfg Config, messages []Message, tools []Tool) (Result, error) {
+	api := cfg.Provider.API
+	if code := api.EffortProblem(cfg.Effort); code != "" {
+		return Result{}, preflightFailure(harness.OpenAICompatible, code)
+	}
+	endpoint, code := api.Endpoint("chat", "completions")
+	if code != "" {
+		return Result{}, preflightFailure(harness.OpenAICompatible, code)
 	}
 	body, err := chatRequestBody(cfg, messages, tools)
 	if err != nil {
-		return Message{}, Usage{}, err
+		return Result{}, err
 	}
 	if len(body) > cfg.MaxContextBytes {
-		return Message{}, Usage{}, &RequestError{Kind: ErrorContextLimit, Engine: EngineOpenAICompatible, Phase: PhasePreflight, Code: "context_bytes"}
+		return Result{}, &RequestError{Cause: harness.CauseContextLimit, Engine: harness.OpenAICompatible, Phase: PhasePreflight, Code: "context_bytes"}
 	}
 	if err := ctx.Err(); err != nil {
-		return Message{}, Usage{}, err
+		return Result{}, err
 	}
 	if cfg.BeforeRequest != nil {
 		if err := cfg.BeforeRequest(ctx); err != nil {
-			return Message{}, Usage{}, err
+			return Result{}, err
 		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
 	defer cancel()
-	token, err := requestCredential(ctx, cfg.API)
+	token, err := requestCredential(ctx, api)
 	if err != nil {
-		return Message{}, Usage{}, err
+		return Result{}, err
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return Message{}, Usage{}, preflightFailure(EngineOpenAICompatible, "api_base_url_invalid")
+		return Result{}, preflightFailure(harness.OpenAICompatible, "api_base_url_invalid")
 	}
 	if token != "" {
 		request.Header.Set("Authorization", "Bearer "+token)
@@ -73,39 +77,39 @@ func openAIComplete(ctx context.Context, cfg Config, messages []Message, tools [
 	request.Header.Set("User-Agent", "lib-agent-harness")
 	response, err := apiClient(cfg).Do(request)
 	if err != nil {
-		return Message{}, Usage{}, apiInterrupted(ctx, PhaseTransport, err)
+		return Result{}, apiInterrupted(ctx, PhaseTransport, err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return Message{}, Usage{}, apiStatusFailure(response)
+		return Result{}, apiStatusFailure(response)
 	}
 	if !jsonMediaType(response.Header.Get("Content-Type")) {
-		return Message{}, Usage{}, apiResponseFailure("unexpected_media_type")
+		return Result{}, apiResponseFailure("unexpected_media_type")
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, apiResponseLimit+1))
 	if err != nil {
-		return Message{}, Usage{}, apiInterrupted(ctx, PhaseResponse, err)
+		return Result{}, apiInterrupted(ctx, PhaseResponse, err)
 	}
 	if len(data) > apiResponseLimit {
-		return Message{}, Usage{}, apiResponseFailure("output_limit")
+		return Result{}, apiResponseFailure("output_limit")
 	}
 	// A reflecting endpoint would otherwise put the credential in a transcript.
 	if echoes(string(data), token) {
-		return Message{}, chatUsage(data), apiResponseFailure("credential_echoed")
+		return Result{Usage: chatUsage(data)}, apiResponseFailure("credential_echoed")
 	}
-	result, usage, err := parseChatCompletion(data, tools)
+	result, err := parseChatCompletion(data, tools)
 	if err != nil {
-		return Message{}, usage, err
+		return result, err
 	}
-	if messageContains(result, token) {
-		return Message{}, usage, apiResponseFailure("credential_echoed")
+	if messageContains(result.Message, token) {
+		return Result{Usage: result.Usage}, apiResponseFailure("credential_echoed")
 	}
-	return result, usage, nil
+	return result, nil
 }
 
 // requestCredential resolves the request's bearer token; an unauthenticated
 // request has none.
-func requestCredential(ctx context.Context, api APIConfig) (string, error) {
+func requestCredential(ctx context.Context, api harness.API) (string, error) {
 	if api.Unauthenticated {
 		return "", nil
 	}
@@ -114,16 +118,16 @@ func requestCredential(ctx context.Context, api APIConfig) (string, error) {
 
 // apiCredential never retains the source's error: it may describe the
 // caller's secret store, or contain the secret.
-func apiCredential(ctx context.Context, source CredentialSource) (string, error) {
+func apiCredential(ctx context.Context, source harness.CredentialSource) (string, error) {
 	token, err := source(ctx)
 	if ctx.Err() != nil {
 		return "", apiInterrupted(ctx, PhasePreflight, ctx.Err())
 	}
 	if err != nil {
-		return "", &RequestError{Kind: ErrorAuthentication, Engine: EngineOpenAICompatible, Phase: PhasePreflight, Code: "credential_unavailable"}
+		return "", &RequestError{Cause: harness.CauseAuthentication, Engine: harness.OpenAICompatible, Phase: PhasePreflight, Code: "credential_unavailable"}
 	}
 	if token == "" || strings.IndexFunc(token, func(r rune) bool { return r <= ' ' || r > '~' }) >= 0 {
-		return "", &RequestError{Kind: ErrorAuthentication, Engine: EngineOpenAICompatible, Phase: PhasePreflight, Code: "invalid_credential"}
+		return "", &RequestError{Cause: harness.CauseAuthentication, Engine: harness.OpenAICompatible, Phase: PhasePreflight, Code: "invalid_credential"}
 	}
 	return token, nil
 }
@@ -146,13 +150,13 @@ func apiInterrupted(ctx context.Context, phase ErrorPhase, err error) error {
 		return context.Canceled
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
-		return &RequestError{Kind: ErrorTimeout, Engine: EngineOpenAICompatible, Phase: phase, Code: "deadline_exceeded"}
+		return &RequestError{Cause: harness.CauseTimeout, Engine: harness.OpenAICompatible, Phase: phase, Code: "deadline_exceeded"}
 	}
-	return &RequestError{Kind: ErrorUnknown, Engine: EngineOpenAICompatible, Phase: phase, Code: "transport_failed"}
+	return &RequestError{Cause: harness.CauseUnknown, Engine: harness.OpenAICompatible, Phase: phase, Code: "transport_failed"}
 }
 
 func apiResponseFailure(code string) *RequestError {
-	return &RequestError{Kind: ErrorUnknown, Engine: EngineOpenAICompatible, Phase: PhaseResponse, Code: code}
+	return &RequestError{Cause: harness.CauseUnknown, Engine: harness.OpenAICompatible, Phase: PhaseResponse, Code: code}
 }
 
 func jsonMediaType(value string) bool {
@@ -172,24 +176,24 @@ func apiStatusFailure(response *http.Response) *RequestError {
 	code := openAIErrorCode(response.Body)
 	switch {
 	case status == http.StatusUnauthorized:
-		failure.Kind = ErrorAuthentication
+		failure.Cause = harness.CauseAuthentication
 	case status == http.StatusForbidden:
-		failure.Kind = ErrorPermissionDenied
+		failure.Cause = harness.CausePermissionDenied
 	case status == http.StatusNotFound && code == "model_not_found":
-		failure.Kind, failure.Code = ErrorModelUnavailable, code
+		failure.Cause, failure.Code = harness.CauseModelUnavailable, code
 	case status == http.StatusBadRequest && code == "context_length_exceeded":
-		failure.Kind, failure.Code = ErrorContextLimit, code
+		failure.Cause, failure.Code = harness.CauseContextLimit, code
 	case status == http.StatusRequestEntityTooLarge:
-		failure.Kind = ErrorContextLimit
+		failure.Cause = harness.CauseContextLimit
 	// Quota exhaustion shares 429 with rate limiting but will not clear by waiting.
 	case status == http.StatusTooManyRequests && code == "insufficient_quota":
 		failure.Code = code
 	case status == http.StatusTooManyRequests:
-		failure.Kind = ErrorRateLimited
+		failure.Cause = harness.CauseRateLimited
 	case status == http.StatusServiceUnavailable:
-		failure.Kind = ErrorUnavailable
+		failure.Cause = harness.CauseUnavailable
 	case status == 529:
-		failure.Kind = ErrorOverloaded
+		failure.Cause = harness.CauseOverloaded
 	}
 	if failure.Retryable() {
 		failure.RetryAfter = retryAfter(response.Header.Get("Retry-After"))

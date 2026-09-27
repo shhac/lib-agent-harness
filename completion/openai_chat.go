@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+
+	"github.com/shhac/lib-agent-harness"
 )
 
 type chatRequest struct {
@@ -43,17 +45,17 @@ type chatFunction struct {
 
 func chatRequestBody(cfg Config, messages []Message, tools []Tool) ([]byte, error) {
 	if _, err := toolCatalog(tools); err != nil {
-		return nil, preflightFailure(EngineOpenAICompatible, "invalid_tool_catalog")
+		return nil, preflightFailure(harness.OpenAICompatible, "invalid_tool_catalog")
 	}
 	wire, ok := chatMessages(messages)
 	if !ok {
-		return nil, preflightFailure(EngineOpenAICompatible, "invalid_messages")
+		return nil, preflightFailure(harness.OpenAICompatible, "invalid_messages")
 	}
 	request := chatRequest{Model: cfg.Model, Messages: wire}
-	switch cfg.API.EffortParameter {
-	case EffortReasoningEffort:
+	switch cfg.Provider.API.EffortParameter {
+	case harness.EffortReasoningEffort:
 		request.ReasoningEffort = cfg.Effort
-	case EffortReasoningObject:
+	case harness.EffortReasoningObject:
 		if cfg.Effort != "" {
 			request.Reasoning = &chatReasoning{Effort: cfg.Effort}
 		}
@@ -67,7 +69,7 @@ func chatRequestBody(cfg Config, messages []Message, tools []Tool) ([]byte, erro
 	}
 	body, err := json.Marshal(request)
 	if err != nil {
-		return nil, preflightFailure(EngineOpenAICompatible, "invalid_tool_catalog")
+		return nil, preflightFailure(harness.OpenAICompatible, "invalid_tool_catalog")
 	}
 	return body, nil
 }
@@ -132,39 +134,39 @@ type chatCompletionResponse struct {
 
 // parseChatCompletion accepts only an unambiguous terminal response. Anything
 // else returns no reply, alongside the usage the response reported.
-func parseChatCompletion(data []byte, tools []Tool) (Message, Usage, error) {
-	usage := chatUsage(data)
+func parseChatCompletion(data []byte, tools []Tool) (Result, error) {
+	accounting := Result{Usage: chatUsage(data)}
 	var response chatCompletionResponse
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	if decoder.Decode(&response) != nil || decoder.Decode(new(any)) != io.EOF {
-		return Message{}, usage, apiResponseFailure("malformed_response")
+		return accounting, apiResponseFailure("malformed_response")
 	}
 	if len(response.Choices) != 1 {
-		return Message{}, usage, apiResponseFailure("unexpected_choice_count")
+		return accounting, apiResponseFailure("unexpected_choice_count")
 	}
 	choice := response.Choices[0]
 	message := choice.Message
 	if message == nil || (message.Role != "" && message.Role != "assistant") {
-		return Message{}, usage, apiResponseFailure("malformed_response")
+		return accounting, apiResponseFailure("malformed_response")
 	}
 	if message.Refusal != nil && *message.Refusal != "" {
-		return Message{}, usage, apiResponseFailure("model_refusal")
+		return accounting, apiResponseFailure("model_refusal")
 	}
 	result := Message{Role: "assistant"}
 	if len(message.Content) > 0 && string(message.Content) != "null" && json.Unmarshal(message.Content, &result.Content) != nil {
-		return Message{}, usage, apiResponseFailure("malformed_response")
+		return accounting, apiResponseFailure("malformed_response")
 	}
 	if code := finishFailure(choice.FinishReason, len(message.ToolCalls)); code != "" {
-		return Message{}, usage, apiResponseFailure(code)
+		return accounting, apiResponseFailure(code)
 	}
 	if len(message.ToolCalls) > maxToolProposals {
-		return Message{}, usage, apiResponseFailure("invalid_tool_call")
+		return accounting, apiResponseFailure("invalid_tool_call")
 	}
 	allowed, _ := toolCatalog(tools)
 	seen := map[string]bool{}
 	for _, call := range message.ToolCalls {
 		if call.Type != "function" || call.Function == nil || call.ID == "" || len(call.ID) > apiToolCallIDLimit || seen[call.ID] || !allowed[call.Function.Name] || !jsonObject(call.Function.Arguments) {
-			return Message{}, usage, apiResponseFailure("invalid_tool_call")
+			return accounting, apiResponseFailure("invalid_tool_call")
 		}
 		seen[call.ID] = true
 		proposal := ToolCall{ID: call.ID, Type: "function"}
@@ -172,7 +174,8 @@ func parseChatCompletion(data []byte, tools []Tool) (Message, Usage, error) {
 		proposal.Function.Arguments = call.Function.Arguments
 		result.ToolCalls = append(result.ToolCalls, proposal)
 	}
-	return result, usage, nil
+	accounting.Message = result
+	return accounting, nil
 }
 
 // finishFailure accepts "stop" with tool calls as well as "tool_calls": some
@@ -200,21 +203,48 @@ func jsonObject(arguments string) bool {
 }
 
 // chatUsage applies the CLI adapters' rule: a report counts only when complete
-// and consistent. prompt_tokens already includes cached input.
-func chatUsage(data []byte) Usage {
+// and consistent. prompt_tokens already includes cached input, and
+// completion_tokens includes reasoning; many compatible endpoints omit either
+// detail, so the cache split is known only when cached_tokens is present.
+func chatUsage(data []byte) harness.Usage {
 	var response struct {
 		Usage *struct {
-			Prompt     *int `json:"prompt_tokens"`
-			Completion *int `json:"completion_tokens"`
-			Total      *int `json:"total_tokens"`
+			Prompt        *int64 `json:"prompt_tokens"`
+			Completion    *int64 `json:"completion_tokens"`
+			Total         *int64 `json:"total_tokens"`
+			PromptDetails *struct {
+				Cached *int64 `json:"cached_tokens"`
+			} `json:"prompt_tokens_details"`
+			CompletionDetails *struct {
+				Reasoning *int64 `json:"reasoning_tokens"`
+			} `json:"completion_tokens_details"`
 		} `json:"usage"`
 	}
 	if json.Unmarshal(data, &response) != nil || response.Usage == nil {
-		return Usage{}
+		return harness.Usage{}
 	}
-	usage, ok := normalizedUsage(response.Usage.Prompt, response.Usage.Completion, nil, nil)
-	if !ok || (response.Usage.Total != nil && *response.Usage.Total != usage.TotalTokens) {
-		return Usage{}
+	report := response.Usage
+	if report.Prompt == nil || report.Completion == nil {
+		return harness.Usage{}
+	}
+	total, ok := sumTokens(*report.Prompt, *report.Completion)
+	if !ok || (report.Total != nil && *report.Total != total) {
+		return harness.Usage{}
+	}
+	usage := harness.Usage{Known: true, Input: *report.Prompt, Output: *report.Completion}
+	if report.PromptDetails != nil && report.PromptDetails.Cached != nil {
+		cached := *report.PromptDetails.Cached
+		if cached < 0 || cached > usage.Input {
+			return harness.Usage{}
+		}
+		usage.CacheRead, usage.CacheKnown = cached, true
+	}
+	if report.CompletionDetails != nil && report.CompletionDetails.Reasoning != nil {
+		reasoning := *report.CompletionDetails.Reasoning
+		if reasoning < 0 || reasoning > usage.Output {
+			return harness.Usage{}
+		}
+		usage.Reasoning = reasoning
 	}
 	return usage
 }

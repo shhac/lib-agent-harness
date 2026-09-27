@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/restrict"
 	"github.com/shhac/lib-agent-harness/process"
 )
@@ -38,15 +39,19 @@ func DiscoverModels(ctx context.Context, cfg Config) ([]ModelOption, error) {
 }
 
 func discoverModels(ctx context.Context, cfg Config, run modelTransport) ([]ModelOption, error) {
-	if cfg.Engine != "codex" && cfg.Engine != "claude" {
+	engine := cfg.Provider.Engine
+	if !harness.Support(engine, harness.Models, harness.Available).Usable() {
 		return nil, errors.New("model discovery is available for local CLIs; keep the saved model or use advanced settings")
+	}
+	if code := cfg.Provider.Problem(); code != "" {
+		return nil, preflightFailure(engine, code)
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	var models []ModelOption
 	err := run(ctx, cfg, func(reader io.Reader, writer io.Writer) error {
 		var err error
-		if cfg.Engine == "claude" {
+		if engine == harness.Claude {
 			models, err = readClaudeModelCatalog(reader, writer)
 		} else {
 			models, err = readModelCatalog(reader, writer)
@@ -67,18 +72,18 @@ func discoverModels(ctx context.Context, cfg Config, run modelTransport) ([]Mode
 // arguments, and its login environment. Only the selected engine's invocation
 // is built, so discovering Claude's models never resolves a Codex home.
 func catalogInvocation(cfg Config) (bin string, args, env []string, err error) {
-	if cfg.Engine == "claude" {
+	if cfg.Provider.Engine == harness.Claude {
 		return claudeCatalogInvocation(cfg)
 	}
 	return codexCatalogInvocation(cfg)
 }
 
 func codexCatalogInvocation(cfg Config) (string, []string, []string, error) {
-	bin, err := resolveCatalogBinary(cfg.CodexBin, "codex")
+	bin, err := resolveCatalogBinary(cfg.Provider.CLI.Binary, harness.Codex)
 	if err != nil {
 		return "", nil, nil, err
 	}
-	env, err := CodexEnvironment(cfg.CodexHome)
+	env, err := CodexEnvironment(cfg.Provider.CLI.Home)
 	if err != nil {
 		return "", nil, nil, err
 	}
@@ -91,21 +96,21 @@ func codexCatalogInvocation(cfg Config) (string, []string, []string, error) {
 }
 
 func claudeCatalogInvocation(cfg Config) (string, []string, []string, error) {
-	bin, err := resolveCatalogBinary(cfg.ClaudeBin, "claude")
+	bin, err := resolveCatalogBinary(cfg.Provider.CLI.Binary, harness.Claude)
 	if err != nil {
 		return "", nil, nil, err
 	}
-	env, err := ClaudeEnvironment(cfg.ClaudeHome)
+	env, err := ClaudeEnvironment(cfg.Provider.CLI.Home)
 	if err != nil {
 		return "", nil, nil, err
 	}
 	return bin, append(claudeBaseArgs(), "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"), env, nil
 }
 
-func resolveCatalogBinary(configured, engine string) (string, error) {
+func resolveCatalogBinary(configured string, engine harness.Engine) (string, error) {
 	bin := configured
 	if bin == "" {
-		bin = engine
+		bin = string(engine)
 	}
 	bin, err := exec.LookPath(bin)
 	if err != nil {

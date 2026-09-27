@@ -9,6 +9,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/shhac/lib-agent-harness"
 )
 
 func TestOpenAIChatSendsTheConversationAsGiven(t *testing.T) {
@@ -25,14 +27,14 @@ func TestOpenAIChatSendsTheConversationAsGiven(t *testing.T) {
 		{Type: "function", Function: Function{Name: "lookup", Description: "Look up.", Parameters: map[string]any{"type": "object"}, Strict: true}},
 		{Type: "function", Function: Function{Name: "finish"}},
 	}
-	reply, usage, err := Complete(context.Background(), apiConfig(api), messages, tools)
+	reply, usage, err := messageAndUsage(Complete(context.Background(), apiConfig(api), messages, tools))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if reply.Role != "assistant" || reply.Content != "hello" || reply.ToolCalls != nil {
 		t.Fatalf("reply %#v", reply)
 	}
-	if usage != (Usage{InputTokens: 5, OutputTokens: 2, TotalTokens: 7, Known: true}) {
+	if usage != (harness.Usage{Known: true, Input: 5, Output: 2}) {
 		t.Fatalf("usage %#v", usage)
 	}
 	request := api.last(t)
@@ -66,7 +68,7 @@ func TestOpenAIChatToolProposalsKeepProviderIDs(t *testing.T) {
 	api := respondWith(200, chatBody(chatChoice(`"tool_calls"`,
 		`{"role":"assistant","content":"Checking.","tool_calls":[`+chatCall("call_b", "lookup", `{"q":"b"}`)+`,`+chatCall("call_a", "finish", `{}`)+`]}`)))
 	tools := append(append([]Tool(nil), lookupTool...), Tool{Type: "function", Function: Function{Name: "finish"}})
-	reply, usage, err := Complete(context.Background(), apiConfig(api), userMessage, tools)
+	reply, usage, err := messageAndUsage(Complete(context.Background(), apiConfig(api), userMessage, tools))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,21 +87,21 @@ func TestOpenAIChatToolProposalsKeepProviderIDs(t *testing.T) {
 // "stop"; the calls are complete and are validated like any other.
 func TestOpenAIChatStopWithToolCallsIsAProposal(t *testing.T) {
 	api := respondWith(200, chatBody(chatChoice(`"stop"`, assistantWithCalls(chatCall("call_1", "lookup", `{"q":"x"}`)))))
-	reply, _, err := Complete(context.Background(), apiConfig(api), userMessage, lookupTool)
+	reply, _, err := messageAndUsage(Complete(context.Background(), apiConfig(api), userMessage, lookupTool))
 	if err != nil || len(reply.ToolCalls) != 1 || reply.ToolCalls[0].ID != "call_1" {
 		t.Fatalf("reply %#v err %v", reply, err)
 	}
 }
 
 func TestOpenAIChatSendsEffortOnlyWhereTheEndpointReadsIt(t *testing.T) {
-	for parameter, want := range map[EffortParameter]string{
-		EffortReasoningEffort: `{"model":"provider/test-model","stream":false,"messages":[{"role":"user","content":"secret prompt"}],"reasoning_effort":"high"}`,
-		EffortReasoningObject: `{"model":"provider/test-model","stream":false,"messages":[{"role":"user","content":"secret prompt"}],"reasoning":{"effort":"high"}}`,
+	for parameter, want := range map[harness.EffortParameter]string{
+		harness.EffortReasoningEffort: `{"model":"provider/test-model","stream":false,"messages":[{"role":"user","content":"secret prompt"}],"reasoning_effort":"high"}`,
+		harness.EffortReasoningObject: `{"model":"provider/test-model","stream":false,"messages":[{"role":"user","content":"secret prompt"}],"reasoning":{"effort":"high"}}`,
 	} {
 		api := respondWith(200, chatBody(chatChoice(`"stop"`, `{"content":"ok"}`)))
 		cfg := apiConfig(api)
-		cfg.Effort, cfg.API.EffortParameter = "high", parameter
-		if _, _, err := Complete(context.Background(), cfg, userMessage, nil); err != nil {
+		cfg.Effort, cfg.Provider.API.EffortParameter = "high", parameter
+		if _, err := Complete(context.Background(), cfg, userMessage, nil); err != nil {
 			t.Fatal(err)
 		}
 		sameJSON(t, api.last(t).body, want)
@@ -107,8 +109,8 @@ func TestOpenAIChatSendsEffortOnlyWhereTheEndpointReadsIt(t *testing.T) {
 	// A parameter without an effort sends nothing.
 	api := respondWith(200, chatBody(chatChoice(`"stop"`, `{"content":"ok"}`)))
 	cfg := apiConfig(api)
-	cfg.API.EffortParameter = EffortReasoningObject
-	if _, _, err := Complete(context.Background(), cfg, userMessage, nil); err != nil {
+	cfg.Provider.API.EffortParameter = harness.EffortReasoningObject
+	if _, err := Complete(context.Background(), cfg, userMessage, nil); err != nil {
 		t.Fatal(err)
 	}
 	sameJSON(t, api.last(t).body, `{"model":"provider/test-model","stream":false,"messages":[{"role":"user","content":"secret prompt"}]}`)
@@ -117,7 +119,7 @@ func TestOpenAIChatSendsEffortOnlyWhereTheEndpointReadsIt(t *testing.T) {
 func TestOpenAIChatSendsAnEmptyParameterSchema(t *testing.T) {
 	api := respondWith(200, chatBody(chatChoice(`"stop"`, `{"content":"ok"}`)))
 	tools := []Tool{{Type: "function", Function: Function{Name: "ping", Parameters: map[string]any{}}}}
-	if _, _, err := Complete(context.Background(), apiConfig(api), userMessage, tools); err != nil {
+	if _, err := Complete(context.Background(), apiConfig(api), userMessage, tools); err != nil {
 		t.Fatal(err)
 	}
 	var body struct {
@@ -131,7 +133,7 @@ func TestOpenAIChatSendsAnEmptyParameterSchema(t *testing.T) {
 }
 
 func TestOpenAIChatNullContentIsEmptyText(t *testing.T) {
-	reply, _, err := Complete(context.Background(), apiConfig(respondWith(200, chatBody(chatChoice(`"stop"`, `{"content":null}`)))), userMessage, nil)
+	reply, _, err := messageAndUsage(Complete(context.Background(), apiConfig(respondWith(200, chatBody(chatChoice(`"stop"`, `{"content":null}`)))), userMessage, nil))
 	if err != nil || reply.Role != "assistant" || reply.Content != "" {
 		t.Fatalf("%#v %v", reply, err)
 	}
@@ -179,46 +181,60 @@ func TestOpenAIChatRejectsIncompleteOrAmbiguousResponses(t *testing.T) {
 		{"too many calls", chatBody(chatChoice(`"tool_calls"`, assistantWithCalls(seventeen...))), "invalid_tool_call", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			reply, usage, err := Complete(context.Background(), apiConfig(respondWith(200, tc.body)), userMessage, lookupTool)
-			failure := requireAPIFailure(t, err, PhaseResponse, ErrorUnknown, tc.code)
+			reply, usage, err := messageAndUsage(Complete(context.Background(), apiConfig(respondWith(200, tc.body)), userMessage, lookupTool))
+			failure := requireAPIFailure(t, err, PhaseResponse, harness.CauseUnknown, tc.code)
 			if failure.Retryable() || !reflect.DeepEqual(reply, Message{}) {
 				t.Fatalf("rejected response leaked a reply or retry: %#v", reply)
 			}
-			if usage.Known != tc.usageKnown || (tc.usageKnown && usage.TotalTokens != 7) {
+			if usage.Known != tc.usageKnown || (tc.usageKnown && usage.Total() != 7) {
 				t.Fatalf("usage %#v", usage)
 			}
 		})
 	}
 	// With no catalog, any proposal is for an unavailable tool.
-	_, _, err := Complete(context.Background(), apiConfig(respondWith(200, chatBody(chatChoice(`"tool_calls"`, assistantWithCalls(chatCall("call_1", "lookup", `{}`)))))), userMessage, nil)
-	requireAPIFailure(t, err, PhaseResponse, ErrorUnknown, "invalid_tool_call")
+	_, err := Complete(context.Background(), apiConfig(respondWith(200, chatBody(chatChoice(`"tool_calls"`, assistantWithCalls(chatCall("call_1", "lookup", `{}`)))))), userMessage, nil)
+	requireAPIFailure(t, err, PhaseResponse, harness.CauseUnknown, "invalid_tool_call")
 }
 
 func TestOpenAIChatUsageIsMeasuredOnlyFromCompleteReports(t *testing.T) {
 	for _, tc := range []struct {
 		name, usage string
-		want        Usage
+		want        harness.Usage
 	}{
-		{"complete with cached detail", `"usage":{"prompt_tokens":12,"completion_tokens":3,"total_tokens":15,"prompt_tokens_details":{"cached_tokens":4}}`, Usage{InputTokens: 12, OutputTokens: 3, TotalTokens: 15, Known: true}},
-		{"total absent", `"usage":{"prompt_tokens":5,"completion_tokens":2}`, Usage{InputTokens: 5, OutputTokens: 2, TotalTokens: 7, Known: true}},
-		{"explicit zeros", `"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}`, Usage{Known: true}},
-		{"absent", `"system_fingerprint":"x"`, Usage{}},
-		{"null", `"usage":null`, Usage{}},
-		{"empty", `"usage":{}`, Usage{}},
-		{"completion missing", `"usage":{"prompt_tokens":5,"total_tokens":5}`, Usage{}},
-		{"negative", `"usage":{"prompt_tokens":-1,"completion_tokens":2}`, Usage{}},
-		{"inconsistent total", `"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":9}`, Usage{}},
-		{"overflow", fmt.Sprintf(`"usage":{"prompt_tokens":%d,"completion_tokens":1}`, math.MaxInt), Usage{}},
-		{"non-numeric", `"usage":{"prompt_tokens":"5","completion_tokens":2}`, Usage{}},
+		{"complete with cached detail", `"usage":{"prompt_tokens":12,"completion_tokens":3,"total_tokens":15,"prompt_tokens_details":{"cached_tokens":4}}`, harness.Usage{Known: true, Input: 12, Output: 3, CacheRead: 4, CacheKnown: true}},
+		{"explicit zero cached detail", `"usage":{"prompt_tokens":12,"completion_tokens":3,"prompt_tokens_details":{"cached_tokens":0}}`, harness.Usage{Known: true, Input: 12, Output: 3, CacheKnown: true}},
+		{"reasoning detail", `"usage":{"prompt_tokens":12,"completion_tokens":9,"total_tokens":21,"completion_tokens_details":{"reasoning_tokens":6}}`, harness.Usage{Known: true, Input: 12, Output: 9, Reasoning: 6}},
+		// Many gateways omit the split; zero cache figures must then read as
+		// unreported, not uncached.
+		{"total absent", `"usage":{"prompt_tokens":5,"completion_tokens":2}`, harness.Usage{Known: true, Input: 5, Output: 2}},
+		{"null details", `"usage":{"prompt_tokens":5,"completion_tokens":2,"prompt_tokens_details":null,"completion_tokens_details":null}`, harness.Usage{Known: true, Input: 5, Output: 2}},
+		{"details without cached tokens", `"usage":{"prompt_tokens":5,"completion_tokens":2,"prompt_tokens_details":{"audio_tokens":0}}`, harness.Usage{Known: true, Input: 5, Output: 2}},
+		{"null cached tokens", `"usage":{"prompt_tokens":5,"completion_tokens":2,"prompt_tokens_details":{"cached_tokens":null}}`, harness.Usage{Known: true, Input: 5, Output: 2}},
+		{"explicit zeros", `"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}`, harness.Usage{Known: true}},
+		{"absent", `"system_fingerprint":"x"`, harness.Usage{}},
+		{"null", `"usage":null`, harness.Usage{}},
+		{"empty", `"usage":{}`, harness.Usage{}},
+		{"completion missing", `"usage":{"prompt_tokens":5,"total_tokens":5}`, harness.Usage{}},
+		{"negative", `"usage":{"prompt_tokens":-1,"completion_tokens":2}`, harness.Usage{}},
+		{"inconsistent total", `"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":9}`, harness.Usage{}},
+		{"cached exceeds prompt", `"usage":{"prompt_tokens":5,"completion_tokens":2,"prompt_tokens_details":{"cached_tokens":6}}`, harness.Usage{}},
+		{"negative cached", `"usage":{"prompt_tokens":5,"completion_tokens":2,"prompt_tokens_details":{"cached_tokens":-1}}`, harness.Usage{}},
+		{"reasoning exceeds completion", `"usage":{"prompt_tokens":5,"completion_tokens":2,"completion_tokens_details":{"reasoning_tokens":3}}`, harness.Usage{}},
+		{"overflow", fmt.Sprintf(`"usage":{"prompt_tokens":%d,"completion_tokens":1}`, math.MaxInt64), harness.Usage{}},
+		{"non-numeric", `"usage":{"prompt_tokens":"5","completion_tokens":2}`, harness.Usage{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			body := `{"choices":[` + chatChoice(`"stop"`, `{"role":"assistant","content":"ok"}`) + `],` + tc.usage + `}`
-			reply, usage, err := Complete(context.Background(), apiConfig(respondWith(200, body)), userMessage, nil)
-			if err != nil || reply.Content != "ok" {
-				t.Fatalf("an accounting gap must not discard the reply: %#v %v", reply, err)
+			result, err := Complete(context.Background(), apiConfig(respondWith(200, body)), userMessage, nil)
+			if err != nil || result.Message.Content != "ok" {
+				t.Fatalf("an accounting gap must not discard the reply: %#v %v", result.Message, err)
 			}
-			if usage != tc.want {
-				t.Fatalf("usage %#v", usage)
+			if result.Usage != tc.want {
+				t.Fatalf("usage %#v", result.Usage)
+			}
+			// Chat Completions states neither a valuation nor a window.
+			if result.Cost != (harness.Cost{}) || result.ContextWindow != 0 {
+				t.Fatalf("invented cost %#v or window %d", result.Cost, result.ContextWindow)
 			}
 		})
 	}

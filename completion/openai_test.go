@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/shhac/lib-agent-harness"
 )
 
 // A dummy credential. It contains "secret" so leak checks can find it.
@@ -66,13 +68,15 @@ func respondWith(status int, body string, header ...string) *fakeAPI {
 
 func apiConfig(api http.RoundTripper) Config {
 	return Config{
-		Engine: EngineOpenAICompatible,
-		Model:  "provider/test-model",
-		API: APIConfig{
-			BaseURL:     "https://gateway.invalid/v1",
-			Dialect:     OpenAIChatCompletions,
-			Credentials: func(context.Context) (string, error) { return testToken, nil },
+		Provider: harness.Provider{
+			Engine: harness.OpenAICompatible,
+			API: harness.API{
+				BaseURL:     "https://gateway.invalid/v1",
+				Dialect:     harness.OpenAIChatCompletions,
+				Credentials: func(context.Context) (string, error) { return testToken, nil },
+			},
 		},
+		Model:     "provider/test-model",
 		transport: api,
 	}
 }
@@ -99,10 +103,10 @@ func assistantWithCalls(calls ...string) string {
 	return `{"role":"assistant","content":null,"tool_calls":[` + strings.Join(calls, ",") + `]}`
 }
 
-func requireAPIFailure(t *testing.T, err error, phase ErrorPhase, kind ErrorKind, code string) *RequestError {
+func requireAPIFailure(t *testing.T, err error, phase ErrorPhase, kind harness.Cause, code string) *RequestError {
 	t.Helper()
 	var failure *RequestError
-	if !errors.As(err, &failure) || failure.Engine != EngineOpenAICompatible || failure.Phase != phase || failure.Kind != kind || failure.Code != code {
+	if !errors.As(err, &failure) || failure.Engine != harness.OpenAICompatible || failure.Phase != phase || failure.Cause != kind || failure.Code != code {
 		t.Fatalf("want %s/%s/%s; got %#v (%v)", phase, kind, code, failure, err)
 	}
 	encoded, _ := json.Marshal(failure)
@@ -135,43 +139,43 @@ func TestOpenAIChatHTTPFailuresAreClassifiedWithoutProviderText(t *testing.T) {
 		status     int
 		body       string
 		header     []string
-		kind       ErrorKind
+		kind       harness.Cause
 		code       string
 		retryAfter time.Duration
 	}{
-		{"unauthorized", 401, errorBody("invalid_api_key", "invalid_request_error"), nil, ErrorAuthentication, "http_401", 0},
-		{"forbidden", 403, errorBody("", "secret"), nil, ErrorPermissionDenied, "http_403", 0},
-		{"model not found", 404, errorBody("model_not_found", "invalid_request_error"), nil, ErrorModelUnavailable, "model_not_found", 0},
-		{"wrong path", 404, `secret not found`, nil, ErrorUnknown, "http_404", 0},
-		{"context length", 400, errorBody("context_length_exceeded", "invalid_request_error"), nil, ErrorContextLimit, "context_length_exceeded", 0},
-		{"bad request", 400, errorBody("secret_code", "invalid_request_error"), nil, ErrorUnknown, "http_400", 0},
-		{"too large", 413, ``, nil, ErrorContextLimit, "http_413", 0},
-		{"rate limited", 429, errorBody("rate_limit_exceeded", "requests"), []string{"Retry-After", "7"}, ErrorRateLimited, "http_429", 7 * time.Second},
-		{"rate limited unreadable body", 429, `secret`, nil, ErrorRateLimited, "http_429", 0},
-		{"rate limited date delay", 429, ``, []string{"Retry-After", "Wed, 21 Oct 2015 07:28:00 GMT"}, ErrorRateLimited, "http_429", 0},
-		{"rate limited excessive delay", 429, ``, []string{"Retry-After", "7200"}, ErrorRateLimited, "http_429", 0},
-		{"quota exhausted", 429, errorBody("insufficient_quota", "insufficient_quota"), []string{"Retry-After", "7"}, ErrorUnknown, "insufficient_quota", 0},
-		{"quota exhausted by type", 429, errorBody("", "insufficient_quota"), nil, ErrorUnknown, "insufficient_quota", 0},
-		{"unavailable", 503, ``, []string{"Retry-After", "3"}, ErrorUnavailable, "http_503", 3 * time.Second},
-		{"overloaded", 529, errorBody("", "overloaded_error"), nil, ErrorOverloaded, "http_529", 0},
-		{"server error", 500, errorBody("", "server_error"), []string{"Retry-After", "3"}, ErrorUnknown, "http_500", 0},
-		{"bad gateway", 502, ``, nil, ErrorUnknown, "http_502", 0},
-		{"gateway timeout", 504, ``, nil, ErrorUnknown, "http_504", 0},
-		{"unexpected success status", 201, chatBody(chatChoice(`"stop"`, `{"content":"secret"}`)), nil, ErrorUnknown, "http_201", 0},
-		{"redirect", 307, ``, []string{"Location", "https://elsewhere.invalid/v1/chat/completions"}, ErrorUnknown, "redirect_refused", 0},
+		{"unauthorized", 401, errorBody("invalid_api_key", "invalid_request_error"), nil, harness.CauseAuthentication, "http_401", 0},
+		{"forbidden", 403, errorBody("", "secret"), nil, harness.CausePermissionDenied, "http_403", 0},
+		{"model not found", 404, errorBody("model_not_found", "invalid_request_error"), nil, harness.CauseModelUnavailable, "model_not_found", 0},
+		{"wrong path", 404, `secret not found`, nil, harness.CauseUnknown, "http_404", 0},
+		{"context length", 400, errorBody("context_length_exceeded", "invalid_request_error"), nil, harness.CauseContextLimit, "context_length_exceeded", 0},
+		{"bad request", 400, errorBody("secret_code", "invalid_request_error"), nil, harness.CauseUnknown, "http_400", 0},
+		{"too large", 413, ``, nil, harness.CauseContextLimit, "http_413", 0},
+		{"rate limited", 429, errorBody("rate_limit_exceeded", "requests"), []string{"Retry-After", "7"}, harness.CauseRateLimited, "http_429", 7 * time.Second},
+		{"rate limited unreadable body", 429, `secret`, nil, harness.CauseRateLimited, "http_429", 0},
+		{"rate limited date delay", 429, ``, []string{"Retry-After", "Wed, 21 Oct 2015 07:28:00 GMT"}, harness.CauseRateLimited, "http_429", 0},
+		{"rate limited excessive delay", 429, ``, []string{"Retry-After", "7200"}, harness.CauseRateLimited, "http_429", 0},
+		{"quota exhausted", 429, errorBody("insufficient_quota", "insufficient_quota"), []string{"Retry-After", "7"}, harness.CauseUnknown, "insufficient_quota", 0},
+		{"quota exhausted by type", 429, errorBody("", "insufficient_quota"), nil, harness.CauseUnknown, "insufficient_quota", 0},
+		{"unavailable", 503, ``, []string{"Retry-After", "3"}, harness.CauseUnavailable, "http_503", 3 * time.Second},
+		{"overloaded", 529, errorBody("", "overloaded_error"), nil, harness.CauseOverloaded, "http_529", 0},
+		{"server error", 500, errorBody("", "server_error"), []string{"Retry-After", "3"}, harness.CauseUnknown, "http_500", 0},
+		{"bad gateway", 502, ``, nil, harness.CauseUnknown, "http_502", 0},
+		{"gateway timeout", 504, ``, nil, harness.CauseUnknown, "http_504", 0},
+		{"unexpected success status", 201, chatBody(chatChoice(`"stop"`, `{"content":"secret"}`)), nil, harness.CauseUnknown, "http_201", 0},
+		{"redirect", 307, ``, []string{"Location", "https://elsewhere.invalid/v1/chat/completions"}, harness.CauseUnknown, "redirect_refused", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			api := respondWith(tc.status, tc.body, tc.header...)
-			reply, usage, err := Complete(context.Background(), apiConfig(api), userMessage, nil)
+			reply, usage, err := messageAndUsage(Complete(context.Background(), apiConfig(api), userMessage, nil))
 			failure := requireAPIFailure(t, err, PhaseResponse, tc.kind, tc.code)
 			if failure.RetryAfter != tc.retryAfter {
 				t.Fatalf("retry after %v", failure.RetryAfter)
 			}
-			wantRetry := tc.kind == ErrorRateLimited || tc.kind == ErrorUnavailable || tc.kind == ErrorOverloaded
+			wantRetry := tc.kind == harness.CauseRateLimited || tc.kind == harness.CauseUnavailable || tc.kind == harness.CauseOverloaded
 			if failure.Retryable() != wantRetry {
 				t.Fatalf("retryable %v", failure.Retryable())
 			}
-			if !reflect.DeepEqual(reply, Message{}) || usage != (Usage{}) {
+			if !reflect.DeepEqual(reply, Message{}) || usage != (harness.Usage{}) {
 				t.Fatalf("failed status produced %#v %#v", reply, usage)
 			}
 			if api.count() != 1 {
@@ -180,7 +184,7 @@ func TestOpenAIChatHTTPFailuresAreClassifiedWithoutProviderText(t *testing.T) {
 		})
 	}
 	var failure *RequestError
-	_, _, err := Complete(context.Background(), apiConfig(respondWith(404, errorBody("model_not_found", ""))), userMessage, nil)
+	_, err := Complete(context.Background(), apiConfig(respondWith(404, errorBody("model_not_found", ""))), userMessage, nil)
 	if !errors.As(err, &failure) || !strings.Contains(err.Error(), "configured endpoint") {
 		t.Fatalf("model message should describe the endpoint, not a CLI: %v", err)
 	}
@@ -194,12 +198,12 @@ func TestOpenAIChatRejectsNonJSONAndOversizedResponses(t *testing.T) {
 				return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{}`)), Request: r}, nil
 			}}
 		}
-		_, _, err := Complete(context.Background(), apiConfig(api), userMessage, nil)
-		requireAPIFailure(t, err, PhaseResponse, ErrorUnknown, "unexpected_media_type")
+		_, err := Complete(context.Background(), apiConfig(api), userMessage, nil)
+		requireAPIFailure(t, err, PhaseResponse, harness.CauseUnknown, "unexpected_media_type")
 	}
 	api := respondWith(200, chatBody(chatChoice(`"stop"`, `{"content":"`+strings.Repeat("x", apiResponseLimit)+`"}`)), "Content-Type", "application/json; charset=utf-8")
-	_, _, err := Complete(context.Background(), apiConfig(api), userMessage, nil)
-	requireAPIFailure(t, err, PhaseResponse, ErrorUnknown, "output_limit")
+	_, err := Complete(context.Background(), apiConfig(api), userMessage, nil)
+	requireAPIFailure(t, err, PhaseResponse, harness.CauseUnknown, "output_limit")
 }
 
 func TestOpenAIChatDiscardsAResponseEchoingTheCredential(t *testing.T) {
@@ -210,8 +214,8 @@ func TestOpenAIChatDiscardsAResponseEchoingTheCredential(t *testing.T) {
 		"tool arguments": chatBody(chatChoice(`"tool_calls"`, assistantWithCalls(chatCall("call_1", "lookup", `{"k":"`+testToken+`"}`)))),
 	} {
 		t.Run(name, func(t *testing.T) {
-			reply, usage, err := Complete(context.Background(), apiConfig(respondWith(200, body)), userMessage, lookupTool)
-			requireAPIFailure(t, err, PhaseResponse, ErrorUnknown, "credential_echoed")
+			reply, usage, err := messageAndUsage(Complete(context.Background(), apiConfig(respondWith(200, body)), userMessage, lookupTool))
+			requireAPIFailure(t, err, PhaseResponse, harness.CauseUnknown, "credential_echoed")
 			if !reflect.DeepEqual(reply, Message{}) || !usage.Known {
 				t.Fatalf("reply %#v usage %#v", reply, usage)
 			}
@@ -233,10 +237,10 @@ func TestOpenAIChatCancellationAndTransportFailures(t *testing.T) {
 	t.Run("already cancelled", func(t *testing.T) {
 		api := respondWith(200, `{}`)
 		cfg := apiConfig(api)
-		cfg.API.Credentials = func(context.Context) (string, error) { t.Fatal("credential resolved"); return "", nil }
+		cfg.Provider.API.Credentials = func(context.Context) (string, error) { t.Fatal("credential resolved"); return "", nil }
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		if _, _, err := Complete(ctx, cfg, userMessage, nil); !errors.Is(err, context.Canceled) || api.count() != 0 {
+		if _, err := Complete(ctx, cfg, userMessage, nil); !errors.Is(err, context.Canceled) || api.count() != 0 {
 			t.Fatalf("%v, %d requests", err, api.count())
 		}
 	})
@@ -244,7 +248,7 @@ func TestOpenAIChatCancellationAndTransportFailures(t *testing.T) {
 		started := make(chan struct{})
 		ctx, cancel := context.WithCancel(context.Background())
 		go func() { <-started; cancel() }()
-		_, usage, err := Complete(ctx, apiConfig(blockingAPI(started)), userMessage, nil)
+		_, usage, err := messageAndUsage(Complete(ctx, apiConfig(blockingAPI(started)), userMessage, nil))
 		if !errors.Is(err, context.Canceled) || usage.Known {
 			t.Fatalf("%v %#v", err, usage)
 		}
@@ -256,8 +260,8 @@ func TestOpenAIChatCancellationAndTransportFailures(t *testing.T) {
 	t.Run("timeout in flight", func(t *testing.T) {
 		cfg := apiConfig(blockingAPI(nil))
 		cfg.Timeout = 20 * time.Millisecond
-		_, _, err := Complete(context.Background(), cfg, userMessage, nil)
-		failure := requireAPIFailure(t, err, PhaseTransport, ErrorTimeout, "deadline_exceeded")
+		_, err := Complete(context.Background(), cfg, userMessage, nil)
+		failure := requireAPIFailure(t, err, PhaseTransport, harness.CauseTimeout, "deadline_exceeded")
 		if !errors.Is(err, context.DeadlineExceeded) || failure.Retryable() {
 			t.Fatal("timeout lost deadline identity or became retryable")
 		}
@@ -265,16 +269,16 @@ func TestOpenAIChatCancellationAndTransportFailures(t *testing.T) {
 	t.Run("caller deadline in flight", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 		defer cancel()
-		_, _, err := Complete(ctx, apiConfig(blockingAPI(nil)), userMessage, nil)
-		requireAPIFailure(t, err, PhaseTransport, ErrorTimeout, "deadline_exceeded")
+		_, err := Complete(ctx, apiConfig(blockingAPI(nil)), userMessage, nil)
+		requireAPIFailure(t, err, PhaseTransport, harness.CauseTimeout, "deadline_exceeded")
 	})
 	t.Run("credential source outlives Timeout", func(t *testing.T) {
 		api := respondWith(200, `{}`)
 		cfg := apiConfig(api)
 		cfg.Timeout = 20 * time.Millisecond
-		cfg.API.Credentials = func(ctx context.Context) (string, error) { <-ctx.Done(); return testToken, nil }
-		_, _, err := Complete(context.Background(), cfg, userMessage, nil)
-		requireAPIFailure(t, err, PhasePreflight, ErrorTimeout, "deadline_exceeded")
+		cfg.Provider.API.Credentials = func(ctx context.Context) (string, error) { <-ctx.Done(); return testToken, nil }
+		_, err := Complete(context.Background(), cfg, userMessage, nil)
+		requireAPIFailure(t, err, PhasePreflight, harness.CauseTimeout, "deadline_exceeded")
 		if api.count() != 0 {
 			t.Fatal("request sent after the credential deadline")
 		}
@@ -283,8 +287,8 @@ func TestOpenAIChatCancellationAndTransportFailures(t *testing.T) {
 		api := &fakeAPI{respond: func(*http.Request) (*http.Response, error) {
 			return nil, errors.New("dial tcp: secret.invalid: " + testToken)
 		}}
-		_, _, err := Complete(context.Background(), apiConfig(api), userMessage, nil)
-		failure := requireAPIFailure(t, err, PhaseTransport, ErrorUnknown, "transport_failed")
+		_, err := Complete(context.Background(), apiConfig(api), userMessage, nil)
+		failure := requireAPIFailure(t, err, PhaseTransport, harness.CauseUnknown, "transport_failed")
 		if failure.Retryable() || api.count() != 1 {
 			t.Fatal("transport failure was retryable or retried")
 		}
@@ -294,8 +298,8 @@ func TestOpenAIChatCancellationAndTransportFailures(t *testing.T) {
 			body := io.MultiReader(strings.NewReader(`{"choices":[`), failingReader{})
 			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(body), Request: r}, nil
 		}}
-		_, _, err := Complete(context.Background(), apiConfig(api), userMessage, nil)
-		requireAPIFailure(t, err, PhaseResponse, ErrorUnknown, "transport_failed")
+		_, err := Complete(context.Background(), apiConfig(api), userMessage, nil)
+		requireAPIFailure(t, err, PhaseResponse, harness.CauseUnknown, "transport_failed")
 	})
 }
 

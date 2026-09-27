@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/shhac/lib-agent-harness"
 )
 
 func TestClaudeNativeLoginEnvironment(t *testing.T) {
@@ -39,7 +41,7 @@ func TestClaudeTransportIsCoordinationOnlyAndUsesState(t *testing.T) {
 	root := t.TempDir()
 	calls := 0
 	reserved := false
-	cfg := Config{Engine: "claude", ClaudeHome: filepath.Join(root, "login"), ClaudeBin: "test-claude", Model: "test-model", Effort: "high", WorkDirRoot: root, MaxContextBytes: 100000, Timeout: time.Second, BeforeRequest: func(context.Context) error { reserved = true; return nil }}
+	cfg := Config{Provider: cliProvider(harness.Claude, "test-claude", filepath.Join(root, "login")), Model: "test-model", Effort: "high", WorkDirRoot: root, MaxContextBytes: 100000, Timeout: time.Second, BeforeRequest: func(context.Context) error { reserved = true; return nil }}
 	cfg.run = func(_ context.Context, _ string, args []string, dir string, env []string, input string) ([]byte, error) {
 		calls++
 		for _, entry := range env {
@@ -72,8 +74,8 @@ func TestClaudeTransportIsCoordinationOnlyAndUsesState(t *testing.T) {
 		}
 		return []byte(`{"type":"result","subtype":"success","is_error":false,"structured_output":{"content":"Ready","tool_calls":[]},"usage":{"input_tokens":10,"output_tokens":2,"cache_read_input_tokens":4,"cache_creation_input_tokens":3}}`), nil
 	}
-	result, usage, err := Complete(context.Background(), cfg, []Message{{Role: "user", Content: "Hello"}}, Tools())
-	if err != nil || result.Content != "Ready" || !usage.Known || usage.TotalTokens != 19 || calls != 2 {
+	result, usage, err := messageAndUsage(Complete(context.Background(), cfg, []Message{{Role: "user", Content: "Hello"}}, Tools()))
+	if err != nil || result.Content != "Ready" || !usage.Known || usage.Total() != 19 || calls != 2 {
 		t.Fatalf("result=%+v err=%v calls=%d", result, err, calls)
 	}
 	entries, err := os.ReadDir(filepath.Join(root, "model-runs"))
@@ -90,7 +92,7 @@ func TestClaudeRejectsNativeToolsAndMalformedResult(t *testing.T) {
 		`{"type":"result","subtype":"success","structured_output":{"content":"wrong","tool_calls":[{"name":"Bash","arguments":"{}"}]}}}`,
 		`{"type":"result","subtype":"error_during_execution","is_error":true,"error":"secret"}`,
 	} {
-		_, _, err := parseClaude([]byte(input), nil)
+		_, err := parseClaude([]byte(input), nil)
 		if err == nil || strings.Contains(err.Error(), "secret") {
 			t.Fatal("unsafe Claude result accepted or error leaked")
 		}
@@ -99,11 +101,11 @@ func TestClaudeRejectsNativeToolsAndMalformedResult(t *testing.T) {
 
 func TestClaudeDoesNotRetryFailure(t *testing.T) {
 	calls := 0
-	cfg := Config{Engine: "claude", ClaudeBin: "test", Model: "test", MaxContextBytes: 10000, run: func(context.Context, string, []string, string, []string, string) ([]byte, error) {
+	cfg := Config{Provider: cliProvider(harness.Claude, "test", ""), Model: "test", MaxContextBytes: 10000, run: func(context.Context, string, []string, string, []string, string) ([]byte, error) {
 		calls++
 		return nil, errors.New("secret")
 	}}
-	_, _, err := claudeComplete(context.Background(), cfg, []Message{{Role: "user", Content: "test"}}, nil)
+	_, err := claudeComplete(context.Background(), cfg, []Message{{Role: "user", Content: "test"}}, nil)
 	if calls != 1 || err == nil || strings.Contains(err.Error(), "secret") {
 		t.Fatal(calls, err)
 	}

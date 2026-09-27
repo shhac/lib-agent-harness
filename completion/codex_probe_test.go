@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/shhac/lib-agent-harness"
 )
 
 // The predicate is the fail-closed native-tool boundary: it decides, before any
@@ -40,8 +42,7 @@ func TestValidCodexProbe(t *testing.T) {
 func TestCodexProbeFailsClosedWithoutARequest(t *testing.T) {
 	t.Setenv("CODEX_HOME", t.TempDir())
 	reserved := false
-	cfg := Config{Engine: "codex", Model: "test-model", Effort: "high", CodexBin: "sh",
-		BeforeRequest: func(context.Context) error { reserved = true; return nil }}
+	cfg := Config{Provider: cliProvider(harness.Codex, "sh", ""), Model: "test-model", Effort: "high", BeforeRequest: func(context.Context) error { reserved = true; return nil }}
 	inference := 0
 	cfg.run = func(_ context.Context, _ string, args []string, _ string, _ []string, _ string) ([]byte, error) {
 		if args[0] == "debug" {
@@ -54,7 +55,7 @@ func TestCodexProbeFailsClosedWithoutARequest(t *testing.T) {
 		inference++
 		return nil, errors.New("unreachable")
 	}
-	if _, _, err := Complete(context.Background(), cfg, nil, Tools()); err == nil {
+	if _, err := Complete(context.Background(), cfg, nil, Tools()); err == nil {
 		t.Fatal("probe accepted a CLI that never contacted the provider")
 	}
 	if reserved || inference != 0 {
@@ -67,8 +68,7 @@ func TestCodexProbeFailsClosedWithoutARequest(t *testing.T) {
 func TestCodexProbeFailsClosedOnExtraRequests(t *testing.T) {
 	t.Setenv("CODEX_HOME", t.TempDir())
 	reserved := false
-	cfg := Config{Engine: "codex", Model: "test-model", Effort: "high", CodexBin: "sh",
-		BeforeRequest: func(context.Context) error { reserved = true; return nil }}
+	cfg := Config{Provider: cliProvider(harness.Codex, "sh", ""), Model: "test-model", Effort: "high", BeforeRequest: func(context.Context) error { reserved = true; return nil }}
 	cfg.run = func(_ context.Context, _ string, args []string, _ string, _ []string, _ string) ([]byte, error) {
 		if args[0] == "debug" {
 			return []byte(testCatalog), nil
@@ -82,7 +82,7 @@ func TestCodexProbeFailsClosedOnExtraRequests(t *testing.T) {
 		}
 		return nil, errors.New("rejected")
 	}
-	if _, _, err := Complete(context.Background(), cfg, nil, Tools()); err == nil {
+	if _, err := Complete(context.Background(), cfg, nil, Tools()); err == nil {
 		t.Fatal("probe accepted a CLI that sent more than the verified request")
 	}
 	if reserved {

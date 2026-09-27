@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/shhac/lib-agent-harness"
 )
 
 // probeCodex makes no inference call. A dummy provider rejects the first request
@@ -21,7 +23,7 @@ func probeCodex(ctx context.Context, cfg Config, bin string, args []string, dir 
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return preflightFailure("codex", "probe_listen_failed")
+		return preflightFailure(harness.Codex, "probe_listen_failed")
 	}
 	var mu sync.Mutex
 	mismatch := ""
@@ -63,22 +65,22 @@ func probeCodex(ctx context.Context, cfg Config, bin string, args []string, dir 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if failure := probeRunFailure("codex", ctx, runErr); failure != nil {
+	if failure := probeRunFailure(harness.Codex, ctx, runErr); failure != nil {
 		return failure
 	}
 	mu.Lock()
 	defer mu.Unlock()
 	if probeCtx.Err() != nil {
-		return preflightFailure("codex", "probe_timeout")
+		return preflightFailure(harness.Codex, "probe_timeout")
 	}
 	if requests == 0 {
-		return preflightFailure("codex", "probe_no_requests")
+		return preflightFailure(harness.Codex, "probe_no_requests")
 	}
 	if requests != 1 {
-		return preflightFailure("codex", "probe_request_limit")
+		return preflightFailure(harness.Codex, "probe_request_limit")
 	}
 	if mismatch != "" {
-		return preflightFailure("codex", mismatch)
+		return preflightFailure(harness.Codex, mismatch)
 	}
 	return nil
 }

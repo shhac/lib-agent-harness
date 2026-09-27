@@ -9,6 +9,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/shhac/lib-agent-harness"
 )
 
 // Cancellation can arrive during any preparatory subprocess. It must retain its
@@ -19,16 +21,20 @@ func TestCompletionCancellationAcrossSubprocessBoundaries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, engine := range []string{"codex", "claude"} {
+	for _, engine := range cliEngines {
 		for _, stage := range []string{"catalog", "probe_failure", "probe_verified", "inference"} {
-			if engine == "claude" && stage == "catalog" {
+			if engine == harness.Claude && stage == "catalog" {
 				continue
 			}
-			t.Run(engine+"/"+stage, func(t *testing.T) {
+			t.Run(string(engine)+"/"+stage, func(t *testing.T) {
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
 				reservations, invocations := 0, 0
-				cfg := Config{Engine: engine, Model: "test-model", Effort: "high", CodexBin: binary, ClaudeBin: binary, CodexHome: t.TempDir(), BeforeRequest: func(context.Context) error { reservations++; return nil }}
+				home := ""
+				if engine == harness.Codex {
+					home = t.TempDir()
+				}
+				cfg := Config{Provider: cliProvider(engine, binary, home), Model: "test-model", Effort: "high", BeforeRequest: func(context.Context) error { reservations++; return nil }}
 				run := func(_ context.Context, _ string, args []string, _ string, env []string, _ string) ([]byte, error) {
 					if args[0] == "debug" {
 						if stage == "catalog" {
@@ -68,7 +74,7 @@ func TestCompletionCancellationAcrossSubprocessBoundaries(t *testing.T) {
 					return nil, errors.New("synthetic inference failure")
 				}
 				cfg.run = run
-				_, _, err := Complete(ctx, cfg, nil, Tools())
+				_, err := Complete(ctx, cfg, nil, Tools())
 				if !errors.Is(err, context.Canceled) {
 					t.Fatalf("lost cancellation: %v", err)
 				}
@@ -85,9 +91,9 @@ func TestCompletionCancellationAcrossSubprocessBoundaries(t *testing.T) {
 }
 
 func TestDiscoveryPreservesCancellation(t *testing.T) {
-	for _, engine := range []string{"codex", "claude"} {
+	for _, engine := range cliEngines {
 		ctx, cancel := context.WithCancel(context.Background())
-		_, err := discoverModels(ctx, Config{Engine: engine}, func(context.Context, Config, func(io.Reader, io.Writer) error) error {
+		_, err := discoverModels(ctx, Config{Provider: harness.Provider{Engine: engine}}, func(context.Context, Config, func(io.Reader, io.Writer) error) error {
 			cancel()
 			return errors.New("synthetic transport error")
 		})
@@ -113,8 +119,8 @@ func TestCodexKeepsLastCompletedMessage(t *testing.T) {
 	data := `{"type":"item.completed","item":{"type":"agent_message","text":"Checking the request."}}` + "\n" +
 		`{"type":"item.completed","item":{"type":"agent_message","text":"{\"content\":\"Final answer\",\"tool_calls\":[]}"}}` + "\n" +
 		`{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":3}}`
-	message, _, err := parseCodex([]byte(data), Tools())
-	if err != nil || message.Content != "Final answer" {
-		t.Fatalf("message=%+v err=%v", message, err)
+	result, err := parseCodex([]byte(data), Tools())
+	if err != nil || result.Message.Content != "Final answer" {
+		t.Fatalf("message=%+v err=%v", result.Message, err)
 	}
 }
