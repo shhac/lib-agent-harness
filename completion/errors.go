@@ -230,7 +230,8 @@ func capabilityCode(code string) bool {
 		"probe_changed_schema", "probe_changed_effort", "probe_instruction_type",
 		"probe_unexpected_instructions", "probe_missing_instructions", "probe_changed_model",
 		"missing_effort_catalog", "unsupported_effort",
-		"api_dialect_unsupported", "api_effort_parameter_unsupported":
+		"api_dialect_unsupported", "api_effort_parameter_unsupported",
+		"global_skills_unsupported", "skills_unsupported":
 		return true
 	}
 	return false

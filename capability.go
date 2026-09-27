@@ -73,6 +73,14 @@ const (
 	Login               Feature = "login"
 	Quota               Feature = "quota"   // subscription usage windows
 	Credits             Feature = "credits" // prepaid or overage balance
+	// ProvidedSkills: caller-provided skills (Skills.Provided) made available
+	// for one invocation. Native where the harness loads them itself, composed
+	// where the library does. (The names Skills and GlobalSkills are the
+	// request types in skills.go.)
+	ProvidedSkills Feature = "skills"
+	// IncludeGlobalSkills: including the harness's own installed skills
+	// (Skills.Global Include).
+	IncludeGlobalSkills Feature = "global_skills"
 )
 
 type supportKey struct {
@@ -115,6 +123,10 @@ var (
 	native      = Capability{Availability: Native}
 	unverified  = Capability{Unknown, "not verified against the installed harness"}
 	cacheVaries = Capability{Unknown, "reported only by endpoints that split cached input"}
+	// Constrained completion has no native tools, so no engine loads skills
+	// there; the library composes them for every engine instead.
+	composedSkills = Capability{Composed, "the library indexes provided skills and answers a read-only skill tool; a permitted skill's scripts run only when the caller answers those calls"}
+	noGlobalSkills = Capability{Unsupported, "constrained completion never loads installed skills; only Default or Exclude is accepted"}
 )
 
 var supportTable = map[supportKey]Capability{
@@ -137,6 +149,15 @@ var supportTable = map[supportKey]Capability{
 	{OpenAICompatible, Complete, Effort}:     {Native, "requires API.EffortParameter"},
 	{OpenAICompatible, Complete, Tools}:      native,
 	{OpenAICompatible, Complete, CacheSplit}: cacheVaries,
+
+	{Codex, Complete, ProvidedSkills}:                 composedSkills,
+	{Claude, Complete, ProvidedSkills}:                composedSkills,
+	{Grok, Complete, ProvidedSkills}:                  composedSkills,
+	{OpenAICompatible, Complete, ProvidedSkills}:      composedSkills,
+	{Codex, Complete, IncludeGlobalSkills}:            noGlobalSkills,
+	{Claude, Complete, IncludeGlobalSkills}:           noGlobalSkills,
+	{Grok, Complete, IncludeGlobalSkills}:             noGlobalSkills,
+	{OpenAICompatible, Complete, IncludeGlobalSkills}: noGlobalSkills,
 
 	{Codex, Run, Available}:         native,
 	{Codex, Run, Effort}:            native,

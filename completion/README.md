@@ -161,6 +161,76 @@ The Codex capability probe retains only its explicitly selected `CODEX_HOME` to
 verify that home's instruction boundary; its provider authentication remains a
 dummy local key. The bundled model catalog uses a disposable Codex home too.
 
+## Skills
+
+`Config.Skills` makes caller-provided skills available to the model, for every
+engine. Constrained completion has no native tools, so no harness loads skills
+here: `harness.Support(engine, harness.Complete, harness.ProvidedSkills)` is
+`composed`, and the library composes them. `Skills.Global` must be Default or
+Exclude; Include is refused (`global_skills_unsupported`, a capability
+failure) because installed skills are never loaded. `Skills.Delivery` may be
+Auto or Composed; both mean composed here.
+
+Each `harness.Skill` names an absolute directory holding `SKILL.md`, whose YAML
+front matter gives `name` (equal to `Skill.Name`: lowercase letters, digits and
+hyphens, at most 64) and `description` (at most 1024 characters). The front
+matter reader is a small strict subset: plain, quoted, continued or block
+scalars for those two fields; other keys are allowed and ignored. At most 64
+skills, no duplicate names, `SKILL.md` at most 256 KiB of UTF-8 text inside the
+directory. A bad skill is refused before any process or request with a fixed
+code (`skill_dir_invalid`, `skill_manifest_missing`,
+`skill_front_matter_invalid`, `skill_name_mismatch`, …).
+
+The model sees an index of the provided skills (name and description) in the
+system context, appended to a leading system message or as a new one, and the
+library's tools after the caller's: `load_skill` `{"skill", "file"?}` reads
+`SKILL.md` or a file the skill references, and `run_skill_script` `{"skill",
+"script", "args"?}` is offered only when a provided skill sets `Scripts`. For a
+CLI engine both travel in the rendered payload beside `messages` and
+`available_tools`, so the proven system instructions are unchanged; an
+OpenAI-compatible request carries them as function tools. While skills are
+provided, a caller tool with either name is refused
+(`skill_tool_name_reserved`).
+
+Skill calls are proposals. They stay in `Message.ToolCalls`, in the model's
+order, so the assistant message is appended to history as it is and every
+later tool message has its matching call (Chat Completions requires that).
+`Result.SkillCalls` lists them again; `Result.ApplicationCalls()` is the rest.
+A skill call whose arguments are not the tool's exact shape fails the
+response (`invalid_skill_call`) with no proposal. `AnswerSkillCalls` answers
+the skill calls it is given, skipping others, one `tool` message each: a file's
+text, a script's JSON result, or a fixed `<tool> error: <code>` text for an
+unknown skill, a path outside the skill (`..` or a symbolic link), a missing,
+non-regular, oversized (over 256 KiB) or non-text file, and so on. Nothing
+read from a file or script ever enters an error value.
+
+```go
+result, err := completion.Complete(ctx, cfg, history, tools)
+// handle err
+history = append(history, result.Message)
+history = append(history, completion.AnswerSkillCalls(ctx, result.SkillCalls, cfg.Skills,
+    completion.SkillRunOptions{WorkDir: scratch})...)
+for _, call := range result.ApplicationCalls() {
+    history = append(history, app.Execute(call)) // role "tool", ToolCallID call.ID
+}
+```
+
+Answering is the caller's authorization: a script runs only when its call is
+passed to `AnswerSkillCalls`, one at a time, and only for a skill with
+`Scripts` set and a non-empty `SkillRunOptions.WorkDir`. The library's runner
+executes the script directly, never through a shell: it must be a regular
+file inside the skill with an execute permission (the operating system reads
+any `#!` line), `args` is its argument vector, the working directory is
+`WorkDir`, and the environment is only the parent's `PATH`, `HOME`, `TMPDIR`,
+`LANG` and `LC_*` plus `SkillRunOptions.Env`. It runs in its own process tree,
+ended as a whole by the timeout (one minute by default, at most ten) or by
+cancellation. Stdout and stderr are each kept to 64 KiB and marked truncated
+beyond. The result is `{"exit_code", "timed_out", "stdout",
+"stdout_truncated", "stderr", "stderr_truncated"}`; a non-zero exit is a
+result, not an error. The library's runner refuses on Windows. Set
+`SkillRunOptions.Exec` to run the checked `SkillCommand` in the application's
+own container or sandbox instead; its error is answered as `script_failed`.
+
 ## Failure classification
 
 Use `harness.ErrorFacts(err)` to classify a failure in the vocabulary every
@@ -176,7 +246,8 @@ repeat (`unsupported_engine`; native tools advertised or attempted,
 `unexpected_native_tool*`; capability-probe mismatches such as
 `probe_unexpected_tools` or `probe_mismatch`; `missing_effort_catalog`,
 `unsupported_effort`, `api_dialect_unsupported`,
-`api_effort_parameter_unsupported`), `harness.FailurePreflight` for other
+`api_effort_parameter_unsupported`, `global_skills_unsupported`,
+`skills_unsupported`), `harness.FailurePreflight` for other
 preflight codes, `harness.FailureProcess` for the process phase, and
 `harness.FailureRequest` for the transport and response phases. `Code` is an allowlisted native enum
 or library code; an unknown native value is omitted. Exit status is only present

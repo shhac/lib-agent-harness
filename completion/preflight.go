@@ -77,6 +77,40 @@ func (e *RequestError) diagnosticDetail() string {
 		return "CLI capability check could not verify the transcript the CLI persists; constrained completion remains disabled (not an account login check)"
 	case "unexpected_native_tool":
 		return "Claude advertised or attempted an unexpected native tool; this older diagnostic does not distinguish the two"
+	case "global_skills_invalid":
+		return "Skills.Global must be Default, Include or Exclude"
+	case "global_skills_unsupported":
+		return "constrained completion never loads installed skills; use Skills.Global Default or Exclude and provide the skills needed"
+	case "skill_delivery_invalid":
+		return "Skills.Delivery must be Auto or Composed"
+	case "skills_unsupported":
+		return "provided skills are unavailable for this engine here"
+	case "skill_tool_name_reserved":
+		return "load_skill and run_skill_script are reserved for the library's skill tools while skills are provided; rename the application tool"
+	case "invalid_skill_call":
+		return "the model proposed a skill tool call with malformed arguments; no proposal was returned"
+	case "too_many_skills":
+		return "too many provided skills for one invocation"
+	case "skill_name_invalid":
+		return "a skill name must be lowercase letters, digits and hyphens, at most 64 characters"
+	case "skill_duplicate":
+		return "two provided skills share a name"
+	case "skill_dir_invalid":
+		return "a skill directory must be an absolute path"
+	case "skill_dir_unavailable":
+		return "a skill directory does not exist or is not a directory"
+	case "skill_manifest_missing":
+		return "a skill directory has no SKILL.md"
+	case "skill_manifest_invalid":
+		return "a skill's SKILL.md must be a regular UTF-8 text file inside its directory"
+	case "skill_manifest_too_large":
+		return "a skill's SKILL.md exceeds 256 KiB"
+	case "skill_front_matter_invalid":
+		return "a skill's SKILL.md must open with YAML front matter giving name and description as simple scalars"
+	case "skill_name_mismatch":
+		return "a skill's SKILL.md names a different skill than the one provided"
+	case "skill_description_invalid":
+		return "a skill's description must be non-empty text of at most 1024 characters"
 
 	case "executable_not_found":
 		if e.Engine == harness.Claude {

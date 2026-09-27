@@ -34,9 +34,10 @@ type grokFake struct {
 	transcript func([]byte) []byte
 	// refresh, when set, is written as the runtime login during the real run.
 	refresh string
-	// seen records the real run's arguments and environment.
-	args []string
-	env  []string
+	// seen records the real run's arguments, environment and prompt.
+	args   []string
+	env    []string
+	prompt string
 	// order records probe, before-request and launch.
 	order []string
 }
@@ -90,7 +91,7 @@ func (f *grokFake) run(_ context.Context, _ string, args []string, dir string, e
 	}
 	f.launches++
 	f.order = append(f.order, "launch")
-	f.args, f.env = args, env
+	f.args, f.env, f.prompt = args, env, string(prompt)
 	if f.refresh != "" {
 		if err := os.WriteFile(filepath.Join(grokHome, grokCredentialFile), []byte(f.refresh), 0600); err != nil {
 			t.Fatal(err)

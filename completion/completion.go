@@ -31,6 +31,10 @@ type Config struct {
 	Timeout         time.Duration
 	// BeforeRequest runs after non-billable probes and before inference.
 	BeforeRequest func(context.Context) error
+	// Skills are made available to the model through the library's skill
+	// tools (see LoadSkillTool); installed skills are never loaded, so
+	// Global Include is refused. Delivery is always composed here.
+	Skills harness.Skills
 	// run replaces CLI execution for synthetic tests, for either engine.
 	run func(context.Context, string, []string, string, []string, string) ([]byte, error)
 	// transport replaces the API round trip for synthetic tests.
@@ -55,6 +59,11 @@ type Result struct {
 	// window in its JSON event stream, and Chat Completions responses carry
 	// none, so those requests always leave it zero.
 	ContextWindow int64
+	// SkillCalls are the calls in Message.ToolCalls to the library's skill
+	// tools, in order. They stay in Message.ToolCalls so that the message can
+	// be appended to history as it is; AnswerSkillCalls answers them, and
+	// ApplicationCalls lists the rest.
+	SkillCalls []ToolCall
 }
 
 type Message struct {
@@ -103,10 +112,22 @@ func Complete(ctx context.Context, cfg Config, messages []Message, tools []Tool)
 	if cfg.MaxContextBytes < 1024 || cfg.Timeout <= 0 {
 		return Result{}, preflightFailure(engine, "invalid_limits")
 	}
+	messages, tools, err := composeSkills(engine, cfg.Skills, messages, tools)
+	if err != nil {
+		return Result{}, err
+	}
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
-	switch engine {
+	result, err := dispatch(ctx, cfg, messages, tools)
+	if err != nil || len(cfg.Skills.Provided) == 0 {
+		return result, err
+	}
+	return separateSkillCalls(engine, result)
+}
+
+func dispatch(ctx context.Context, cfg Config, messages []Message, tools []Tool) (Result, error) {
+	switch engine := cfg.Provider.Engine; engine {
 	case harness.Codex:
 		return codexComplete(ctx, cfg, messages, tools)
 	case harness.Claude:
@@ -115,6 +136,7 @@ func Complete(ctx context.Context, cfg Config, messages []Message, tools []Tool)
 		return grokComplete(ctx, cfg, messages, tools)
 	case harness.OpenAICompatible:
 		return openAIComplete(ctx, cfg, messages, tools)
+	default:
+		return Result{}, preflightFailure(engine, "unsupported_engine")
 	}
-	return Result{}, preflightFailure(engine, "unsupported_engine")
 }
