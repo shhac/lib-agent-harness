@@ -133,6 +133,24 @@ func newToolHost(cfg ToolHost, lease *os.File) (_ *toolHost, err error) {
 	return h, nil
 }
 
+// newDirectToolHost is the host for a session whose loop the library runs. The
+// library calls the handler itself, so there is no listener, credential or
+// bridge; admission, serialization, the closing latch and settlement are the
+// same as for a hosted channel. extra are tools the host admits beyond the
+// caller's own, such as the library's skill tools.
+func newDirectToolHost(cfg ToolHost, extra ...ToolDefinition) *toolHost {
+	if cfg.MaxResultBytes <= 0 {
+		cfg.MaxResultBytes = 64 << 10
+	}
+	settled := make(chan struct{})
+	close(settled)
+	h := &toolHost{cfg: cfg, tools: map[string]ToolDefinition{}, pending: map[string]*hostedCall{}, gate: make(chan struct{}, 1), done: make(chan struct{}), settled: settled}
+	for _, t := range append(append([]ToolDefinition{}, cfg.Tools...), extra...) {
+		h.tools[t.Name] = t
+	}
+	return h
+}
+
 // environment names the channel for the bridge process. Only paths travel here.
 func (h *toolHost) environment() map[string]string {
 	return map[string]string{
@@ -153,12 +171,16 @@ func (h *toolHost) close() {
 	h.lease = nil
 	h.mu.Unlock()
 	close(h.done)
-	_ = h.listener.Close()
+	if h.listener != nil {
+		_ = h.listener.Close()
+	}
 	h.wg.Wait()
 	if lease != nil {
 		_ = lease.Close()
 	}
-	_ = os.RemoveAll(h.socketDir)
+	if h.socketDir != "" {
+		_ = os.RemoveAll(h.socketDir)
+	}
 }
 
 // setProbing refuses every call for the duration of a capability probe. The

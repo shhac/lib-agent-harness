@@ -259,7 +259,11 @@ func TestSessionCapabilitiesStartFromSupport(t *testing.T) {
 	if grok.Start.Availability != harness.Unknown || grok.Steer.Availability != harness.Composed || grok.Compact.Usable() || grok.RestrictTools.Usable() || grok.Quota.Usable() || grok.Account.Availability != harness.Native {
 		t.Errorf("Grok session capabilities disagree with the static table: %+v", grok)
 	}
-	for _, e := range []harness.Engine{harness.OpenAICompatible, "other"} {
+	api := CapabilitiesFor(harness.OpenAICompatible)
+	if api.Start.Availability != harness.Composed || api.Steer.Availability != harness.Composed || api.Compact.Usable() || api.Quota.Usable() || api.Account.Usable() {
+		t.Errorf("API session capabilities disagree with the static table: %+v", api)
+	}
+	for _, e := range []harness.Engine{"other"} {
 		caps := CapabilitiesFor(e)
 		for _, c := range []harness.Capability{caps.Start, caps.Resume, caps.Steer, caps.Account, caps.Quota, caps.Context, caps.Compact, caps.RestrictTools} {
 			if c.Usable() {

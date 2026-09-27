@@ -238,6 +238,38 @@ still wrapping `ErrTransport`. Captured standard error never enters an error
 value; set `OnDiagnostic` to receive a bounded, control-stripped, credential-
 redacted tail for your own private records.
 
+## Sessions over an OpenAI-compatible endpoint
+
+An endpoint is only a model, so the library is the agent. `session.Start`,
+`Open` and `Resume` accept a `harness.OpenAICompatible` provider with the same
+Session, Turn, Event and Result shapes as the CLIs:
+
+```go
+s, opened, err := session.Open(ctx, session.Options{
+    Provider:    harness.Provider{Engine: harness.OpenAICompatible, API: api},
+    Model:       "provider/model",
+    RuntimeHome: "/private/state/gateway-sessions", // owner-only; holds transcripts
+    Restriction: &session.Restriction{Tools: session.ToolHost{
+        Server: "app", Tools: tools, Handler: handler, // no Bridge or Dir: called directly
+    }},
+}, storedRef)
+```
+
+- **Tools:** only your hosted tools and composed skills exist, because the
+  library writes every request. Your handler runs one call at a time, with the
+  same closing-tool and settlement rules as restricted CLI sessions.
+- **Each turn:** the whole history is resent (Chat Completions keeps no server
+  state) until the model answers without tool calls, bounded by
+  `Options.Loop`.
+- **State:** the conversation is an fsynced transcript under
+  `RuntimeHome/sessions/<id>`, locked while open, and never holds a
+  credential.
+- **Crash recovery:** a call interrupted by a crash is answered as having an
+  unknown outcome and is never run again (`Session.Recovered()` reports it).
+- **Turn control:** interrupting cancels the request and the running handler.
+  Steering is composed.
+- **Not offered yet:** compaction, streamed text deltas, quota and account.
+
 ## Long-lived conversations: Open and caller context
 
 `session.Open(ctx, options, ref)` is for a caller that keeps one conversation

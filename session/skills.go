@@ -137,6 +137,9 @@ const (
 	nativeSkills skillDelivery = iota + 1
 	instructionSkills
 	hostedSkills
+	// requestSkills: an API session's requests carry completion's composed
+	// skill index and tools, and the library answers the calls.
+	requestSkills
 )
 
 // skillPlan is how one launch delivers its provided skills. pluginDir is set

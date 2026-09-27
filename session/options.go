@@ -19,6 +19,12 @@ func normalize(o Options) (Options, error) {
 	if err := supported(o); err != nil {
 		return o, err
 	}
+	if o.Provider.Engine.Transport() == harness.APITransport {
+		return normalizeAPI(o)
+	}
+	if o.Loop != (Loop{}) {
+		return o, refuse(o, "loop", RefusedOtherEnginePolicy, "Loop bounds the library's own agent loop, which only an OpenAI-compatible session runs; leave it unset")
+	}
 	o, err := normalizePaths(o)
 	if err != nil {
 		return o, err
@@ -65,7 +71,7 @@ func supported(o Options) error {
 		return &UnsupportedError{Engine: engine, Operation: "engine", Code: RefusedEngine, Capability: support}
 	}
 	if code := o.Provider.Problem(); code != "" {
-		return refuse(o, "provider", code, "the provider is not a well-formed CLI provider")
+		return refuse(o, "provider", code, "the provider is not well formed")
 	}
 	return unsupportedMode(o)
 }
@@ -259,6 +265,9 @@ func normalizeGrokPolicy(o Options) (Options, error) {
 // nothing about what the session can do. The credential never reaches a
 // reference in any form.
 func reference(o Options, id string) Ref {
+	if o.Provider.Engine.Transport() == harness.APITransport {
+		return apiReference(o, id)
+	}
 	// Include nil versus empty tool lists: they have different permission meaning.
 	legacy := struct {
 		Binary, Model, Effort string
@@ -358,6 +367,10 @@ func freezeValue(value any) any {
 	}
 }
 func compatible(o Options, r Ref) bool {
+	if o.Provider.Engine.Transport() == harness.APITransport && !validSessionID(r.ID) {
+		// The identifier names a directory; only one this library made is used.
+		return false
+	}
 	expected := reference(o, r.ID)
 	return r.ID != "" && r == expected
 }

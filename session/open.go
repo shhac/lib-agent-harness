@@ -47,6 +47,9 @@ func Open(ctx context.Context, o Options, ref *Ref) (*Session, Opened, error) {
 	if err != nil {
 		return nil, Opened{}, err
 	}
+	if n.Provider.Engine.Transport() == harness.APITransport {
+		return openAPIConversation(ctx, o, n, ref)
+	}
 	lease, err := reclaimBeforeOpen(ctx, n)
 	if err != nil {
 		return nil, Opened{}, err
@@ -73,6 +76,27 @@ func Open(ctx context.Context, o Options, ref *Ref) (*Session, Opened, error) {
 		return nil, Opened{}, err
 	}
 	return openFresh(ctx, o, FreshUnavailable, lease)
+}
+
+// openAPIConversation is Open for an OpenAI-compatible session. There is no
+// process to reclaim: a conversation still open elsewhere is refused by its
+// lock. A reference whose conversation is not in RuntimeHome starts fresh
+// with FreshUnavailable.
+func openAPIConversation(ctx context.Context, o, n Options, ref *Ref) (*Session, Opened, error) {
+	if ref == nil {
+		return openFresh(ctx, o, "", nil)
+	}
+	if !compatible(n, *ref) {
+		return openFresh(ctx, o, FreshIncompatible, nil)
+	}
+	s, err := open(ctx, o, ref, nil)
+	if err == nil {
+		return s, Opened{Resumed: true}, nil
+	}
+	if !errors.Is(err, errConversationGone) {
+		return nil, Opened{}, err
+	}
+	return openFresh(ctx, o, FreshUnavailable, nil)
 }
 
 func openFresh(ctx context.Context, o Options, reason string, lease *os.File) (*Session, Opened, error) {

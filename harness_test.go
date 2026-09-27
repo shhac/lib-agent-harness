@@ -144,6 +144,27 @@ func TestGrokSessionClaims(t *testing.T) {
 	}
 }
 
+// The library runs an OpenAI-compatible session's loop itself, so what it
+// offers is composed, on every platform: there is no process to contain.
+func TestOpenAICompatibleSessionClaims(t *testing.T) {
+	for _, f := range []Feature{Available, Resume, Interrupt, Steer, RestrictTools, Tools, AppendInstructions, ReplaceInstructions, ProvidedSkills} {
+		if c := Support(OpenAICompatible, Session, f); c.Availability != Composed || c.Reason == "" {
+			t.Errorf("API session %s: %+v", f, c)
+		}
+	}
+	for _, f := range []Feature{Sandbox, Compact, IncludeGlobalSkills, CostReport, MaxOutputTokens} {
+		if c := Support(OpenAICompatible, Session, f); c.Usable() || c.Reason == "" {
+			t.Errorf("API session %s: %+v", f, c)
+		}
+	}
+	if Support(OpenAICompatible, Session, CacheSplit).Availability != Unknown || Support(OpenAICompatible, Session, ContextWindow).Availability != Unknown {
+		t.Fatal("API session accounting claims changed")
+	}
+	if Support(OpenAICompatible, Session, Effort).Availability != Native || Support(OpenAICompatible, Account, Quota).Usable() {
+		t.Fatal("API session effort or quota claims changed")
+	}
+}
+
 type carrier struct{ facts Facts }
 
 func (c carrier) Error() string       { return "failed" }

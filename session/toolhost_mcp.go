@@ -107,13 +107,13 @@ func (h *toolHost) serve(conn net.Conn) {
 			}
 			ready, refusal := h.prepare(callKey(connection, string(id)), params)
 			if refusal != nil {
-				reply(rpcResult(id, refusal))
+				reply(rpcResult(id, refusal.payload()))
 				continue
 			}
 			pending.Add(1)
 			go func() {
 				defer pending.Done()
-				reply(rpcResult(id, h.execute(ready, turn)))
+				reply(rpcResult(id, h.execute(ready, turn, nil).payload()))
 			}()
 		default:
 			// Every other method, including the resource methods a harness's own

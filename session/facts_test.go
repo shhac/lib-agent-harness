@@ -74,7 +74,7 @@ func TestOptionRefusalsCarryFacts(t *testing.T) {
 		{"grok telemetry on claude", with(base(harness.Claude), func(o *Options) { o.Policy.GrokTelemetry = GrokTelemetryReduced }), RefusedOtherEnginePolicy, harness.FailureCapability},
 		{"grok permission value", with(base(harness.Grok), func(o *Options) { o.Policy.GrokPermission = "always" }), RefusedPolicy, harness.FailurePreflight},
 		{"grok managed env", with(base(harness.Grok), func(o *Options) { o.Env = []string{"GROK_MEMORY=1"} }), RefusedEnvManaged, harness.FailureCapability},
-		{"api engine", base(harness.OpenAICompatible), RefusedEngine, harness.FailureCapability},
+		{"api engine with a cli home", base(harness.OpenAICompatible), "cli_config_for_api_engine", harness.FailurePreflight},
 		{"unknown engine", base("other"), RefusedEngine, harness.FailureCapability},
 		{"api half on a cli engine", with(base(harness.Codex), func(o *Options) { o.Provider.API.BaseURL = "https://example.test" }), "api_config_for_cli_engine", harness.FailurePreflight},
 		{"instruction mode", with(base(harness.Claude), func(o *Options) { o.Instructions = Instructions{Mode: "merge"} }), RefusedInstructionMode, harness.FailurePreflight},

@@ -76,6 +76,8 @@ func (s *Session) startTurnScoped(lifetime, request context.Context, in Input) (
 		err = s.startCodexTurn(request, t, ref, in)
 	case harness.Grok:
 		err = s.startGrokTurn(request, lifetime, t, ref, in)
+	case harness.OpenAICompatible:
+		err = s.startAPITurn(t, in)
 	default:
 		err = s.transport.send(request, claudeUserFrame(ref.ID, in.Text))
 	}
@@ -217,6 +219,10 @@ func (s *Session) interrupt(ctx context.Context, expected string) error {
 	if result.Status != "interrupted" {
 		return ErrStaleTurn
 	}
+	if s.api != nil {
+		s.setCapability(&s.caps.Interrupt, harness.Capability{Availability: harness.Composed, Reason: "the library cancelled the turn's request and running handler"})
+		return nil
+	}
 	s.setCapability(&s.caps.Interrupt, harness.Capability{Availability: harness.Native, Reason: "acknowledged interrupt and terminal turn event"})
 	return nil
 }
@@ -229,6 +235,11 @@ func (s *Session) requestInterrupt(ctx context.Context, expected string) error {
 		_, err = s.transport.request(ctx, "turn/interrupt", map[string]any{"threadId": s.Ref().ID, "turnId": expected})
 	case harness.Grok:
 		err = s.transport.send(ctx, grokNotification("session/cancel", map[string]any{"sessionId": s.Ref().ID}))
+	case harness.OpenAICompatible:
+		// The request and the running handler are both the library's to
+		// cancel. The tool channel pauses with them, as CancelTools does.
+		s.CancelTools()
+		s.api.interrupt()
 	default:
 		_, err = s.transport.request(ctx, "interrupt", map[string]any{})
 	}
@@ -277,7 +288,11 @@ func (s *Session) Steer(ctx context.Context, expected string, in Input, o SteerO
 		if err != nil {
 			return SteerResult{}, err
 		}
-		s.setCapability(&s.caps.Steer, harness.Capability{Availability: harness.Composed, Reason: "interrupt-and-continue succeeded in the installed harness"})
+		reason := "interrupt-and-continue succeeded in the installed harness"
+		if s.api != nil {
+			reason = "the library interrupted the turn and started another"
+		}
+		s.setCapability(&s.caps.Steer, harness.Capability{Availability: harness.Composed, Reason: reason})
 		return SteerResult{harness.Composed, next}, nil
 	}
 	body, err := s.transport.request(ctx, "turn/steer", map[string]any{"threadId": s.Ref().ID, "expectedTurnId": expected, "input": codexInput(in.Text)})
@@ -296,8 +311,11 @@ func (s *Session) Steer(ctx context.Context, expected string, in Input, o SteerO
 }
 
 func composedSteerReason(e harness.Engine) string {
-	if e == harness.Grok {
+	switch e {
+	case harness.Grok:
 		return "Grok steering cancels the running prompt and sends another"
+	case harness.OpenAICompatible:
+		return "the library interrupts the turn and starts another"
 	}
 	return "Claude steering interrupts and starts another turn"
 }

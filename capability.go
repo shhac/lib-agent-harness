@@ -110,9 +110,10 @@ func Support(e Engine, op Operation, f Feature) Capability {
 }
 
 // platform applies what the operating system rules out: restricted and
-// sandboxed hosting are unavailable on Windows.
+// sandboxed hosting of a CLI harness are unavailable on Windows. An API
+// session has no process to contain, so it is unaffected.
 func platform(e Engine, op Operation, f Feature, c Capability) Capability {
-	if runtime.GOOS == "windows" && op == Session && (f == RestrictTools || f == Sandbox || f == Tools) {
+	if runtime.GOOS == "windows" && op == Session && e.Transport() == CLITransport && (f == RestrictTools || f == Sandbox || f == Tools) {
 		return Capability{Unsupported, "restricted and sandboxed hosting are unavailable on Windows"}
 	}
 	if runtime.GOOS == "windows" && e == Grok && op == Complete {
@@ -247,9 +248,23 @@ var supportTable = map[supportKey]Capability{
 	{OpenAICompatible, Models, Effort}:        {Unsupported, "endpoints do not list efforts"},
 	{OpenAICompatible, Models, ContextWindow}: {Unknown, "reported only by some gateways"},
 
-	{OpenAICompatible, Run, Available}:     {Unsupported, "an API endpoint has no native agent; use Complete"},
-	{OpenAICompatible, Session, Available}: {Unsupported, "remote sessions are not implemented"},
-	{OpenAICompatible, Account, Available}: {Unsupported, "API endpoints expose no account inspection"},
+	{OpenAICompatible, Run, Available}:               {Unsupported, "an API endpoint has no native agent; use Complete"},
+	{OpenAICompatible, Session, Available}:           {Composed, "the library runs the agent loop over the endpoint, keeping the conversation in RuntimeHome"},
+	{OpenAICompatible, Session, Resume}:              {Composed, "the library reloads its own transcript; a call interrupted mid-run is answered as an unknown outcome, never re-run"},
+	{OpenAICompatible, Session, Interrupt}:           {Composed, "the library cancels the in-flight request and the running handler"},
+	{OpenAICompatible, Session, Steer}:               {Composed, "the library interrupts the turn and starts another"},
+	{OpenAICompatible, Session, RestrictTools}:       {Composed, "only the caller's hosted tools exist: the library writes every request itself"},
+	{OpenAICompatible, Session, Tools}:               {Composed, "the library calls the caller's handler directly, one call at a time"},
+	{OpenAICompatible, Session, AppendInstructions}:  {Composed, "sent as the leading system message"},
+	{OpenAICompatible, Session, ReplaceInstructions}: {Composed, "sent as the leading system message; an endpoint has no base prompt to replace"},
+	{OpenAICompatible, Session, Effort}:              {Native, "requires API.EffortParameter"},
+	{OpenAICompatible, Session, ProvidedSkills}:      {Composed, "the library indexes provided skills and answers its read-only skill tool; a permitted skill's scripts run as SkillRun says"},
+	{OpenAICompatible, Session, IncludeGlobalSkills}: {Unsupported, "an API endpoint has no installed skills; only Default or Exclude is accepted"},
+	{OpenAICompatible, Session, Sandbox}:             {Unsupported, "an API session has no native tools to sandbox"},
+	{OpenAICompatible, Session, Compact}:             {Unsupported, "the library does not compact a composed session's history"},
+	{OpenAICompatible, Session, CacheSplit}:          cacheVaries,
+	{OpenAICompatible, Session, ContextWindow}:       {Unknown, "estimated from each response's input; Chat Completions states no window"},
+	{OpenAICompatible, Account, Available}:           {Unsupported, "API endpoints expose no account inspection"},
 
 	{Codex, Account, Available}:  unverified,
 	{Codex, Account, Login}:      unverified,

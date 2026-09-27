@@ -48,6 +48,9 @@ type Session struct {
 	// removeSkillFiles removes the private plugin this launch wrote, once
 	// the session is over.
 	removeSkillFiles func()
+	// api is the library's agent loop for an OpenAI-compatible session, nil
+	// for a CLI session.
+	api *apiSession
 }
 
 func (s *Session) lockOp(ctx context.Context) error {
@@ -96,6 +99,10 @@ func open(ctx context.Context, o Options, r *Ref, lease *os.File) (*Session, err
 	}
 	if r != nil && !compatible(o, *r) {
 		return refuse(ErrIncompatibleResume)
+	}
+	if o.Provider.Engine.Transport() == harness.APITransport {
+		_ = lease.Close()
+		return openAPI(ctx, o, r)
 	}
 	// The restricted runtime is prepared and proved first. Nothing below this
 	// point runs with the caller's login until the harness has demonstrated,
@@ -416,6 +423,16 @@ func (s *Session) Release(ctx context.Context) (Reclamation, error) {
 	host := s.tools
 	s.mu.Unlock()
 	s.Close()
+	if s.api != nil {
+		// The lock is given up once every call the session admitted has
+		// returned; until then the conversation is still this session's.
+		select {
+		case <-s.api.released:
+			return Reclamation{Confirmed: true}, nil
+		case <-ctx.Done():
+			return Reclamation{Found: true}, ErrUnreclaimed
+		}
+	}
 	if host == nil {
 		// A sandboxed Codex session has no bridge to reclaim, but it ran in a
 		// runtime home that may hold a refreshed login.
@@ -483,6 +500,7 @@ func (s *Session) failTurn(expected *Turn, err error) {
 	t := s.active
 	w := s.transport
 	host := s.tools
+	api := s.api
 	s.mu.Unlock()
 	if t != nil {
 		t.finish("failed", err)
@@ -492,6 +510,9 @@ func (s *Session) failTurn(expected *Turn, err error) {
 	}
 	if host != nil {
 		host.close()
+	}
+	if api != nil {
+		api.shutdown(host)
 	}
 	if s.removeSkillFiles != nil {
 		s.removeSkillFiles()

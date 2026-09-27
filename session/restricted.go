@@ -58,6 +58,11 @@ func VerifyRestriction(ctx context.Context, o Options) error {
 	if err != nil {
 		return err
 	}
+	if normalized.Provider.Engine.Transport() == harness.APITransport {
+		// The library writes every request itself, so there is no installed
+		// harness whose surface needs proving.
+		return nil
+	}
 	l, err := prepareLaunch(ctx, normalized, nil)
 	if err != nil {
 		return err

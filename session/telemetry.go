@@ -19,6 +19,9 @@ func Inspect(ctx context.Context, o Options) (Inspection, error) {
 	if err := ctx.Err(); err != nil {
 		return out, err
 	}
+	if o.Provider.Engine.Transport() == harness.APITransport {
+		return out, &UnsupportedError{Engine: o.Provider.Engine, Operation: "inspect", Code: RefusedNotOffered, Capability: harness.Support(o.Provider.Engine, harness.Account, harness.Available)}
+	}
 	// Ignore conversation-only configuration, including instructions and policy.
 	o = Options{Provider: o.Provider}
 	dir, err := os.MkdirTemp("", "agent-harness-inspect-")
@@ -90,6 +93,9 @@ func (s *Session) ReadAccount(ctx context.Context) (harness.AccountSnapshot, err
 	if err := s.telemetryOpen(); err != nil {
 		return s.Telemetry().Account, err
 	}
+	if s.api != nil {
+		return s.Telemetry().Account, s.notOffered("account", func(c Capabilities) harness.Capability { return c.Account })
+	}
 	if s.options.Provider.Engine == harness.Claude {
 		a := s.Telemetry().Account
 		return a, nil
@@ -131,6 +137,9 @@ func (s *Session) ReadQuota(ctx context.Context) (harness.QuotaSnapshot, error) 
 	defer s.unlockOp()
 	if err := s.telemetryOpen(); err != nil {
 		return s.Telemetry().Quota, err
+	}
+	if s.api != nil {
+		return s.Telemetry().Quota, s.notOffered("quota", func(c Capabilities) harness.Capability { return c.Quota })
 	}
 	if s.options.Provider.Engine == harness.Grok {
 		s.mu.Lock()
@@ -214,6 +223,15 @@ func (s *Session) ReadContext(ctx context.Context) (ContextSnapshot, error) {
 	c = cloneContext(s.telemetry.Context)
 	s.mu.Unlock()
 	return c, err
+}
+
+// notOffered refuses a telemetry read the engine has no source for, with the
+// session's own record of that capability.
+func (s *Session) notOffered(operation string, field func(Capabilities) harness.Capability) error {
+	s.mu.Lock()
+	c := field(s.caps)
+	s.mu.Unlock()
+	return &UnsupportedError{Engine: s.options.Provider.Engine, Operation: operation, Code: RefusedNotOffered, Capability: c}
 }
 
 func (s *Session) telemetryOpen() error {

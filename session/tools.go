@@ -122,6 +122,27 @@ func validToolName(name string) bool {
 }
 
 func (h ToolHost) validate() error {
+	if err := h.validateTools(); err != nil {
+		return err
+	}
+	if h.Bridge.Path == "" || !filepath.IsAbs(h.Bridge.Path) {
+		return errors.New("tool host requires an absolute bridge command path")
+	}
+	if h.Dir == "" || !filepath.IsAbs(h.Dir) {
+		return errors.New("tool host requires an absolute private directory")
+	}
+	info, err := os.Stat(h.Dir)
+	if err != nil || !info.IsDir() {
+		return errors.New("tool host directory must exist")
+	}
+	if err = ownerOnly(info); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateTools checks what every tool host needs, bridged or called directly.
+func (h ToolHost) validateTools() error {
 	if !validToolName(h.Server) {
 		return errors.New("tool host server name must be a short alphanumeric identifier")
 	}
@@ -140,19 +161,6 @@ func (h ToolHost) validate() error {
 			return errors.New("tool host requires an argument schema for every tool")
 		}
 		seen[t.Name] = true
-	}
-	if h.Bridge.Path == "" || !filepath.IsAbs(h.Bridge.Path) {
-		return errors.New("tool host requires an absolute bridge command path")
-	}
-	if h.Dir == "" || !filepath.IsAbs(h.Dir) {
-		return errors.New("tool host requires an absolute private directory")
-	}
-	info, err := os.Stat(h.Dir)
-	if err != nil || !info.IsDir() {
-		return errors.New("tool host directory must exist")
-	}
-	if err = ownerOnly(info); err != nil {
-		return err
 	}
 	return nil
 }

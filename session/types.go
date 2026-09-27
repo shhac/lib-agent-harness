@@ -1,6 +1,8 @@
-// Package session controls persistent, native CLI agent sessions. Native tools
-// are available according to the explicitly configured provider policy. This is
-// not the tools-disabled completion API.
+// Package session controls persistent agent sessions: native CLI sessions,
+// whose native tools are available according to the explicitly configured
+// provider policy, and sessions over an OpenAI-compatible endpoint, whose agent
+// loop the library runs with only the caller's hosted tools. This is not the
+// tools-disabled completion API.
 package session
 
 import (
@@ -190,6 +192,12 @@ type Options struct {
 	QuietAfter time.Duration
 	// EventBuffer defaults to 256; MaxTextBytes defaults to 1 MiB per turn.
 	EventBuffer, MaxTextBytes int
+	// Loop bounds the agent loop the library runs for an OpenAI-compatible
+	// session (see api.go). Only such a session reads it; setting it for a
+	// CLI engine is refused. It is not part of a Ref.
+	Loop Loop
+	// complete replaces completion.Complete for synthetic tests.
+	complete modelCall
 }
 
 // ContextReason says why a session asks its caller for current context.

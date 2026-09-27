@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"os"
 	"time"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 // contextDelivery is what one turn carries: the reason it was due, the mark it
@@ -131,6 +133,11 @@ func (s *Session) reportMarker(err error) {
 // beside its launch record. A session that hosts no tools has no private
 // directory.
 func contextMarkerPath(o Options) string {
+	if o.Provider.Engine.Transport() == harness.APITransport {
+		// Derived from the transcript instead: "started" is due until a turn
+		// has carried input.
+		return ""
+	}
 	host := hostedTools(o)
 	if host == nil {
 		return ""

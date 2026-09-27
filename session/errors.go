@@ -10,6 +10,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
 )
@@ -248,9 +249,16 @@ func (e *ProcessError) Unwrap() error { return ErrTransport }
 // prose is never placed in it. Bounded, sanitized detail reaches the caller
 // through Options.OnDiagnostic instead, so a diagnostic can be recorded without
 // a message that might be displayed carrying anything a provider wrote.
+//
+// In a session whose loop the library runs, a failed model request ends the
+// turn with that request's own facts: Code, Cause, Phase and RetryAfter are
+// completion's RequestError fields. They are empty for a native turn.
 type TurnError struct {
-	Engine harness.Engine
-	Code   string
+	Engine     harness.Engine
+	Code       string
+	Cause      harness.Cause
+	Phase      string
+	RetryAfter time.Duration
 }
 
 func (e *TurnError) Error() string {

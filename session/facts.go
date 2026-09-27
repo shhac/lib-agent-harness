@@ -21,7 +21,10 @@ func (e *ProcessError) HarnessFacts() harness.Facts {
 }
 
 func (e *TurnError) HarnessFacts() harness.Facts {
-	return harness.Facts{Engine: e.Engine, Operation: harness.Session, Family: harness.FailureTurn, Code: e.Code}
+	// Never retryable on its own terms, even when the request that failed
+	// was: tools may already have run in the turn, and the input is already
+	// part of the conversation.
+	return harness.Facts{Engine: e.Engine, Operation: harness.Session, Family: harness.FailureTurn, Cause: e.Cause, Phase: e.Phase, Code: e.Code, RetryAfter: e.RetryAfter}
 }
 
 func (e *UnsupportedError) HarnessFacts() harness.Facts {

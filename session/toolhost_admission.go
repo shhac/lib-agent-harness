@@ -26,7 +26,7 @@ type admitted struct {
 // Registering before it waits for anything is also what makes a queued call
 // real: it has to be cancellable, it has to count as unsettled, and it must not
 // slip through a barrier that went up while it was waiting.
-func (h *toolHost) prepare(request string, params json.RawMessage) (*admitted, map[string]any) {
+func (h *toolHost) prepare(request string, params json.RawMessage) (*admitted, *toolOutcome) {
 	var in struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments"`
@@ -34,25 +34,31 @@ func (h *toolHost) prepare(request string, params json.RawMessage) (*admitted, m
 	if json.Unmarshal(params, &in) != nil {
 		return nil, h.refuse("", "malformed", "tool call could not be parsed; nothing was executed")
 	}
-	definition, hosted := h.tools[in.Name]
+	return h.prepareCall(request, in.Name, in.Arguments)
+}
+
+// prepareCall is prepare for a call already parsed, which is how a session
+// whose loop the library runs hands its model's calls to the host.
+func (h *toolHost) prepareCall(request, name string, arguments json.RawMessage) (*admitted, *toolOutcome) {
+	definition, hosted := h.tools[name]
 	if !hosted {
-		return nil, h.refuse(in.Name, "unknown", "tool "+quoteName(in.Name)+" is not available in this session; nothing was executed")
+		return nil, h.refuse(name, "unknown", "tool "+quoteName(name)+" is not available in this session; nothing was executed")
 	}
-	if len(in.Arguments) == 0 || string(in.Arguments) == "null" {
-		in.Arguments = json.RawMessage("{}")
+	if len(arguments) == 0 || string(arguments) == "null" {
+		arguments = json.RawMessage("{}")
 	}
 	// Handlers are written against an argument object. A bare string or array
 	// that happens to be valid JSON is not one, and passing it through would
 	// leave every handler to rediscover that.
-	var arguments map[string]json.RawMessage
-	if json.Unmarshal(in.Arguments, &arguments) != nil || arguments == nil {
-		return nil, h.refuse(in.Name, "malformed", "tool arguments must be a JSON object; nothing was executed")
+	var object map[string]json.RawMessage
+	if json.Unmarshal(arguments, &object) != nil || object == nil {
+		return nil, h.refuse(name, "malformed", "tool arguments must be a JSON object; nothing was executed")
 	}
-	call, refusal := h.admit(request, in.Name)
+	call, refusal := h.admit(request, name)
 	if refusal != nil {
 		return nil, refusal
 	}
-	return &admitted{call: call, definition: definition, name: in.Name, arguments: in.Arguments}, nil
+	return &admitted{call: call, definition: definition, name: name, arguments: arguments}, nil
 }
 
 // execute runs an admitted call and decides whether it ended the work.
@@ -63,26 +69,44 @@ func (h *toolHost) prepare(request string, params json.RawMessage) (*admitted, m
 // whose arguments were rejected has not finished anything, and neither has one
 // whose handler refused it. Nothing is cancelled to make room for it, because a
 // half-executed write or test is not a state worth reporting evidence about.
-func (h *toolHost) execute(ready *admitted, turn string) map[string]any {
+//
+// settle, when set, receives the outcome while the call still counts as
+// outstanding, so whatever it records is in place before anyone waiting for
+// the host to settle can proceed.
+func (h *toolHost) execute(ready *admitted, turn string, settle func(toolOutcome)) (out toolOutcome) {
 	defer h.retire(ready.call)
+	if settle != nil {
+		defer func() { settle(out) }()
+	}
 	if refusal := h.acquire(ready.call, ready.name); refusal != nil {
-		return refusal
+		return *refusal
 	}
 	defer h.release()
 	result, err := h.cfg.Handler.CallTool(ready.call.ctx, ToolCall{TurnID: turn, Name: ready.name, Arguments: ready.arguments})
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
-			return toolPayload("tool execution was cancelled; its effect is unknown and must be established from evidence", true)
+			return toolOutcome{text: "tool execution was cancelled; its effect is unknown and must be established from evidence", isError: true, ran: true}
 		}
-		return toolPayload(bound(err.Error(), 2048), true)
+		return toolOutcome{text: bound(err.Error(), 2048), isError: true, ran: true}
 	}
 	if !result.IsError && (ready.definition.Closing || result.Closes) {
 		h.mu.Lock()
 		h.closed = true
 		h.mu.Unlock()
 	}
-	return toolPayload(bound(result.Content, h.cfg.MaxResultBytes), result.IsError)
+	return toolOutcome{text: bound(result.Content, h.cfg.MaxResultBytes), isError: result.IsError, ran: true}
 }
+
+// toolOutcome is what one call produced for the model. ran is false for a
+// refusal, whose reason is set: nothing was executed.
+type toolOutcome struct {
+	text    string
+	isError bool
+	ran     bool
+	reason  string
+}
+
+func (o toolOutcome) payload() map[string]any { return toolPayload(o.text, o.isError) }
 
 // hostedCall is one admitted call, tracked from the moment it is accepted until
 // it stops — including the time it spends queued.
@@ -96,7 +120,7 @@ type hostedCall struct {
 // admit registers a call and decides whether it may proceed at all. It is the
 // single barrier: everything that can refuse a call is here, and a call that
 // gets past it is one this host will account for.
-func (h *toolHost) admit(request, name string) (*hostedCall, map[string]any) {
+func (h *toolHost) admit(request, name string) (*hostedCall, *toolOutcome) {
 	ctx, cancel := context.WithCancel(context.Background())
 	h.mu.Lock()
 	if refusal := h.barrierLocked(name); refusal != nil {
@@ -136,7 +160,7 @@ func (h *toolHost) retire(call *hostedCall) {
 // Cancellation is checked on both sides of the gate. A select whose gate is free
 // and whose call is already cancelled picks either case, so testing only the
 // gate's readiness lets a withdrawn call run about half the time.
-func (h *toolHost) acquire(call *hostedCall, name string) map[string]any {
+func (h *toolHost) acquire(call *hostedCall, name string) *toolOutcome {
 	if call.ctx.Err() != nil {
 		return h.refuse(name, "cancelled", "this call was withdrawn before it ran; nothing was executed")
 	}
@@ -201,7 +225,7 @@ func (h *toolHost) trackSettlementLocked() {
 func (h *toolHost) settledLocked() bool { return h.running == 0 && len(h.pending) == 0 }
 
 // barrierLocked is every reason a call may not run, in one place.
-func (h *toolHost) barrierLocked(name string) map[string]any {
+func (h *toolHost) barrierLocked(name string) *toolOutcome {
 	switch {
 	case h.stopped:
 		return h.refuseLocked(name, "stopped", "this session has stopped; nothing was executed")
@@ -215,20 +239,20 @@ func (h *toolHost) barrierLocked(name string) map[string]any {
 	return nil
 }
 
-func (h *toolHost) refuse(tool, reason, text string) map[string]any {
+func (h *toolHost) refuse(tool, reason, text string) *toolOutcome {
 	if h.onRefusal != nil {
 		h.onRefusal(tool, reason)
 	}
-	return toolPayload(text, true)
+	return &toolOutcome{text: text, isError: true, reason: reason}
 }
 
 // refuseLocked is refuse from inside the host's own lock. The notification runs
 // after the lock is released so a caller's observer cannot deadlock the channel.
-func (h *toolHost) refuseLocked(tool, reason, text string) map[string]any {
+func (h *toolHost) refuseLocked(tool, reason, text string) *toolOutcome {
 	if notify := h.onRefusal; notify != nil {
 		go notify(tool, reason)
 	}
-	return toolPayload(text, true)
+	return &toolOutcome{text: text, isError: true, reason: reason}
 }
 
 func (h *toolHost) pause() {
