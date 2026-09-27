@@ -1,0 +1,270 @@
+# One interface for every harness
+
+Proposed 2026-09-27. Revised after review: usage keeps the full prompt as its
+primary figure, error facts get new field names, the session `Ref` digest is
+pinned by golden tests before anything moves, and increment 1 lands in ordered
+sub-steps.
+
+## Why
+
+Applications built on this library should let their users choose the AI service
+behind every kind of invocation, whether a Codex, Claude or Grok CLI or an
+OpenAI-compatible gateway, without the application learning each one. Today the
+choice leaks everywhere:
+
+- Each execution mode has its own engine type: strings in `completion` and
+  `native` (only `"openai-compatible"` is a constant, and `"grok"` exists only
+  in `native`), and a typed value in `session`.
+- Locating a harness is spelled three ways: `CodexBin`/`ClaudeHome` in
+  `completion`, and `Binary`/`Home` in the other two. An empty home means a
+  different thing in each package.
+- Usage has three incompatible definitions of "input":
+  - `completion.Usage.InputTokens` includes cache.
+  - `native.TokenUsage.Input` excludes cache reads.
+  - `session.Usage` is a third shape.
+  Cost exists only in `native`.
+- Errors come in two vocabularies: `completion.RequestError` and
+  `session.ErrorFacts`. `native` returns untyped errors that carry provider
+  text, against the `AGENTS.md` rule.
+- Some config fields are silently ignored for some engines:
+  - `native` Codex ignores `AllowedTools`, `PermissionMode`, `MaxBudgetUSD` and
+    an inline `Schema` (it parses JSON it never constrained).
+  - `session` Codex ignores `Policy.ClaudeTools`, even `[]`, which a caller
+    reads as "no tools".
+- Only `session` can say what an engine supports, and only for its own mode.
+
+Both consumers compensate with the same per-engine code:
+
+- **crew-assistant**
+  - Engine switches in `EngineConfig`, `engine.New` and `CLIRef`.
+  - Its own OpenAI HTTP transport and error mapping.
+  - Hardcoded "can this engine compact / hold a chat session" checks.
+  - Its own model and effort validation.
+  - Quota windows mapped per engine.
+- **crew-code-review**
+  - Per-engine constructors and defaults.
+  - Schema-file vs inline-schema delivery.
+  - Its own Codex model catalog and login probes.
+  - Quota window names mapped per engine.
+
+This document fixes the shared vocabulary once, then moves each piece of
+per-engine knowledge into the library.
+
+## Principles
+
+- **One vocabulary, three contracts.** `completion` (the model proposes, the
+  caller executes), `native` (one agent run) and `session` (a persistent
+  agent) stay distinct execution modes. What they share (engine, provider,
+  usage, cost, capabilities, error facts) is defined once, in the root package.
+- **Every field is consumed or refused.** A field the selected engine cannot
+  honour is refused before launch with a typed capability error. Nothing is
+  ignored, and permissions are never widened.
+- **Ask, don't switch.** A caller asks `harness.Support(engine, mode, feature)`
+  instead of comparing engine names. The static table is the library's claim;
+  runtime evidence can promote an entry from unknown, never past what the table
+  allows.
+- **Persisted values stay stable.** Engine strings keep their spellings. Session
+  `Ref` digests must not change for an existing configuration.
+- **The `AGENTS.md` invariants are unchanged.** Restriction proofs, tool-free
+  probes, "unknown is not free", no provider text in errors, and no retries.
+
+## The root package
+
+Module root, package `harness` (import `github.com/shhac/lib-agent-harness`). It
+is a leaf: it imports no mode package.
+
+```go
+type Engine string
+
+const (
+    Codex            Engine = "codex"
+    Claude           Engine = "claude"
+    Grok             Engine = "grok"
+    OpenAICompatible Engine = "openai-compatible"
+)
+
+func (e Engine) Transport() Transport // CLITransport or APITransport; "" if unknown
+
+// Provider says where inference comes from. The engine's transport decides
+// which half applies; setting the other half is refused.
+type Provider struct {
+    Engine Engine
+    CLI    CLI
+    API    API
+}
+type CLI struct {
+    Binary string // "" = the engine's command on PATH
+    Home   string // "" = each mode's existing default, unchanged
+}
+type API struct {
+    BaseURL         string
+    Dialect         Dialect          // required; OpenAIChatCompletions today
+    Credentials     CredentialSource // func(ctx) (token, error)
+    Unauthenticated bool             // loopback only
+    EffortParameter EffortParameter  // required when Effort is set
+}
+func (p Provider) Validate() error
+```
+
+`OpenAICompatible` names the harness, not the model family: Grok models through
+a gateway are `OpenAICompatible` with a model such as `xai/grok-4`. The `API` half
+is in the root because remote sessions (increment 6) will use it too. Until
+then, `native` and `session` refuse an API provider through `Support`.
+
+Home defaults are not unified. `session` hashes the resolved `Binary` and
+`Home` into `Ref` (session/options.go:58-89, 171-176), so any change to how an
+empty home resolves would orphan stored sessions. Literal golden digests for
+defaulted configurations land before `Provider` does.
+
+`Model` and `Effort` stay plain fields on each mode's config. `Env`,
+`RuntimeHome` and `WorkDir` stay mode-specific because their meaning differs
+between modes (the environment is filtered in `completion` and `session`, but
+passed whole in `native`).
+
+### Usage and cost
+
+```go
+type Usage struct {
+    Known      bool
+    Input      int64 // every prompt token, cached or not (the OpenAI convention)
+    Output     int64 // includes Reasoning
+    CacheRead  int64 // part of Input
+    CacheWrite int64 // part of Input
+    Reasoning  int64 // part of Output
+    // CacheKnown says the provider split its cache tokens out. Many gateways
+    // omit that split; zero cache figures then mean unreported, not uncached.
+    CacheKnown bool
+}
+func (u Usage) Fresh() (int64, bool) // Input - CacheRead - CacheWrite, when CacheKnown
+func (u Usage) Total() int64         // Input + Output
+
+type Cost struct {
+    USD   float64
+    Known bool // false: partial or unreported, never zero
+}
+```
+
+Fresh input is a derived figure, because it cannot always be derived. The
+alternative, a fresh `Input` field, would sometimes hold a guess that looks
+measured. The context window is not usage: `session` sums usage across
+responses, and a window must not be summed. It stays in each mode's own
+snapshot or result.
+
+- `completion.Complete` returns a `completion.Result{Message, Usage, Cost,
+  ContextWindow}`.
+  - Codex's `cached_input_tokens`, which is read but ignored today, sets
+    `CacheRead`.
+  - Claude's `total_cost_usd`, which is dropped today, sets `Cost`.
+  - An OpenAI response's optional `prompt_tokens_details.cached_tokens` sets
+    `CacheRead` and `CacheKnown`.
+- `native.Result` replaces `TokenUsage`/`UsageKnown`/`CostUSD`/`CostKnown` with
+  `Usage` and `Cost`. A missing cache field is no longer read as zero.
+- `session.Usage` embeds `harness.Usage` and keeps its `Final` flag.
+
+### Capabilities
+
+```go
+type Availability string // Native, Composed, Unsupported, Unknown (moved from session)
+type Capability struct { Availability Availability; Reason string }
+
+type Mode string    // ModeCompletion, ModeRun, ModeSession
+type Feature string // FeatureMode (the mode itself), FeatureStructuredOutput,
+                    // FeatureResume, FeatureInterrupt, FeatureSteer, FeatureCompact,
+                    // FeatureEffort, FeatureModelDiscovery, FeatureCost,
+                    // FeatureAccount, FeatureQuota, FeatureContext,
+                    // FeatureRestrictTools, FeatureSandbox, FeatureHostedTools, …
+
+func Support(e Engine, m Mode, f Feature) Capability
+```
+
+One static table, with tests, replaces `session.CapabilitiesFor` and the
+consumers' engine checks. `session.Capabilities` remains the per-session runtime
+record and starts from the table.
+
+### Error facts
+
+`session`'s `Facts`/`ErrorFacts` pattern moves to the root, widened to cover
+completion's causes:
+
+```go
+type Facts struct {
+    Engine     Engine        `json:"engine,omitempty"`
+    Mode       Mode          `json:"mode,omitempty"`
+    Family     Family        `json:"family,omitempty"` // capability, preflight, process, request, turn
+    Cause      Cause         `json:"cause,omitempty"`  // rate_limited, authentication, context_limit, …, unknown
+    Phase      string        `json:"phase,omitempty"`
+    Code       string        `json:"code,omitempty"`
+    ExitCode   *int          `json:"exit_code,omitempty"`
+    RetryAfter time.Duration `json:"retry_after,omitempty"`
+    Retryable  bool          `json:"retryable"`
+}
+func ErrorFacts(err error) (Facts, bool)
+```
+
+The family is not named `Kind`. crew-assistant persists `session.Facts`, whose
+`kind` tag holds the family today, and reusing the name for the cause would
+silently change what stored diagnostics mean.
+
+`completion.RequestError`, `session`'s `CapabilityError`, `ProcessError`,
+`TurnError` and `UnsupportedError`, and a new typed `native` run error all
+implement it. The untyped `errors.New` refusals in `session` options become
+capability errors. A caller
+classifies any library failure the same way, whichever mode produced it.
+
+## Increments
+
+Each increment ships with its consumers updated, and each leaves the module
+releasable.
+
+1. **Shared vocabulary**, landed in this order so every commit builds:
+   1. Golden fixtures: literal `Ref` digests for defaulted configurations, and
+      usage fixtures per engine and mode.
+   2. The root package: `Engine`, `Usage`, `Cost`, `Facts`, with mode types
+      aliased to it (`session.Engine = harness.Engine`).
+   3. `ErrorFacts` implemented by every typed error in every mode.
+   4. Each mode switches to `harness.Usage`/`Cost`, fixing Codex completion's
+      cache split.
+   5. `Provider` replaces `Engine`/`Binary`/`Home` and completion's
+      `CodexBin`/`ClaudeHome`/`API`, one package at a time.
+   6. `Support`, replacing `session.CapabilitiesFor`.
+   7. Delete the aliases, then update crew-assistant and crew-code-review.
+2. **Native runs are engine-neutral.**
+   - One inline `Request.Schema` for every engine. The library writes and reads
+     Codex's schema and output files itself, in a private directory outside
+     `WorkDir` (a workspace-write agent could otherwise forge the report), and
+     clears the output before every resume. `SchemaPath` and `OutputPath` go.
+     Codex constrains every message to the schema, not just the last; `Support`
+     exposes that, since crew-code-review's WORKING loop depends on it.
+   - `Args` refuses flags the library manages (schema, output, sandbox,
+     permission and tool flags), so "consumed or refused" holds.
+   - Typed run errors, with provider text only in `Result.Failure`, which
+     callers read instead of the error string.
+   - Engine-specific execution options move into `Codex`/`Claude`/`Grok` option
+     structs, and one for a different engine is refused.
+   - Codex's silently ignored fields are refused.
+   - crew-code-review loses its schema-file plumbing.
+3. **Model discovery for every engine.**
+   - One `DiscoverModels(ctx, Provider)` covering Codex, Claude, Grok
+     (`grok models`) and OpenAI-compatible (`GET /models`), returning models
+     with their efforts and defaults.
+   - The consumers' catalogs, hardcoded model lists and effort checks go.
+4. **Account, login and quota for every CLI.**
+   - Inspection gets normalized quota window kinds (five-hour, weekly, and
+     per-model pools) and a classified "not installed" error.
+   - Grok is added where its CLI exposes this.
+5. **Grok everywhere.** Constrained completion, with a restriction proof, and a
+   session adapter over Grok's agent mode. Each lands only once it is verified
+   against the installed CLI, as `AGENTS.md` requires.
+6. **Remote sessions.** Follows the API-transports design doc: a separate
+   adapter that can never satisfy a restricted or sandboxed requirement.
+
+A portable permission vocabulary for native runs is deliberately left out. It
+would need a mapping for each engine, with a proof that no mapping widens
+access, which is increment-5-sized work. Until then, engine option structs are
+explicit, and `Support` reports what each engine can restrict.
+
+## Release
+
+The consumers depend on published versions (`AGENTS.md`), so each increment is
+tagged. Increments 1–2 are `v0.6.0`, a breaking minor release while the module
+is pre-1.0. crew-code-review moves from v0.2.0, and crew-assistant from v0.5.0.
