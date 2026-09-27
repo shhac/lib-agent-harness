@@ -11,6 +11,7 @@ import (
 
 	"github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/claudeproto"
+	"github.com/shhac/lib-agent-harness/internal/nativecli"
 )
 
 // ValidateClaudeHome accepts native or explicitly configured login storage.
@@ -37,7 +38,7 @@ func ClaudeEnvironment(home string) ([]string, error) {
 	}
 	// USER is part of native OS context: Claude needs it for macOS keychain
 	// lookup. Windows native login/cache directories are retained explicitly too.
-	env := append(nativeOperatingEnvironment(), "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1", "DISABLE_AUTOUPDATER=1", "DISABLE_TELEMETRY=1", "MAX_RETRIES=0")
+	env := append(nativecli.Native(), "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1", "DISABLE_AUTOUPDATER=1", "DISABLE_TELEMETRY=1", "MAX_RETRIES=0")
 	nativeHome, _ := os.UserHomeDir()
 	if home != "" && filepath.Clean(home) != filepath.Join(nativeHome, ".claude") {
 		env = append(env, "CLAUDE_CONFIG_DIR="+home)
@@ -45,10 +46,6 @@ func ClaudeEnvironment(home string) ([]string, error) {
 	// Auth is resolved natively by Claude (including keychain refresh). Never
 	// forward API keys, integration secrets, or process-wide model overrides.
 	return env, nil
-}
-
-func claudeBaseArgs() []string {
-	return []string{"--safe-mode", "--setting-sources=", "--settings={\"disableAllHooks\":true}", "--strict-mcp-config", "--mcp-config={\"mcpServers\":{}}", "--tools=", "--disable-slash-commands", "--no-chrome", "--no-session-persistence", "--permission-mode", "dontAsk"}
 }
 
 func claudeComplete(ctx context.Context, cfg Config, messages []Message, tools []Tool) (Result, error) {
@@ -97,7 +94,7 @@ func claudeComplete(ctx context.Context, cfg Config, messages []Message, tools [
 	if err != nil || len(payload) > cfg.MaxContextBytes {
 		return empty, &RequestError{Cause: harness.CauseContextLimit, Engine: harness.Claude, Phase: PhasePreflight, Code: "context_bytes"}
 	}
-	args := append(claudeBaseArgs(), "-p", "--output-format", "stream-json", "--verbose", "--model", cfg.Model, "--system-prompt", codexInstructions, "--json-schema", string(schema))
+	args := append(nativecli.ClaudeRestrictedArgs(), "-p", "--output-format", "stream-json", "--verbose", "--model", cfg.Model, "--system-prompt", codexInstructions, "--json-schema", string(schema))
 	if cfg.Effort != "" {
 		args = append(args, "--effort", cfg.Effort)
 	}

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/nativecli"
 )
 
 // probeCodex makes no inference call. A dummy provider rejects the first request
@@ -55,7 +56,7 @@ func probeCodex(ctx context.Context, cfg Config, bin string, args []string, dir 
 	// Preserve the explicitly selected Codex home so the probe verifies the
 	// same global-instruction boundary. OS account discovery is disposable;
 	// provider auth is the explicit dummy key, never the native login.
-	probeEnv := isolatedOperatingEnvironment(env, runtime.GOOS, dir)
+	probeEnv := nativecli.Isolated(env, runtime.GOOS, dir)
 	for _, entry := range env {
 		if strings.HasPrefix(entry, "CODEX_HOME=") {
 			probeEnv = append(probeEnv, entry)

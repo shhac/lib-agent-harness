@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -86,20 +85,6 @@ func TestCompletionCancellationAcrossSubprocessBoundaries(t *testing.T) {
 					t.Fatalf("reservations=%d inference=%d want=%d", reservations, invocations, want)
 				}
 			})
-		}
-	}
-}
-
-func TestDiscoveryPreservesCancellation(t *testing.T) {
-	for _, engine := range cliEngines {
-		ctx, cancel := context.WithCancel(context.Background())
-		_, err := discoverModels(ctx, Config{Provider: harness.Provider{Engine: engine}}, func(context.Context, Config, func(io.Reader, io.Writer) error) error {
-			cancel()
-			return errors.New("synthetic transport error")
-		})
-		cancel()
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("%s lost cancellation: %v", engine, err)
 		}
 	}
 }

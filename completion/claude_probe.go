@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/nativecli"
 )
 
 // probeClaude verifies the installed CLI's outbound tool and instruction surface
@@ -59,7 +60,7 @@ func probeClaude(ctx context.Context, cfg Config, bin string, args []string, dir
 	defer server.Close()
 	// Dummy auth and rebased OS directories prevent native account discovery,
 	// including Windows USERPROFILE/APPDATA/LOCALAPPDATA and macOS USER.
-	probeEnv := isolatedOperatingEnvironment(env, runtime.GOOS, dir)
+	probeEnv := nativecli.Isolated(env, runtime.GOOS, dir)
 	probeEnv = append(probeEnv, "CLAUDE_CONFIG_DIR="+dir, "ANTHROPIC_API_KEY=agent-harness-local-probe", "ANTHROPIC_BASE_URL=http://"+listener.Addr().String())
 	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()

@@ -3,6 +3,8 @@ package native
 import (
 	"os"
 	"strings"
+
+	"github.com/shhac/lib-agent-harness/internal/nativecli"
 )
 
 // GrokTelemetryPolicy selects Grok's client-side telemetry policy, as
@@ -23,37 +25,9 @@ func (p GrokTelemetryPolicy) valid() bool {
 	return p == GrokTelemetryDefault || p == GrokTelemetryReduced
 }
 
-// These documented process overrides opt out of client telemetry and prevent
-// ambient Cursor/Claude/Codex compatibility scanners from importing other harnesses'
-// local configuration (including their MCP servers) into this Grok run. They
-// are intentionally opt-in. External OpenTelemetry (GROK_EXTERNAL_OTEL) is left
-// alone: it reports to the operator's own collector, not to xAI.
-var grokReducedTelemetryEnvironment = []string{
-	"GROK_TELEMETRY_ENABLED=0",
-	"GROK_TELEMETRY_MIXPANEL_ENABLED=0",
-	"GROK_TELEMETRY_TRACE_UPLOAD=0",
-	"GROK_FEEDBACK_ENABLED=0",
-	"GROK_DISABLE_AUTOUPDATER=1",
-	"GROK_MEMORY=0",
-	"GROK_CURSOR_SKILLS_ENABLED=0",
-	"GROK_CURSOR_RULES_ENABLED=0",
-	"GROK_CURSOR_AGENTS_ENABLED=0",
-	"GROK_CURSOR_MCPS_ENABLED=0",
-	"GROK_CURSOR_HOOKS_ENABLED=0",
-	"GROK_CLAUDE_SKILLS_ENABLED=0",
-	"GROK_CLAUDE_RULES_ENABLED=0",
-	"GROK_CLAUDE_AGENTS_ENABLED=0",
-	"GROK_CLAUDE_MCPS_ENABLED=0",
-	"GROK_CLAUDE_HOOKS_ENABLED=0",
-	"GROK_CLAUDE_SESSIONS_ENABLED=0",
-	"GROK_CURSOR_SESSIONS_ENABLED=0",
-	"GROK_CODEX_SKILLS_ENABLED=0",
-	"GROK_CODEX_RULES_ENABLED=0",
-	"GROK_CODEX_AGENTS_ENABLED=0",
-	"GROK_CODEX_MCPS_ENABLED=0",
-	"GROK_CODEX_HOOKS_ENABLED=0",
-	"GROK_CODEX_SESSIONS_ENABLED=0",
-}
+// grokReducedTelemetryEnvironment is shared with every other package that
+// launches Grok, so no launch can fall behind a new import switch.
+var grokReducedTelemetryEnvironment = nativecli.GrokReducedTelemetry
 
 // withGrokReducedTelemetry overlays the reduced policy onto env; nil means
 // the inherited environment.

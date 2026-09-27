@@ -15,6 +15,7 @@ import (
 	"runtime"
 
 	"github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/nativecli"
 	"github.com/shhac/lib-agent-harness/internal/restrict"
 )
 
@@ -66,7 +67,7 @@ func codexComplete(ctx context.Context, cfg Config, messages []Message, tools []
 	}
 	// Snapshot the selected login environment once for both probe and inference.
 	// Process-local environment mutation would mix independently configured callers.
-	authEnv = withTemporaryDirectory(authEnv, runtime.GOOS, dir)
+	authEnv = nativecli.WithTemporaryDirectory(authEnv, runtime.GOOS, dir)
 	catalog, err := runCLI(ctx, cfg, bin, []string{"debug", "models", "--bundled"}, dir, cleanEnv, "")
 	if err != nil {
 		if ctx.Err() != nil {
@@ -268,14 +269,14 @@ func CodexEnvironment(home string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	env := append(nativeOperatingEnvironment(), "CODEX_HOME="+selected)
+	env := append(nativecli.Native(), "CODEX_HOME="+selected)
 	// Codex resolves its own login store. Provider API keys and application
 	// integration credentials must never reach this subprocess.
 	return env, nil
 }
 
 func codexCatalogEnvironment(dir string) []string {
-	return append(isolatedOperatingEnvironment(nativeOperatingEnvironment(), runtime.GOOS, dir), "CODEX_HOME="+dir)
+	return append(nativecli.Isolated(nativecli.Native(), runtime.GOOS, dir), "CODEX_HOME="+dir)
 }
 
 func parseCodex(data []byte, tools []Tool) (Result, error) {

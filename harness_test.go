@@ -97,6 +97,17 @@ func TestSupportIsTheOnlyEngineQuestion(t *testing.T) {
 	if Support(Codex, Run, ProgressMessages).Usable() {
 		t.Fatal("Codex constrains every message to the schema")
 	}
+	for _, e := range Engines() {
+		if !Support(e, Models, Available).Usable() {
+			t.Errorf("%s lists no models", e)
+		}
+	}
+	if Support(OpenAICompatible, Models, Effort).Usable() || !Support(Grok, Models, Effort).Usable() {
+		t.Fatal("effort listing claims changed")
+	}
+	if Support(Grok, Models, ContextWindow).Availability != Native || Support(OpenAICompatible, Models, ContextWindow).Availability != Unknown || Support(Codex, Models, ContextWindow).Usable() {
+		t.Fatal("context window listing claims changed")
+	}
 	restricted := Support(Claude, Session, RestrictTools)
 	if (runtime.GOOS == "windows") == restricted.Usable() {
 		t.Fatalf("restricted hosting on %s: %+v", runtime.GOOS, restricted)

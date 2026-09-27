@@ -29,8 +29,8 @@ Effort requires `API.EffortParameter` (`harness.EffortReasoningEffort` or
 different fields. It rejects redirects, arbitrary headers and vendor fields, and does not
 retry. Responses must have one complete terminal choice; usage is known only
 when the response supplies consistent token counts. Streaming, structured
-output, API model discovery and remote sessions are currently refused rather
-than silently approximated.
+output and remote sessions are currently refused rather than silently
+approximated.
 
 Select `Config.Provider`, `Model`, and optional `Effort`; set `Provider.CLI`'s
 binary and native login home paths when needed. The library does not copy credentials or fall back
@@ -108,14 +108,7 @@ no root is provided) must already have a private ACL; child directories inherit
 that ACL. Windows `chmod` only changes file attributes and does not grant
 owner-only access.
 
-`DiscoverModels` reads `Config.Provider` and runs only for an engine where
-`harness.Support(engine, harness.Models, harness.Available)` is usable. It
-reads the selected CLI's own catalog: Codex's app-server
-`model/list` and Claude's stream-json initialization metadata. It never starts an
-inference turn and does not return account information. Missing or unavailable
-catalogs return an error rather than invented model options. API discovery is a
-later addition, so the API transport is refused here rather than issuing an
-unbounded or ambiguous request.
+Model discovery lives in [catalog](../catalog/README.md).
 
 The unit suite uses synthetic CLI responses and local rejecting servers. Optional
 installed-Codex protocol tests are explicitly gated; they also use a local dummy

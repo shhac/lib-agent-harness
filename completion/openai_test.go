@@ -306,20 +306,3 @@ func TestOpenAIChatCancellationAndTransportFailures(t *testing.T) {
 type failingReader struct{}
 
 func (failingReader) Read([]byte) (int, error) { return 0, errors.New("secret connection reset") }
-
-func TestOpenAIDefaultTransportIgnoresAmbientProxy(t *testing.T) {
-	transport, ok := apiTransport.(*http.Transport)
-	if !ok || transport.Proxy != nil {
-		t.Fatal("API transport must not route credentials through ambient proxy settings")
-	}
-}
-
-func TestOpenAIModelDiscoveryIsNotYetOffered(t *testing.T) {
-	_, err := discoverModels(context.Background(), apiConfig(nil), func(context.Context, Config, func(io.Reader, io.Writer) error) error {
-		t.Fatal("discovery attempted for an API transport")
-		return nil
-	})
-	if err == nil {
-		t.Fatal("API discovery must be refused, not invented")
-	}
-}
