@@ -72,7 +72,7 @@ permissions, budgets, durable state, and retry decisions.
 
 ```go
 result, err := completion.Complete(ctx, completion.Config{
-    Provider: harness.Provider{Engine: harness.Claude}, // or Codex
+    Provider: harness.Provider{Engine: harness.Claude}, // or Codex, Grok
     Model:    "haiku", // discover with catalog.Discover; no library model default
     Effort:   "low",
 }, []completion.Message{
@@ -108,6 +108,16 @@ or `harness.EffortReasoningObject` (`reasoning.effort`; Vercel AI Gateway,
 OpenRouter). A local model server that takes no credential sets
 `API.Unauthenticated` instead of `Credentials`; that is refused for any
 non-loopback URL.
+
+Grok completion uses the operator's Grok login and requires `WorkDirRoot`.
+Before the first credentialed launch per binary and configuration, the library
+runs Grok against a local server that refuses inference and checks the request
+it would send: no tools, only the caller's system text beside Grok's fixed
+vendor context, and the expected response schema. Real runs use a private
+runtime home that shares only Grok's login file, never the operator's MCP
+servers, hooks, skills or plugins, and any reported tool aborts the run. Grok
+also sends each conversation to its own title-generation model on the same
+account. Grok completion is unavailable on Windows.
 
 A failed request that may have been billed still returns its `Usage` and `Cost`
 beside the error, with an empty message. See [completion](completion/README.md)
