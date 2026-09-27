@@ -1,9 +1,10 @@
 # lib-agent-harness
 
-Go interfaces for installed Codex and Claude CLI harnesses: constrained model
-completion, native agent runs, model discovery, streaming, session control,
-and account/quota/context telemetry.
-The selected engine changes configuration, not the calling interface.
+Go interfaces for installed Codex and Claude CLI harnesses, plus native Grok
+agent runs: constrained model completion, native agent runs, model discovery,
+streaming, session control, and account/quota/context telemetry.
+Where an execution mode supports an engine, selecting it changes configuration,
+not the calling interface.
 
 The library launches local CLI binaries and uses their native login. It does
 not require a hosted execution service or a direct model API key. The CLI's own
@@ -22,7 +23,7 @@ versions, and handle unsupported capabilities at runtime.
 | Package | Contract |
 | --- | --- |
 | `completion` | Model returns text and proposed application tool calls. Native tools are disabled and verified before inference; the application authorizes and executes proposals. |
-| `native` | One native agent invocation, optionally resuming a session. Generic structured output, tool activity, readable transcript, and usage parsing. |
+| `native` | One native agent invocation, optionally resuming a session. Generic structured output, tool activity, readable transcript, and usage parsing. Grok currently supports streaming text/tool runs; its schema output mode is rejected until its separate final-JSON protocol is pinned. |
 | `session` | Persistent bidirectional sessions with turns, streaming events, interruption, resumption, and capability-aware steering. |
 | `process` | Shared subprocess-tree containment, including Windows suspended-start job assignment. |
 
@@ -576,11 +577,26 @@ speaks to `claude -p` directly; it does not depend on the Claude SDK.
 
 ## Native runs and transcripts
 
-`native.Run` invokes either CLI with one `Config` and `Request` shape. Use
+`native.Run` invokes Codex, Claude, or Grok with one `Config` and `Request` shape. Use
 `native.NewStream` to receive typed events and render a common readable
 transcript. Reuse a stream only for sequential resumes of the same session.
 The application supplies its output schema and decides whether an incomplete
 report warrants another turn; the library does not retry autonomously.
+
+Grok's zero-value `GrokTelemetry` policy preserves the installed CLI's normal
+behaviour. Opt in to `native.GrokTelemetryReduced` to set Grok's documented
+client-telemetry, trace-upload, auto-update, memory, and Cursor/Claude
+compatibility-discovery environment controls to off for that invocation. It is
+not a no-egress guarantee: inference and any enabled tool/provider traffic can
+still leave the machine.
+
+```go
+result, err := native.Run(ctx, native.Config{
+    Engine:        "grok",
+    GrokTelemetry: native.GrokTelemetryReduced,
+    Sandbox:       "workspace",
+}, native.Request{Prompt: "Summarize this project.", WorkDir: workspace}, nil)
+```
 
 Native arguments and environment overrides are trusted configuration. They
 must not originate in model output. Raw tool content and transcripts can contain

@@ -1,4 +1,4 @@
-// Package native drives the native Codex and Claude command-line harnesses.
+// Package native drives the native Codex, Claude, and Grok command-line harnesses.
 // It owns protocol details, not application tool authorization or retry policy.
 package native
 
@@ -40,12 +40,27 @@ type Config struct {
 	MaxBudgetUSD   float64
 	Args           []string
 	// Env, when non-nil, is the complete process environment. Nil inherits it.
-	Env []string
+	Env           []string
+	GrokTelemetry GrokTelemetryPolicy
 }
+
+// GrokTelemetryPolicy selects Grok's client-side telemetry policy. It applies
+// only when Config.Engine is "grok". Default leaves Grok's environment and
+// behaviour unchanged. Reduced opts out of Grok product telemetry and related
+// background discovery that can read local provider configuration; it does not
+// prevent the model request, configured tools, or other required provider
+// traffic from leaving the machine.
+type GrokTelemetryPolicy uint8
+
+const (
+	GrokTelemetryDefault GrokTelemetryPolicy = iota
+	GrokTelemetryReduced
+)
 
 // Request is one initial or resumed turn. Instructions are supplied by the
 // caller. Schema is inline JSON for Claude; Codex consumes SchemaPath. OutputPath
-// is the Codex final-response file. The caller owns these files and their lifetime.
+// is the Codex final-response file. Grok's streaming native mode currently
+// rejects all three report fields. The caller owns these files and their lifetime.
 type Request struct {
 	Prompt             string
 	WorkDir            string
@@ -144,6 +159,14 @@ func NewStream(engine string, transcript io.Writer, options StreamOptions) (*Str
 			t.now = options.Clock
 		}
 		s.t = t
+	case "grok":
+		t := newGrokTranscoder(transcript)
+		t.onEvent = options.OnEvent
+		t.structured = options.Structured
+		if options.Clock != nil {
+			t.now = options.Clock
+		}
+		s.t = t
 	default:
 		return nil, fmt.Errorf("unsupported native harness %q", engine)
 	}
@@ -167,9 +190,13 @@ func (s *Stream) Report() (json.RawMessage, error) {
 	return nil, fmt.Errorf("no structured output in the result event")
 }
 
-// Args builds a native CLI invocation. Every positional sits behind -- so
-// variadic caller-supplied options cannot consume a prompt or session ID.
+// Args builds a native CLI invocation. Codex and Claude positionals sit behind
+// -- so variadic caller-supplied options cannot consume a prompt or session ID;
+// Grok's --single option binds its prompt directly.
 func Args(c Config, r Request) ([]string, error) {
+	if err := validateGrokTelemetry(c.GrokTelemetry); err != nil {
+		return nil, err
+	}
 	switch c.Engine {
 	case "codex":
 		args := []string{"exec"}
@@ -241,6 +268,36 @@ func Args(c Config, r Request) ([]string, error) {
 		}
 		args = append(args, c.Args...)
 		return append(args, "--", r.Prompt), nil
+	case "grok":
+		if r.Schema != "" || r.SchemaPath != "" || r.OutputPath != "" {
+			return nil, fmt.Errorf("grok native streaming does not support schema or output-file reports")
+		}
+		args := []string{"-p", r.Prompt, "--output-format", "streaming-json"}
+		if r.ResumeSession != "" {
+			args = append(args, "--resume", r.ResumeSession)
+		}
+		if r.WorkDir != "" {
+			args = append(args, "--cwd", r.WorkDir)
+		}
+		if r.AppendInstructions != "" {
+			args = append(args, "--rules", r.AppendInstructions)
+		}
+		if c.Model != "" {
+			args = append(args, "--model", c.Model)
+		}
+		if c.Effort != "" {
+			args = append(args, "--reasoning-effort", c.Effort)
+		}
+		if c.Sandbox != "" {
+			args = append(args, "--sandbox", c.Sandbox)
+		}
+		if c.PermissionMode != "" {
+			args = append(args, "--permission-mode", c.PermissionMode)
+		}
+		if len(c.AllowedTools) > 0 {
+			args = append(args, "--tools", strings.Join(c.AllowedTools, ","))
+		}
+		return append(args, c.Args...), nil
 	default:
 		return nil, fmt.Errorf("unsupported native harness %q", c.Engine)
 	}
@@ -256,6 +313,9 @@ func codexOverride(key, value string) string {
 
 // Execute starts exactly one CLI invocation. There is no automatic retry.
 func Execute(ctx context.Context, c Config, args []string, workDir string, stdout, stderr io.Writer) error {
+	if err := validateGrokTelemetry(c.GrokTelemetry); err != nil {
+		return err
+	}
 	bin := c.Binary
 	if bin == "" {
 		bin = c.Engine
@@ -269,22 +329,7 @@ func Execute(ctx context.Context, c Config, args []string, workDir string, stdou
 	var outputMu sync.Mutex
 	cmd.Stdout = lockedWriter{mu: &outputMu, out: stdout}
 	cmd.Stderr = lockedWriter{mu: &outputMu, out: stderr}
-	cmd.Env = c.Env
-	if c.Home != "" {
-		env := cmd.Env
-		if env == nil {
-			env = os.Environ()
-		}
-		key := "CODEX_HOME"
-		if c.Engine == "claude" {
-			key = "CLAUDE_CONFIG_DIR"
-		}
-		if c.Engine == "claude" && isDefaultClaudeHome(c.Home, env) {
-			cmd.Env = withoutEnv(env, key)
-		} else {
-			cmd.Env = overrideEnv(env, key, c.Home)
-		}
-	}
+	cmd.Env = nativeEnvironment(c)
 	cmd.WaitDelay = 10 * time.Second
 	return p.Run()
 }
@@ -350,6 +395,72 @@ func Run(ctx context.Context, c Config, r Request, stream *Stream) (Result, erro
 func overrideEnv(env []string, key, value string) []string {
 	return append(withoutEnv(env, key), key+"="+value)
 }
+
+func validateGrokTelemetry(policy GrokTelemetryPolicy) error {
+	switch policy {
+	case GrokTelemetryDefault, GrokTelemetryReduced:
+		return nil
+	default:
+		return fmt.Errorf("unsupported Grok telemetry policy %d", policy)
+	}
+}
+
+// nativeEnvironment applies only the selected engine's documented home and
+// policy variables. Nil continues to mean that the process inherits its exact
+// environment when no override is requested.
+func nativeEnvironment(c Config) []string {
+	env := c.Env
+	if c.Home != "" {
+		if env == nil {
+			env = os.Environ()
+		}
+		key := "CODEX_HOME"
+		switch c.Engine {
+		case "claude":
+			key = "CLAUDE_CONFIG_DIR"
+		case "grok":
+			key = "GROK_HOME"
+		}
+		if c.Engine == "claude" && isDefaultClaudeHome(c.Home, env) {
+			env = withoutEnv(env, key)
+		} else {
+			env = overrideEnv(env, key, c.Home)
+		}
+	}
+	if c.Engine != "grok" || c.GrokTelemetry != GrokTelemetryReduced {
+		return env
+	}
+	if env == nil {
+		env = os.Environ()
+	}
+	for _, entry := range grokReducedTelemetryEnvironment {
+		key, value, _ := strings.Cut(entry, "=")
+		env = overrideEnv(env, key, value)
+	}
+	return env
+}
+
+// These documented process overrides opt out of client telemetry and prevent
+// ambient Cursor/Claude compatibility scanners from importing other harnesses'
+// local configuration into this Grok run. They are intentionally opt-in.
+var grokReducedTelemetryEnvironment = []string{
+	"GROK_TELEMETRY_ENABLED=0",
+	"GROK_TELEMETRY_MIXPANEL_ENABLED=0",
+	"GROK_TELEMETRY_TRACE_UPLOAD=0",
+	"GROK_DISABLE_AUTOUPDATER=1",
+	"GROK_MEMORY=0",
+	"GROK_CURSOR_SKILLS_ENABLED=0",
+	"GROK_CURSOR_RULES_ENABLED=0",
+	"GROK_CURSOR_AGENTS_ENABLED=0",
+	"GROK_CURSOR_MCPS_ENABLED=0",
+	"GROK_CURSOR_HOOKS_ENABLED=0",
+	"GROK_CLAUDE_SKILLS_ENABLED=0",
+	"GROK_CLAUDE_RULES_ENABLED=0",
+	"GROK_CLAUDE_AGENTS_ENABLED=0",
+	"GROK_CLAUDE_MCPS_ENABLED=0",
+	"GROK_CLAUDE_HOOKS_ENABLED=0",
+}
+
 func jsonCompact(s string) string {
 	var b bytes.Buffer
 	if json.Compact(&b, []byte(s)) != nil {

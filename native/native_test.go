@@ -408,3 +408,114 @@ func TestCodexInterruptedTurnDoesNotReusePreviousKnownTotal(t *testing.T) {
 		t.Fatalf("cumulative total should repair prior gap: %+v", r)
 	}
 }
+
+func TestGrokArgsAndUnsupportedStructuredOutput(t *testing.T) {
+	c := Config{
+		Engine:         "grok",
+		Model:          "grok-build",
+		Effort:         "high",
+		Sandbox:        "strict",
+		PermissionMode: "dontAsk",
+		AllowedTools:   []string{"read", "grep"},
+		Args:           []string{"--no-subagents"},
+	}
+	r := Request{Prompt: "-review this", ResumeSession: "session", WorkDir: "/work", AppendInstructions: "be brief"}
+	got, err := Args(c, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"-p", "-review this", "--output-format", "streaming-json", "--resume", "session", "--cwd", "/work",
+		"--rules", "be brief", "--model", "grok-build", "--reasoning-effort", "high", "--sandbox", "strict",
+		"--permission-mode", "dontAsk", "--tools", "read,grep", "--no-subagents",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("args=%q want %q", got, want)
+	}
+	for _, request := range []Request{{Schema: `{}`}, {SchemaPath: "schema.json"}, {OutputPath: "report.json"}} {
+		if _, err := Args(c, request); err == nil {
+			t.Fatalf("accepted unsupported Grok report mode: %+v", request)
+		}
+	}
+}
+
+func TestGrokReducedTelemetryEnvironmentIsOptIn(t *testing.T) {
+	base := []string{
+		"GROK_TELEMETRY_ENABLED=1",
+		"GROK_TELEMETRY_MIXPANEL_ENABLED=1",
+		"GROK_TELEMETRY_TRACE_UPLOAD=1",
+		"GROK_CURSOR_MCPS_ENABLED=1",
+		"UNRELATED=kept",
+	}
+	if got := nativeEnvironment(Config{Engine: "grok", Env: base}); !reflect.DeepEqual(got, base) {
+		t.Fatalf("default Grok environment changed: %q", got)
+	}
+	reduced := nativeEnvironment(Config{Engine: "grok", Env: base, Home: "/runtime/grok", GrokTelemetry: GrokTelemetryReduced})
+	for _, want := range append([]string{"GROK_HOME=/runtime/grok", "UNRELATED=kept"}, grokReducedTelemetryEnvironment...) {
+		key, value, _ := strings.Cut(want, "=")
+		found := 0
+		for _, entry := range reduced {
+			if entry == key+"="+value {
+				found++
+			}
+		}
+		if found != 1 {
+			t.Fatalf("%s appears %d times in %q", want, found, reduced)
+		}
+	}
+	if got := nativeEnvironment(Config{Engine: "claude", Env: base, GrokTelemetry: GrokTelemetryReduced}); !reflect.DeepEqual(got, base) {
+		t.Fatalf("Grok policy changed Claude environment: %q", got)
+	}
+}
+
+func TestGrokStreamNormalizesACPAndDirectUpdates(t *testing.T) {
+	var transcript bytes.Buffer
+	var events []Event
+	s, err := NewStream("grok", &transcript, StreamOptions{Clock: fixedClock(500 * time.Millisecond), OnEvent: func(e Event) { events = append(events, e) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.UserPrompt("inspect the project")
+	for _, line := range []string{
+		`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"grok-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"I found "}}}}`,
+		`{"type":"text","data":"one issue."}`,
+		`{"type":"tool_call","toolCallId":"tool-1","toolName":"read_file","rawInput":{"path":"README.md"}}`,
+		`{"type":"tool_call_update","toolCallId":"tool-1","status":"completed","rawOutput":"contents"}`,
+		`{"type":"end","sessionId":"grok-session","usage":{"input_tokens":12,"output_tokens":3,"cache_read_input_tokens":2}}`,
+	} {
+		if _, err := io.WriteString(s, line+"\n"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.Close()
+	r := s.Snapshot()
+	if r.SessionID != "grok-session" || string(r.Report) != `"I found one issue."` || r.Usage != (TokenUsage{Input: 12, Output: 3, CacheRead: 2}) || !r.UsageKnown {
+		t.Fatalf("result: %+v", r)
+	}
+	if got := []string{events[0].Kind, events[1].Kind, events[2].Kind, events[3].Kind, events[4].Kind, events[5].Kind}; !reflect.DeepEqual(got, []string{"session", "message", "message", "tool_start", "tool_end", "usage"}) {
+		t.Fatalf("events: %+v", events)
+	}
+	if !strings.Contains(transcript.String(), "session id: grok-session") || !strings.Contains(transcript.String(), "grok\nI found ") || !strings.Contains(transcript.String(), "succeeded in 500ms") {
+		t.Fatalf("transcript: %s", transcript.String())
+	}
+}
+
+func TestGrokRunRequiresEndAndRejectsInvalidPolicyBeforeExecution(t *testing.T) {
+	for _, wire := range []string{"", `{"type":"text","data":"unfinished"}`, `{"type":"error","message":"provider failed"}`} {
+		c := Config{Engine: "grok", RunCommand: func(_ context.Context, _ []string, _ string, out, _ io.Writer) error {
+			_, _ = io.WriteString(out, wire)
+			return nil
+		}}
+		if _, err := Run(context.Background(), c, Request{Prompt: "hello"}, nil); err == nil {
+			t.Fatalf("accepted Grok stream without end: %s", wire)
+		}
+	}
+	called := false
+	c := Config{Engine: "grok", GrokTelemetry: 99, RunCommand: func(context.Context, []string, string, io.Writer, io.Writer) error {
+		called = true
+		return nil
+	}}
+	if _, err := Run(context.Background(), c, Request{Prompt: "hello"}, nil); err == nil || called {
+		t.Fatalf("invalid policy reached execution: called=%v err=%v", called, err)
+	}
+}
