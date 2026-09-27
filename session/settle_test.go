@@ -170,13 +170,14 @@ func TestATurnEndingClosesToolAdmissionWithoutCancellingWhatRuns(t *testing.T) {
 		t.Fatalf("a call after the turn ended was admitted: %q", text)
 	}
 	// And the refusal is reported rather than disappearing. There is no turn left
-	// to observe it on, which is exactly why it has to go somewhere.
+	// to observe it on, which is exactly why it has to go somewhere. The report
+	// may land just after the caller sees the refusal, so it is awaited.
 	select {
 	case d := <-refusals:
 		if d.Code != "paused" || !strings.Contains(d.Detail, "read_file") {
 			t.Errorf("the refusal did not say what was refused or why: %+v", d)
 		}
-	default:
+	case <-time.After(5 * time.Second):
 		t.Error("a tool refused after its turn ended was not reported anywhere")
 	}
 	// The one that was already running was not abandoned half-done.
