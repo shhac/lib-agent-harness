@@ -1,11 +1,10 @@
 # lib-agent-harness
 
-Go interfaces for installed Codex and Claude CLI harnesses, OpenAI-compatible
-completion endpoints, and native Grok agent runs: constrained model completion,
-native agent runs, model discovery, streaming, session control, and
-account/quota/context telemetry.
-Where an execution mode supports an engine, selecting it changes configuration,
-not the calling interface.
+One Go interface for running AI agents and models through any supported
+harness: the Codex, Claude and Grok CLIs with their own logins, or any
+OpenAI-compatible HTTP endpoint or gateway. An application written against it
+can let its users choose the AI service behind each kind of invocation.
+Choosing a service changes configuration, not code.
 
 The library launches local CLI binaries with their native login, or calls an
 explicitly configured API endpoint with a caller-supplied credential source.
@@ -16,17 +15,52 @@ and billing rules still apply.
 go get github.com/shhac/lib-agent-harness
 ```
 
-Requires Go 1.26.4 and the selected CLI installed locally. macOS, Linux, and
-Windows are supported. CLI protocols evolve: pin and test your deployed CLI
-versions, and handle unsupported capabilities at runtime.
+Requires Go 1.26.4 and, for a CLI engine, that CLI installed locally. macOS,
+Linux and Windows are supported. CLI protocols evolve: pin and test your
+deployed CLI versions, and handle unsupported capabilities at runtime.
+
+## One vocabulary
+
+The root package `harness` defines what every execution mode shares:
+
+- `Engine`: `harness.Codex`, `harness.Claude`, `harness.Grok` or
+  `harness.OpenAICompatible`. Its spelling is stable and safe to persist.
+- `Provider`: where inference comes from. A CLI engine reads `Provider.CLI`
+  (binary and login home); an API engine reads `Provider.API` (base URL,
+  dialect, credential source). Setting the other half is refused.
+- `Support(engine, operation, feature)`: the one question to ask instead of
+  comparing engine names. It returns `native`, `composed`, `unsupported` or
+  `unknown` with a reason, for the operations `Complete`, `Run`, `Session`,
+  `Models` and `Account` and features such as `Effort`, `StructuredOutput`,
+  `Resume`, `Steer`, `Compact`, `RestrictTools`, `CostReport` and `Quota`.
+- `Usage` and `Cost`: token accounting in one shape. `Input` counts every prompt
+  token, cached or not, and the cache figures are parts of it that are split out
+  only when the provider reported them (`CacheKnown`). `Known` false means
+  unavailable, never zero. `Cost` is the harness's own valuation at API rates,
+  reported only when the harness states it.
+- `ErrorFacts(err)`: fixed-vocabulary facts (engine, operation, family, cause,
+  code, exit status, retry-after) for any error any mode returns. Error text
+  never contains provider output or credentials.
+
+```go
+provider := harness.Provider{Engine: harness.Grok} // or Codex, Claude
+if c := harness.Support(provider.Engine, harness.Session, harness.Available); !c.Usable() {
+    return fmt.Errorf("sessions unavailable: %s", c.Reason)
+}
+```
+
+Unsupported options are refused before any work starts, never silently
+ignored, and no option ever widens what an agent may do.
 
 ## Choose the execution contract
 
 | Package | Contract |
 | --- | --- |
-| `completion` | Model returns text and proposed application tool calls. Native tools are disabled and verified before inference; the application authorizes and executes proposals. |
-| `native` | One native agent invocation, optionally resuming a session. Generic structured output, tool activity, readable transcript, and usage parsing. |
-| `session` | Persistent bidirectional sessions with turns, streaming events, interruption, resumption, and capability-aware steering. |
+| `completion` | The model returns text and proposed application tool calls. Native tools are proven absent before inference; the application authorizes and executes proposals. |
+| `native` | One native agent invocation, optionally resuming a session: an inline JSON-schema report, tool activity, a readable transcript, and usage. |
+| `session` | Persistent bidirectional sessions with turns, streaming events, interruption, resumption, capability-aware steering, and restricted or sandboxed tool hosting. |
+| `catalog` | The models and reasoning efforts an engine offers, without inference. |
+| `account` | Login, plan, subscription quota windows and credits, without inference. |
 | `process` | Shared subprocess-tree containment, including Windows suspended-start job assignment. |
 
 These are explicit execution modes. A native agent session must not substitute
@@ -37,54 +71,71 @@ permissions, budgets, durable state, and retry decisions.
 ## Constrained completion
 
 ```go
-reply, usage, err := completion.Complete(ctx, completion.Config{
-    Engine: "claude", // or "codex"
-    Model: "haiku",   // discover the installed CLI's models; no library model default
-    Effort: "low",
+result, err := completion.Complete(ctx, completion.Config{
+    Provider: harness.Provider{Engine: harness.Claude}, // or Codex
+    Model:    "haiku", // discover with catalog.Discover; no library model default
+    Effort:   "low",
 }, []completion.Message{
     {Role: "system", Content: "Answer briefly."},
     {Role: "user", Content: "Suggest a short progress caption."},
 }, nil)
+// result.Message, result.Usage, result.Cost, result.ContextWindow
 ```
 
-An OpenAI-compatible Chat Completions endpoint uses the same call and result
-shapes. Its bearer token comes from a per-request function rather than a
-configuration string, so it is never retained by the harness:
+An OpenAI-compatible endpoint, such as a gateway, uses the same call and result.
+Its bearer token comes from a per-request function rather than a configuration
+string, so it is never retained by the harness:
 
 ```go
-reply, usage, err := completion.Complete(ctx, completion.Config{
-    Engine: completion.EngineOpenAICompatible,
-    Model:  "provider/model",
-    API: completion.APIConfig{
-        BaseURL:     "https://gateway.example/v1",
-        Dialect:     completion.OpenAIChatCompletions,
-        Credentials: tokenSource,
+result, err := completion.Complete(ctx, completion.Config{
+    Provider: harness.Provider{
+        Engine: harness.OpenAICompatible,
+        API: harness.API{
+            BaseURL:         "https://gateway.example/v1",
+            Dialect:         harness.OpenAIChatCompletions,
+            Credentials:     tokenSource,
+            EffortParameter: harness.EffortReasoningObject,
+        },
     },
+    Model:  "provider/model",
+    Effort: "high",
 }, messages, tools)
 ```
 
 `Effort` is sent only when `API.EffortParameter` says where the endpoint reads
-it: `completion.EffortReasoningEffort` (top-level `reasoning_effort`; OpenAI,
-xAI) or `completion.EffortReasoningObject` (`reasoning.effort`; Vercel AI
-Gateway, OpenRouter). A local model server that takes no credential sets
+it: `harness.EffortReasoningEffort` (top-level `reasoning_effort`; OpenAI, xAI)
+or `harness.EffortReasoningObject` (`reasoning.effort`; Vercel AI Gateway,
+OpenRouter). A local model server that takes no credential sets
 `API.Unauthenticated` instead of `Credentials`; that is refused for any
 non-loopback URL.
 
-The message roles above are part of the application conversation presented to
-the constrained model, not a promise that every provider accepts identical
-native system-message operations. See [completion](completion/README.md) for
-the transport boundary, API restrictions, CLI compatibility probes, and scratch
-storage.
+A failed request that may have been billed still returns its `Usage` and `Cost`
+beside the error, with an empty message. See [completion](completion/README.md)
+for the transport boundary, API restrictions, CLI compatibility probes, and
+scratch storage.
 
-Use `completion.DiscoverModels(ctx, cfg)` to retrieve model IDs and advertised
-efforts without inference. Unsupported or failed discovery never invents a
-catalog or silently substitutes a model.
+## Models
+
+```go
+models, err := catalog.Discover(ctx, provider)
+for _, m := range models {
+    // m.ID, m.Name, m.IsDefault, m.ContextWindow (0 = not stated)
+    if m.EffortsKnown {
+        offer(m.ID, m.Efforts, m.DefaultEffort)
+    }
+}
+```
+
+Discovery performs no inference and invents no catalog: Codex and Claude read
+their installed CLI's account-aware catalog, Grok its agent protocol's model
+state, and an OpenAI-compatible endpoint its `GET /models`. Efforts are listed
+only where the engine states them.
 
 ## Native sessions
 
 ```go
 s, err := session.Start(ctx, session.Options{
-    Engine: session.Claude, // or session.Codex
+    Provider: harness.Provider{Engine: harness.Claude}, // or Codex
     Model: "haiku",
     Effort: "low",
     WorkDir: workspace,
@@ -199,8 +250,8 @@ become the session's entire surface. Sessions opened without it are unchanged.
 
 ```go
 s, err := session.Start(ctx, session.Options{
-    Engine: session.Claude,
-    Model:  "haiku",
+    Provider: harness.Provider{Engine: harness.Claude},
+    Model:    "haiku",
     Instructions: session.Instructions{Mode: session.Append, Text: scopedTask},
     Restriction: &session.Restriction{Tools: session.ToolHost{
         Server:  "agent_workspace",           // some names are reserved by the harness
@@ -363,7 +414,7 @@ its own private session temporary directory. Codex's shell may not write
 
 ```go
 s, err := session.Start(ctx, session.Options{
-    Engine:      session.Codex,
+    Provider:    harness.Provider{Engine: harness.Codex},
     WorkDir:     "/private/workspace",
     RuntimeHome: "/private/state/codex-runtime", // Codex only; shares the login
     Sandbox:     &session.Sandbox{Write: true},
@@ -455,9 +506,9 @@ the hosted ones.
 
 ```go
 s, err := session.Start(ctx, session.Options{
-    Engine:  session.Claude,
-    WorkDir: "/private/workspace",
-    Sandbox: &session.Sandbox{Write: true, Web: true, Tools: &session.ToolHost{
+    Provider: harness.Provider{Engine: harness.Claude},
+    WorkDir:  "/private/workspace",
+    Sandbox:  &session.Sandbox{Write: true, Web: true, Tools: &session.ToolHost{
         Server:  "crew",
         Tools:   tools,
         Handler: handler,
@@ -524,28 +575,42 @@ User-message queueing remains application policy. Interruption never means a
 tool's external effects were rolled back. Failed or uncertain control operations
 must be reconciled before retrying.
 
-## Account, quota and context inspection
+## Account, quota, credits and context
 
-Use the same API for either engine, optionally selecting a binary and login home:
+Usage is paid for in three ways, and an engine may use any of them:
+subscription quota windows (percentages of a plan's allowance over a period),
+token spend (the harness's own valuation at API rates, on `Usage`/`Cost`), and
+credits (a prepaid or overage balance that can cover either). `account.Inspect`
+reports quota and credits for every CLI engine in one shape, each part saying
+whether it is known, and leaves combining them to the application:
 
 ```go
-inspection, err := session.Inspect(ctx, session.Options{
-    Engine: session.Codex, // or session.Claude
-    // Binary: "/path/to/codex", Home: "/path/to/login-home",
-})
-// Inspect returns partial data alongside errors: the account may be known even
-// when the installed CLI does not support quota inspection.
-if inspection.Account.Known() {
-    showPlan(inspection.Account.Plan) // empty means the plan was not reported
+report, err := account.Inspect(ctx, harness.Provider{Engine: harness.Codex}) // or Claude, Grok
+// Partial data can arrive beside an error: the login may be known when quota is not.
+if report.Account.Known() {
+    showPlan(report.Account.Plan) // empty means the plan was not reported
 }
-for _, window := range inspection.Quota.Windows {
+for _, window := range report.Quota.Windows {
+    // Kind is session, weekly, weekly_model (with Model), monthly or other.
     if !window.IsStale(time.Now(), 5*time.Minute) && window.UsedPercent != nil {
-        showAllowance(window.ID, *window.UsedPercent, window.ResetsAt)
+        showAllowance(window.Kind, window.Model, *window.UsedPercent, window.ResetsAt)
     }
+}
+if report.Credits.Known() && report.Credits.Balance != nil {
+    showCredits(report.Credits.Balance.Value, report.Credits.Balance.Unit) // exact decimal, currency or "credits"
 }
 ```
 
-`Inspect` performs no model inference and creates no conversation. It runs the
+| Engine | Login and plan | Quota windows | Credits |
+| --- | --- | --- | --- |
+| Codex | `account/read` | `account/rateLimits/read` | credit balance, spend control, rate-limit resets |
+| Claude | `initialize.account` | `get_usage` and `rate_limit_event` | spend and extra-usage allowance, in minor currency units |
+| Grok | agent protocol `check_subscription` | unsupported | unsupported |
+
+A missing CLI is a classified `not_installed` failure. `session.Inspect` remains
+for Codex and Claude and also returns a session's `Capabilities`.
+
+Inspection performs no model inference and creates no conversation. It runs the
 selected CLI in a temporary neutral directory, using its existing login, and
 cleans up the child and directory. It never reads credential files, copies
 credentials, or calls a provider's account endpoint itself. Session prompts,
@@ -603,39 +668,48 @@ speaks to `claude -p` directly; it does not depend on the Claude SDK.
 
 ## Native runs and transcripts
 
-`native.Run` invokes Codex, Claude, or Grok with one `Config` and `Request` shape. Use
-`native.NewStream` to receive typed events and render a common readable
-transcript. Reuse a stream only for sequential resumes of the same session.
-The application supplies its output schema and decides whether an incomplete
-report warrants another turn; the library does not retry autonomously.
-
-Grok runs use `grok --single … --output-format=streaming-json`. An inline
-`Request.Schema` is passed as `--json-schema` and the report is Grok's
-`structuredOutput`; `SchemaPath`, `OutputPath` and `MaxBudgetUSD` are refused.
-A turn that ends with any stop reason other than `end_turn` (for example
-`max_turn_requests`, `max_tokens`, `refusal` or `cancelled`) is a failure.
-Usage and cost are summed per invocation, as for Claude, and stay unknown when
-Grok marks them partial or omits them. `AllowedTools` maps to `--tools`, which
-removes built-in tools only: MCP meta-tools remain, as do MCP servers Grok
-imports from Claude and Cursor configuration unless `GrokTelemetryReduced` is set.
-
-Grok's zero-value `GrokTelemetry` policy preserves the installed CLI's normal
-behaviour. Opt in to `native.GrokTelemetryReduced` to set Grok's documented
-client-telemetry, trace-upload, feedback, auto-update, memory, and
-Cursor/Claude compatibility-discovery environment controls to off for that
-invocation. It is not a no-egress guarantee: inference and any enabled
-tool/provider traffic can still leave the machine. It does not change the xAI
-account's coding-data sharing or retention settings (`/privacy`, Zero Data
-Retention), and leaves external OpenTelemetry to the operator's own collector
-(`GROK_EXTERNAL_OTEL`) as configured.
+`native.Run` invokes Codex, Claude or Grok with one `Config` and `Request`
+shape. Use `native.NewStream` to receive typed events and render a common
+readable transcript. Reuse a stream only for sequential resumes of the same
+session. The application decides whether an incomplete report warrants another
+turn; the library does not retry autonomously.
 
 ```go
 result, err := native.Run(ctx, native.Config{
-    Engine:        "grok",
-    GrokTelemetry: native.GrokTelemetryReduced,
-    Sandbox:       "workspace",
-}, native.Request{Prompt: "Summarize this project.", WorkDir: workspace}, nil)
+    Provider: harness.Provider{Engine: harness.Grok}, // or Codex, Claude
+    Model:    model,
+    Grok:     native.GrokOptions{Telemetry: native.GrokTelemetryReduced},
+}, native.Request{Prompt: "Review this change.", WorkDir: workspace, Schema: reportSchema}, nil)
+if err != nil {
+    facts, _ := harness.ErrorFacts(err) // fixed codes; the provider's own text is result.Failure
+}
+// result.Report is the schema-shaped report; result.Usage, result.Cost
 ```
+
+- One inline `Request.Schema` works for every engine. For Codex, the library
+  writes the schema and reads the report in a private directory outside the
+  workspace, where a workspace-write agent cannot forge it. Codex constrains
+  every message to the schema; `harness.Support(e, harness.Run,
+  harness.ProgressMessages)` says whether an engine lets the agent write
+  unconstrained progress messages first.
+- Engine-specific execution settings live in `Config.Codex`, `Config.Claude`
+  and `Config.Grok`. Options for another engine, and `Args` that repeat a flag
+  the library manages, are refused.
+- Failures are `*native.RunError` values with harness facts. The provider's own
+  account of a failed turn is only in `Result.Failure`.
+- A Grok turn that ends with any stop reason other than `end_turn` is a failure.
+  Grok's `Tools` removes built-in tools only: MCP helper tools remain, as do
+  MCP servers imported from other harnesses unless `GrokTelemetryReduced` is set.
+
+Grok's zero-value telemetry policy preserves the installed CLI's normal
+behaviour. `native.GrokTelemetryReduced` turns off Grok's documented
+client-telemetry, trace-upload, feedback, auto-update and memory controls, and
+its imports of Claude, Cursor and Codex skills, rules, agents, MCP servers,
+hooks and sessions, for that invocation. It is not a no-egress guarantee:
+inference and any enabled tool or provider traffic still leave the machine. It
+does not change the xAI account's coding-data sharing or retention settings
+(`/privacy`, Zero Data Retention), and leaves external OpenTelemetry to the
+operator's own collector (`GROK_EXTERNAL_OTEL`) as configured.
 
 Native arguments and environment overrides are trusted configuration. They
 must not originate in model output. Raw tool content and transcripts can contain
