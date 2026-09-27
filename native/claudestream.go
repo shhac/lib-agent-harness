@@ -11,7 +11,6 @@ package native
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -242,16 +241,13 @@ func (t *streamTranscoder) renderBlocks(ev streamEvent, assistant bool) {
 // the UI parser already documents for codex's interleaved sections.
 func (t *streamTranscoder) emitToolResult(b contentBlock) {
 	t.event(Event{Kind: "tool_end", ItemID: b.ToolUseID, Output: decodeToolResult(b.Content), Failed: b.IsError})
-	status := "succeeded"
-	if b.IsError {
-		status = "failed"
-	}
-	elapsed := ""
-	if len(t.pending) > 0 {
-		elapsed = " in " + t.now().Sub(t.pending[0]).Truncate(10*time.Millisecond).String()
+	var elapsed time.Duration
+	timed := len(t.pending) > 0
+	if timed {
+		elapsed = t.now().Sub(t.pending[0])
 		t.pending = t.pending[1:]
 	}
-	_, _ = fmt.Fprintf(t.out, " %s%s:\n%s\n", status, elapsed, decodeToolResult(b.Content))
+	t.toolEnded(b.IsError, elapsed, timed, decodeToolResult(b.Content))
 }
 
 // renderResult settles a result event's state first and writes what it shows
@@ -266,7 +262,7 @@ func (t *streamTranscoder) renderResult(ev streamEvent, rawLine []byte) {
 // did; nothing is written.
 func (t *streamTranscoder) recordResult(ev streamEvent, rawLine []byte) (bool, string) {
 	t.completed = true
-	structured := len(ev.StructuredOutput) > 0 && !bytes.Equal(bytes.TrimSpace(ev.StructuredOutput), []byte("null"))
+	structured := !jsonAbsent(ev.StructuredOutput)
 	if structured {
 		t.report = ev.StructuredOutput
 	}
@@ -329,34 +325,17 @@ func (t *streamTranscoder) writeResultTrailer(structured bool, failure string) {
 		t.event(Event{Kind: "error", Text: failure})
 		t.emit("error", failure)
 	}
-	t.event(Event{Kind: "usage", Usage: t.usage, CostUSD: t.costUSD, UsageKnown: t.sawUsage && !t.usageIncomplete, CostKnown: t.sawCost && !t.costIncomplete})
-
-	// The trailer the UI renders as the run's token count. A resumed run
-	// appends a second one, mirroring codex's per-invocation trailers. The
-	// cost line rides along so a live log shows spend without waiting for
-	// the review to land in history; codex reports none, so it stays off
-	// there rather than printing a misleading zero.
-	if t.sawUsage && !t.usageIncomplete {
-		_, _ = fmt.Fprintf(t.out, "tokens used\n%s\n", withThousands(t.usage.Total()))
-	} else if t.sawUsage {
-		_, _ = fmt.Fprintf(t.out, "usage incomplete; recorded tokens: %s\n", withThousands(t.usage.Total()))
-	} else {
-		_, _ = fmt.Fprintln(t.out, "usage unavailable")
-	}
-	if t.costUSD > 0 {
-		if t.sawCost && !t.costIncomplete {
-			_, _ = fmt.Fprintf(t.out, "~ $%.4f at API rates\n", t.costUSD)
-		} else {
-			_, _ = fmt.Fprintf(t.out, "~ $%.4f recorded at API rates; total unavailable\n", t.costUSD)
-		}
-	}
+	usageKnown := t.sawUsage && !t.usageIncomplete
+	costKnown := t.sawCost && !t.costIncomplete
+	t.event(Event{Kind: "usage", Usage: t.usage, CostUSD: t.costUSD, UsageKnown: usageKnown, CostKnown: costKnown})
+	t.spendTrailer(t.usage, t.sawUsage, usageKnown, t.costUSD, costKnown)
 }
 
 // resultFailure describes a result event that carries no usable report: the
 // CLI's is_error flag, its subtype, and whatever it put in `result`. "" when
 // the run reported an outcome normally.
 func resultFailure(ev streamEvent) string {
-	hasReport := len(ev.StructuredOutput) > 0 && !bytes.Equal(bytes.TrimSpace(ev.StructuredOutput), []byte("null"))
+	hasReport := !jsonAbsent(ev.StructuredOutput)
 	if hasReport && !ev.IsError {
 		return ""
 	}
@@ -383,7 +362,7 @@ func resultFailure(ev streamEvent) string {
 // outcomes and an object for some; an unrecognised shape falls back to its raw
 // form rather than being dropped.
 func decodeResultText(raw json.RawMessage) string {
-	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+	if jsonAbsent(raw) {
 		return ""
 	}
 	var text string

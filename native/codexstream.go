@@ -259,13 +259,9 @@ func (t *codexTranscoder) renderCommand(eventType string, item codexItem) {
 	delete(t.running, item.ID)
 	t.event(Event{Kind: "tool_end", ItemID: item.ID, ToolName: "command_execution", Output: item.AggregatedOutput, Failed: item.ExitCode == nil || *item.ExitCode != 0})
 
-	status := "succeeded"
-	if item.ExitCode == nil || *item.ExitCode != 0 {
-		status = "failed"
-	}
-	elapsed := ""
+	var elapsed time.Duration
 	if ok {
-		elapsed = " in " + t.now().Sub(started).Truncate(10*time.Millisecond).String()
+		elapsed = t.now().Sub(started)
 	}
-	_, _ = fmt.Fprintf(t.out, " %s%s:\n%s\n", status, elapsed, strings.TrimRight(item.AggregatedOutput, "\n"))
+	t.toolEnded(item.ExitCode == nil || *item.ExitCode != 0, elapsed, ok, strings.TrimRight(item.AggregatedOutput, "\n"))
 }

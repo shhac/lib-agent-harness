@@ -18,6 +18,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // markerSink owns everything about turning a byte stream into marker blocks:
@@ -129,4 +130,45 @@ func (m *markerSink) event(e Event) {
 	if m.onEvent != nil {
 		m.onEvent(e)
 	}
+}
+
+// toolEnded writes the marker line that closes a tool call. timed is false
+// when the call's start was never seen, so no duration can be stated.
+func (m *markerSink) toolEnded(failed bool, elapsed time.Duration, timed bool, output string) {
+	status := "succeeded"
+	if failed {
+		status = "failed"
+	}
+	duration := ""
+	if timed {
+		duration = " in " + elapsed.Truncate(10*time.Millisecond).String()
+	}
+	_, _ = fmt.Fprintf(m.out, " %s%s:\n%s\n", status, duration, output)
+}
+
+// spendTrailer writes the per-invocation lines the UI renders as a run's token
+// count; a resumed run appends another. The cost line rides along so a live
+// log shows spend without waiting for the run to land in history; an engine
+// that reports no cost passes zero, so no misleading zero is printed.
+func (m *markerSink) spendTrailer(usage TokenUsage, sawUsage, usageKnown bool, costUSD float64, costKnown bool) {
+	switch {
+	case usageKnown:
+		_, _ = fmt.Fprintf(m.out, "tokens used\n%s\n", withThousands(usage.Total()))
+	case sawUsage:
+		_, _ = fmt.Fprintf(m.out, "usage incomplete; recorded tokens: %s\n", withThousands(usage.Total()))
+	default:
+		_, _ = fmt.Fprintln(m.out, "usage unavailable")
+	}
+	switch {
+	case costUSD <= 0:
+	case costKnown:
+		_, _ = fmt.Fprintf(m.out, "~ $%.4f at API rates\n", costUSD)
+	default:
+		_, _ = fmt.Fprintf(m.out, "~ $%.4f recorded at API rates; total unavailable\n", costUSD)
+	}
+}
+
+// jsonAbsent reports a missing value or an explicit JSON null.
+func jsonAbsent(raw json.RawMessage) bool {
+	return len(bytes.TrimSpace(raw)) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
 }
