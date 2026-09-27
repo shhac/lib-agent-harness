@@ -288,8 +288,26 @@ releasable.
    - **Grok:** `[skills] paths` in the config the library writes, or
      `--plugin-dir` for agent mode.
 
-   Constrained completion has no native tools to use skills with, so it
-   refuses them.
+   Where an engine has no native mechanism, the library composes skills
+   instead, so every engine and mode, including OpenAI-compatible endpoints,
+   can use them:
+   - **Constrained completion (every engine, including API gateways).** The
+     system context carries an index of the provided skills (name and
+     description from each `SKILL.md`). A reserved, read-only `load_skill`
+     tool lets the model request a skill's `SKILL.md` or one of its files.
+     Those calls return in `Result.SkillCalls`, apart from application tool
+     proposals. `completion.AnswerSkillCalls` produces the tool-result messages
+     from the provided directories, with paths contained and reads bounded, so
+     the caller's loop appends them like any other tool result. The library
+     never executes the caller's own tools.
+   - **Native runs and sessions without a native mechanism.** The skill index
+     and absolute paths go into the appended instructions, and the agent reads
+     them with its own read tools. A restricted session has no native read
+     tools, so the library hosts the same read-only skill tool through its tool
+     channel.
+
+   `Support` reports `Skills` as `native` where the harness loads skills itself
+   and `composed` where the library does.
 
 A portable permission vocabulary for native runs is deliberately left out. It
 would need a mapping for each engine, with a proof that no mapping widens
