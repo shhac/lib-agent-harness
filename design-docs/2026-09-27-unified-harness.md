@@ -211,6 +211,20 @@ implement it. The untyped `errors.New` refusals in `session` options become
 capability errors. A caller
 classifies any library failure the same way, whichever mode produced it.
 
+## Status
+
+- **Increments 1–4:** shipped in v0.6.0. Discovery lives in its own `catalog`
+  package and account inspection in `account`. Features are keyed by
+  operation (`Complete`, `Run`, `Session`, `Models`, `Account`), not by mode.
+- **Increment 5:** shipped in v0.7.0 for Grok constrained completion (proven
+  tool-free, with a private runtime home sharing only the login) and ordinary
+  Grok sessions over ACP. Restricted and sandboxed Grok sessions remain
+  unsupported.
+- **Increment 7:** shipped in v0.7.0, with `MaxOutputTokens` for completion.
+- **Increment 6:** shipped in v0.8.0.
+- **Not yet:** streamed text deltas for API endpoints, composed compaction, and
+  the Responses dialect.
+
 ## Increments
 
 Each increment ships with its consumers updated, and each leaves the module
