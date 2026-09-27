@@ -252,9 +252,9 @@ func claudeSandboxSettings(o Options) string {
 		// to its working directory by default.
 		filesystem["denyWrite"] = []string{o.WorkDir}
 	}
-	if len(o.Sandbox.Read) > 0 {
-		filesystem["allowRead"] = o.Sandbox.Read
-		for _, dir := range o.Sandbox.Read {
+	if reads := append(slices.Clone(o.Sandbox.Read), sandboxSkillReads(o)...); len(reads) > 0 {
+		filesystem["allowRead"] = reads
+		for _, dir := range reads {
 			allow = append(allow, "Read(/"+dir+"/**)")
 		}
 	}
@@ -357,6 +357,9 @@ func prepareSandbox(ctx context.Context, o Options, lease *os.File) (*launch, er
 	l := &launch{extra: sandboxArgs(o)}
 	if o.Provider.Engine == harness.Codex {
 		if _, err := prepareRuntimeHome(o.Provider.CLI.Home, o.RuntimeHome); err != nil {
+			return refuse(err)
+		}
+		if err := syncRuntimeSkills(o); err != nil {
 			return refuse(err)
 		}
 	}

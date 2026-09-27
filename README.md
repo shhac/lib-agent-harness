@@ -124,6 +124,43 @@ beside the error, with an empty message. See [completion](completion/README.md)
 for the transport boundary, API restrictions, CLI compatibility probes, and
 scratch storage.
 
+## Skills
+
+Tools an application relies on often come with skills: a directory holding a
+`SKILL.md` and the files and scripts it references. Set `Skills` on
+`completion.Config`, `native.Config` or `session.Options`:
+
+```go
+skills := harness.Skills{Provided: []harness.Skill{
+    {Name: "release-notes", Dir: "/app/skills/release-notes", Scripts: true},
+}}
+```
+
+- `harness.Support(engine, op, harness.ProvidedSkills)` says whether the harness
+  loads them itself (`native`) or the library composes them (`composed`).
+  `Skills.Delivery = harness.SkillDeliveryComposed` forces composition, for
+  skills that should behave the same on every engine.
+- **Native:** Claude and Grok load provided skills through a private
+  `--plugin-dir`, and a sandboxed Codex session links them into its runtime
+  home. Their scripts run with the agent's own tools, inside its sandbox where
+  there is one.
+- **Composed, in runs and ordinary sessions:** an index with each `SKILL.md`'s
+  absolute path is added to the instructions, and the agent reads skills with
+  its own tools. `Skill.Scripts` is enforced only where the library hosts the
+  tools; here the agent runs scripts under its own permission policy.
+- **Composed, in completion (every engine, including OpenAI-compatible
+  gateways) and restricted sessions:** the library offers `load_skill` and, for
+  skills marked `Scripts`, `run_skill_script`. In completion those calls come
+  back in `Result.SkillCalls`, and `completion.AnswerSkillCalls` answers them.
+  A script runs only when the caller passes its call there, with no shell, a
+  contained process tree, a timeout, bounded output and a minimal environment,
+  or through the caller's own `Exec` hook. Restricted sessions host the same
+  tools beside the caller's and need `Options.SkillRun.WorkDir` for scripts.
+- **Global skills:** `GlobalSkillsInclude` keeps installed skills where the
+  mode already loads them. `GlobalSkillsExclude` is accepted only where the
+  mode loads none (restricted sessions and sandboxed Claude). Anything that
+  cannot be honoured is refused.
+
 ## Models
 
 ```go

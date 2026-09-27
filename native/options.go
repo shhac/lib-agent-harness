@@ -63,6 +63,9 @@ func validate(c Config, r Request) *RunError {
 	if managedFlagIn(engine, c.Args) {
 		return capabilityError(engine, CodeManagedFlagInArgs)
 	}
+	if _, _, err := planSkills(c); err != nil {
+		return err
+	}
 	return nil
 }
 

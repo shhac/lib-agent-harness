@@ -48,6 +48,9 @@ func prepareLaunch(ctx context.Context, o Options, lease *os.File) (*launch, err
 		if _, err = prepareRuntimeHome(o.Provider.CLI.Home, o.RuntimeHome); err != nil {
 			return fail(err)
 		}
+		if err = syncRuntimeSkills(o); err != nil {
+			return fail(err)
+		}
 		catalog, readErr := readCodexCatalog(ctx, o)
 		if readErr != nil {
 			return fail(readErr)
@@ -123,12 +126,13 @@ func commandArgs(o Options, nativeID string, resuming bool, l *launch) []string 
 	if o.Policy.ClaudeTools != nil {
 		args = append(args, "--tools="+strings.Join(o.Policy.ClaudeTools, ","))
 	}
-	if o.Instructions.Mode != "" {
+	args = append(args, claudeSkillArgs(o)...)
+	if instructions := effectiveInstructions(o); instructions.Mode != "" {
 		flag := "--system-prompt"
-		if o.Instructions.Mode == Append {
+		if instructions.Mode == Append {
 			flag = "--append-system-prompt"
 		}
-		args = append(args, flag, o.Instructions.Text)
+		args = append(args, flag, instructions.Text)
 	}
 	return args
 }
@@ -144,6 +148,9 @@ func grokArgs(o Options) []string {
 	}
 	if o.Effort != "" {
 		args = append(args, "--reasoning-effort="+o.Effort)
+	}
+	if o.skills != nil && o.skills.delivery == nativeSkills {
+		args = append(args, "--plugin-dir="+o.skills.pluginDir)
 	}
 	return append(args, "stdio")
 }
@@ -176,7 +183,7 @@ func verificationKey(o Options, l *launch) (string, error) {
 		Args, Tools           []string
 		Instructions          Instructions
 		Policy                Policy
-	}{o.Provider.Engine, binary, o.Model, o.Effort, info.Size(), info.ModTime(), stable, o.Restriction.Tools.Qualified(), o.Instructions, o.Policy})
+	}{o.Provider.Engine, binary, o.Model, o.Effort, info.Size(), info.ModTime(), stable, o.Restriction.Tools.Qualified(), effectiveInstructions(o), o.Policy})
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:]), nil
 }

@@ -33,9 +33,24 @@ var reportRoots = func() []string {
 }
 
 func newCodexReport(workDir, schema string) (*codexReport, error) {
-	workspace, err := resolvedWorkDir(workDir)
+	dir, err := privateDir(workDir, "codex-")
 	if err != nil {
 		return nil, err
+	}
+	report := &codexReport{dir: dir, schema: filepath.Join(dir, "schema.json"), output: filepath.Join(dir, "report.json")}
+	if err := os.WriteFile(report.schema, []byte(schema), 0o600); err != nil {
+		report.remove()
+		return nil, err
+	}
+	return report, nil
+}
+
+// privateDir makes a directory for one invocation under the first usable
+// report root outside the working directory.
+func privateDir(workDir, prefix string) (string, error) {
+	workspace, err := resolvedWorkDir(workDir)
+	if err != nil {
+		return "", err
 	}
 	var lastErr error = os.ErrNotExist
 	for _, root := range reportRoots() {
@@ -46,20 +61,14 @@ func newCodexReport(workDir, schema string) (*codexReport, error) {
 			lastErr = err
 			continue
 		}
-		dir, err := os.MkdirTemp(root, "codex-")
+		dir, err := os.MkdirTemp(root, prefix)
 		if err != nil {
 			lastErr = err
 			continue
 		}
-		report := &codexReport{dir: dir, schema: filepath.Join(dir, "schema.json"), output: filepath.Join(dir, "report.json")}
-		if err := os.WriteFile(report.schema, []byte(schema), 0o600); err != nil {
-			report.remove()
-			lastErr = err
-			continue
-		}
-		return report, nil
+		return dir, nil
 	}
-	return nil, lastErr
+	return "", lastErr
 }
 
 func (r *codexReport) remove() {

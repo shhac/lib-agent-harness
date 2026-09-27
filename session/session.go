@@ -45,6 +45,9 @@ type Session struct {
 	// with and the context window its model state states for it, 0 if none.
 	grokModel    string
 	grokCapacity int64
+	// removeSkillFiles removes the private plugin this launch wrote, once
+	// the session is over.
+	removeSkillFiles func()
 }
 
 func (s *Session) lockOp(ctx context.Context) error {
@@ -101,7 +104,14 @@ func open(ctx context.Context, o Options, r *Ref, lease *os.File) (*Session, err
 	if err != nil {
 		return nil, err
 	}
-	s := &Session{options: o, ref: reference(o, ""), caps: CapabilitiesFor(o.Provider.Engine), lifetime: ctx, done: make(chan struct{}), opGate: make(chan struct{}, 1)}
+	removeSkillFiles, err := prepareSkillFiles(o)
+	if err != nil {
+		if l != nil && l.host != nil {
+			l.host.close()
+		}
+		return nil, err
+	}
+	s := &Session{options: o, ref: reference(o, ""), caps: CapabilitiesFor(o.Provider.Engine), lifetime: ctx, done: make(chan struct{}), opGate: make(chan struct{}, 1), removeSkillFiles: removeSkillFiles}
 	if l != nil && l.host != nil {
 		s.tools = l.host
 		l.host.onRefusal = s.toolRefused
@@ -128,6 +138,7 @@ func open(ctx context.Context, o Options, r *Ref, lease *os.File) (*Session, err
 	if l != nil && l.host != nil {
 		if err = recordLaunch(l.host.cfg.Dir, launchRecord{Engine: string(o.Provider.Engine), Launch: l.host.socketDir, Started: time.Now().UTC()}); err != nil {
 			s.releaseTools()
+			s.removeSkillFiles()
 			return nil, err
 		}
 		identified := make(chan error, 1)
@@ -150,6 +161,7 @@ func open(ctx context.Context, o Options, r *Ref, lease *os.File) (*Session, err
 	if err != nil {
 		s.settleFailedLaunch(l)
 		s.releaseTools()
+		s.removeSkillFiles()
 		return nil, err
 	}
 	// Nothing is asked of this session until its identity is durably recorded.
@@ -480,5 +492,8 @@ func (s *Session) failTurn(expected *Turn, err error) {
 	}
 	if host != nil {
 		host.close()
+	}
+	if s.removeSkillFiles != nil {
+		s.removeSkillFiles()
 	}
 }

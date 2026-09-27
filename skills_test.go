@@ -33,9 +33,9 @@ func TestCompletionComposesSkillsAndNeverIncludesInstalledOnes(t *testing.T) {
 			t.Errorf("%s: %+v", e, c)
 		}
 	}
-	for _, op := range []Operation{Run, Session, Models, Account} {
+	for _, op := range []Operation{Models, Account} {
 		if Support(Codex, op, ProvidedSkills).Usable() {
-			t.Errorf("%s claims skills before any delivery exists", op)
+			t.Errorf("%s has no agent to use skills", op)
 		}
 	}
 }

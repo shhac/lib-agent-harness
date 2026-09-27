@@ -141,6 +141,19 @@ type Options struct {
 	// Sandbox.Write is set. It is proved before a credentialed launch. A session is either
 	// restricted or sandboxed, never both. Nil keeps the ordinary contract.
 	Sandbox *Sandbox
+	// Skills are made available to the session, and installed skills kept or
+	// excluded, as skills.go describes for each engine and mode: natively
+	// where the harness loads them itself, and otherwise composed by the
+	// library. A request the mode cannot honour is refused. A skill request
+	// is part of a Ref; a session without one keeps its existing digest.
+	Skills harness.Skills
+	// SkillRun says how a restricted session's hosted run_skill_script runs a
+	// permitting skill's scripts. It is required when such a skill is
+	// provided to a restricted session, and refused anywhere else. It is not
+	// part of a Ref.
+	SkillRun SkillRunOptions
+	// skills is the planned delivery, set by normalize.
+	skills *skillPlan
 	// Env adds KEY=VALUE entries to the session's environment, after the
 	// harness has removed provider credentials and overrides. It is for
 	// ordinary settings such as a build cache inside the workspace; keys the

@@ -60,11 +60,20 @@ var runErrorText = map[string]string{
 	CodeNoResponse:           "harness ended without a response",
 	CodeMalformedReport:      "harness returned a malformed report",
 	CodeProcessFailed:        "harness execution failed",
+
+	CodeGlobalSkillsInvalid:     "Skills.Global is not a known value",
+	CodeSkillDeliveryInvalid:    "Skills.Delivery is not a known value",
+	CodeGlobalSkillsUnsupported: "this engine cannot honour the installed-skills request for a native run",
+	CodeSkillsConflict:          "Args remove the skills this run was asked to make available",
+	CodeSkillsUnavailable:       "no private directory outside the workspace is available for the provided skills",
 }
 
 func (e *RunError) Error() string {
 	text, ok := runErrorText[e.Code]
-	if !ok {
+	switch {
+	case !ok && e.Family == harness.FailurePreflight:
+		text = "a provided skill was refused: " + e.Code
+	case !ok:
 		text = "provider configuration refused: " + e.Code
 	}
 	if e.ExitCode != nil && *e.ExitCode >= 0 {

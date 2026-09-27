@@ -37,6 +37,11 @@ type Config struct {
 	Codex    CodexOptions
 	Claude   ClaudeOptions
 	Grok     GrokOptions
+	// Skills are made available for this run (see skills.go): natively by a
+	// private plugin for Claude, and as an index in the appended instructions
+	// for Codex and Grok, or for every engine with SkillDeliveryComposed.
+	// Excluding installed skills is refused.
+	Skills harness.Skills
 	// Args is a trusted escape hatch for flags the library does not model. It
 	// must not come from untrusted model output, and a flag the library manages
 	// is refused rather than allowed to override the typed options.
@@ -312,6 +317,15 @@ func Run(ctx context.Context, c Config, r Request, stream *Stream) (Result, erro
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
+	delivery, loaded, planErr := planSkills(c)
+	if planErr != nil {
+		return Result{}, planErr
+	}
+	c, r, removeSkills, err := applySkills(c, r, delivery, loaded)
+	if err != nil {
+		return Result{}, err
+	}
+	defer removeSkills()
 	if stream == nil {
 		stream, _ = NewStream(engine, nil, StreamOptions{Structured: structured})
 	}

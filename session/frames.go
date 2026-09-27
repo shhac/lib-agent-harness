@@ -32,11 +32,11 @@ func codexThreadParams(o Options, cwd string, resume bool, id string) map[string
 	if o.Model != "" {
 		p["model"] = o.Model
 	}
-	switch o.Instructions.Mode {
+	switch instructions := effectiveInstructions(o); instructions.Mode {
 	case Replace:
-		p["baseInstructions"] = o.Instructions.Text
+		p["baseInstructions"] = instructions.Text
 	case Append:
-		p["developerInstructions"] = o.Instructions.Text
+		p["developerInstructions"] = instructions.Text
 	}
 	if resume {
 		p["threadId"] = id

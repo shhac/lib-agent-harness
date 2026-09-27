@@ -47,11 +47,11 @@ func grokInitializeParams() map[string]any {
 // operator's own configuration is Grok's to load.
 func grokSessionParams(o Options, resume bool, id string) map[string]any {
 	p := map[string]any{"cwd": o.WorkDir, "mcpServers": []any{}}
-	switch o.Instructions.Mode {
+	switch instructions := effectiveInstructions(o); instructions.Mode {
 	case Append:
-		p["_meta"] = map[string]any{"rules": o.Instructions.Text}
+		p["_meta"] = map[string]any{"rules": instructions.Text}
 	case Replace:
-		p["_meta"] = map[string]any{"systemPromptOverride": o.Instructions.Text}
+		p["_meta"] = map[string]any{"systemPromptOverride": instructions.Text}
 	}
 	if resume {
 		p["sessionId"] = id

@@ -54,7 +54,7 @@ func normalize(o Options) (Options, error) {
 			return o, err
 		}
 	}
-	return o, nil
+	return normalizeSkills(o)
 }
 
 // supported refuses an engine the library offers no session for, and a
@@ -290,6 +290,15 @@ func reference(o Options, id string) Ref {
 			ToolServer  string   `json:",omitempty"`
 			RuntimeHome string
 		}{legacy, true, o.Sandbox.Write, o.Sandbox.Read, o.Sandbox.Web, sandboxToolServer(o.Sandbox), o.RuntimeHome})
+	}
+	if skills := skillsDigest(o); skills != nil {
+		// A skill request changes what the agent can do, so a resume must
+		// carry the same one. Wrapped rather than merged, so a session without
+		// one keeps exactly the digest it always had.
+		payload, _ = json.Marshal(struct {
+			Base   json.RawMessage
+			Skills any
+		}{payload, skills})
 	}
 	hash := sha256.Sum256(payload)
 	return Ref{Engine: o.Provider.Engine, ID: id, Home: o.Provider.CLI.Home, WorkDir: o.WorkDir, AccountIdentity: o.AccountIdentity, ConfigHash: hex.EncodeToString(hash[:])}

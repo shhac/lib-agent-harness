@@ -159,3 +159,24 @@ func TestErrorFactsUnwraps(t *testing.T) {
 		t.Fatal("an unclassified error has facts")
 	}
 }
+
+// Every CLI engine accepts caller-provided skills in every operation that has
+// an agent or a model, natively or composed; the modes implement exactly this.
+func TestProvidedSkillsAreOfferedWhereverThereIsAnAgent(t *testing.T) {
+	for _, e := range []Engine{Codex, Claude, Grok} {
+		for _, op := range []Operation{Complete, Run, Session} {
+			if !Support(e, op, Available).Usable() {
+				continue
+			}
+			if c := Support(e, op, ProvidedSkills); !c.Usable() || c.Reason == "" && c.Availability != Native {
+				t.Errorf("%s %s skills: %+v", e, op, c)
+			}
+		}
+	}
+	if Support(OpenAICompatible, Complete, ProvidedSkills).Availability != Composed {
+		t.Error("API endpoints compose skills")
+	}
+	if Support(Claude, Complete, IncludeGlobalSkills).Usable() {
+		t.Error("constrained completion never loads installed skills")
+	}
+}
