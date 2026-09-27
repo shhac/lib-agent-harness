@@ -7,9 +7,7 @@ import (
 	"errors"
 	"io"
 	"mime"
-	"net"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -19,24 +17,6 @@ import (
 // dialect instead of an installed CLI. The caller's API configuration is used;
 // no native login or ambient API key is.
 const EngineOpenAICompatible = "openai-compatible"
-
-// APIDialect names a wire protocol. There is no default: an endpoint being
-// "OpenAI-compatible" does not say which protocol it speaks.
-type APIDialect string
-
-const OpenAIChatCompletions APIDialect = "openai-chat-completions"
-
-// CredentialSource returns one bearer token for one request. It is a function
-// so that printing a Config cannot print a token. Its error is never retained.
-type CredentialSource func(context.Context) (string, error)
-
-type APIConfig struct {
-	// BaseURL is absolute https, or http to a loopback host, with no user
-	// information, query or fragment. The dialect appends its own path.
-	BaseURL     string
-	Dialect     APIDialect
-	Credentials CredentialSource
-}
 
 const (
 	apiResponseLimit   = 2 << 20
@@ -60,7 +40,7 @@ func openAIComplete(ctx context.Context, cfg Config, messages []Message, tools [
 	if err != nil {
 		return Message{}, Usage{}, err
 	}
-	body, err := chatRequestBody(cfg.Model, messages, tools)
+	body, err := chatRequestBody(cfg, messages, tools)
 	if err != nil {
 		return Message{}, Usage{}, err
 	}
@@ -77,7 +57,7 @@ func openAIComplete(ctx context.Context, cfg Config, messages []Message, tools [
 	}
 	ctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
 	defer cancel()
-	token, err := apiCredential(ctx, cfg.API.Credentials)
+	token, err := requestCredential(ctx, cfg.API)
 	if err != nil {
 		return Message{}, Usage{}, err
 	}
@@ -85,7 +65,9 @@ func openAIComplete(ctx context.Context, cfg Config, messages []Message, tools [
 	if err != nil {
 		return Message{}, Usage{}, preflightFailure(EngineOpenAICompatible, "api_base_url_invalid")
 	}
-	request.Header.Set("Authorization", "Bearer "+token)
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("User-Agent", "lib-agent-harness")
@@ -108,7 +90,7 @@ func openAIComplete(ctx context.Context, cfg Config, messages []Message, tools [
 		return Message{}, Usage{}, apiResponseFailure("output_limit")
 	}
 	// A reflecting endpoint would otherwise put the credential in a transcript.
-	if bytes.Contains(data, []byte(token)) {
+	if echoes(string(data), token) {
 		return Message{}, chatUsage(data), apiResponseFailure("credential_echoed")
 	}
 	result, usage, err := parseChatCompletion(data, tools)
@@ -121,54 +103,13 @@ func openAIComplete(ctx context.Context, cfg Config, messages []Message, tools [
 	return result, usage, nil
 }
 
-func validateAPIConfig(cfg Config) (string, error) {
-	switch cfg.API.Dialect {
-	case OpenAIChatCompletions:
-	case "":
-		return "", preflightFailure(EngineOpenAICompatible, "api_dialect_required")
-	default:
-		return "", preflightFailure(EngineOpenAICompatible, "api_dialect_unsupported")
+// requestCredential resolves the request's bearer token; an unauthenticated
+// request has none.
+func requestCredential(ctx context.Context, api APIConfig) (string, error) {
+	if api.Unauthenticated {
+		return "", nil
 	}
-	endpoint, err := chatCompletionsURL(cfg.API.BaseURL)
-	if err != nil {
-		return "", err
-	}
-	if cfg.API.Credentials == nil {
-		return "", preflightFailure(EngineOpenAICompatible, "api_credentials_required")
-	}
-	if cfg.Effort != "" {
-		return "", preflightFailure(EngineOpenAICompatible, "api_effort_unsupported")
-	}
-	return endpoint, nil
-}
-
-func chatCompletionsURL(base string) (string, error) {
-	invalid := preflightFailure(EngineOpenAICompatible, "api_base_url_invalid")
-	if strings.ContainsAny(base, "?#") {
-		return "", invalid
-	}
-	u, err := url.Parse(base)
-	if err != nil || !u.IsAbs() || u.Opaque != "" || u.Host == "" || u.User != nil {
-		return "", invalid
-	}
-	switch u.Scheme {
-	case "https":
-	case "http":
-		if !loopbackHost(u.Hostname()) {
-			return "", preflightFailure(EngineOpenAICompatible, "api_base_url_insecure")
-		}
-	default:
-		return "", invalid
-	}
-	return u.JoinPath("chat", "completions").String(), nil
-}
-
-func loopbackHost(host string) bool {
-	if host == "localhost" {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	return apiCredential(ctx, api.Credentials)
 }
 
 // apiCredential never retains the source's error: it may describe the
@@ -217,92 +158,6 @@ func apiResponseFailure(code string) *RequestError {
 func jsonMediaType(value string) bool {
 	mediaType, _, err := mime.ParseMediaType(value)
 	return err == nil && mediaType == "application/json"
-}
-
-type chatRequest struct {
-	Model    string        `json:"model"`
-	Messages []chatMessage `json:"messages"`
-	Tools    []chatTool    `json:"tools,omitempty"`
-	Stream   bool          `json:"stream"`
-}
-
-type chatMessage struct {
-	Role string `json:"role"`
-	// Content is null only for an assistant message that carries tool calls.
-	Content    *string    `json:"content"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
-}
-
-type chatTool struct {
-	Type     string       `json:"type"`
-	Function chatFunction `json:"function"`
-}
-
-type chatFunction struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description,omitempty"`
-	Parameters  map[string]any `json:"parameters,omitempty"`
-	Strict      bool           `json:"strict,omitempty"`
-}
-
-func chatRequestBody(model string, messages []Message, tools []Tool) ([]byte, error) {
-	if _, err := toolCatalog(tools); err != nil {
-		return nil, preflightFailure(EngineOpenAICompatible, "invalid_tool_catalog")
-	}
-	wire, ok := chatMessages(messages)
-	if !ok {
-		return nil, preflightFailure(EngineOpenAICompatible, "invalid_messages")
-	}
-	request := chatRequest{Model: model, Messages: wire}
-	for _, tool := range tools {
-		request.Tools = append(request.Tools, chatTool{Type: "function", Function: chatFunction{
-			Name: tool.Function.Name, Description: tool.Function.Description, Parameters: tool.Function.Parameters, Strict: tool.Function.Strict,
-		}})
-	}
-	body, err := json.Marshal(request)
-	if err != nil {
-		return nil, preflightFailure(EngineOpenAICompatible, "invalid_tool_catalog")
-	}
-	return body, nil
-}
-
-func chatMessages(messages []Message) ([]chatMessage, bool) {
-	if len(messages) == 0 {
-		return nil, false
-	}
-	wire := make([]chatMessage, 0, len(messages))
-	for _, message := range messages {
-		content := message.Content
-		out := chatMessage{Role: message.Role, Content: &content, ToolCallID: message.ToolCallID}
-		switch message.Role {
-		case "system", "user":
-			if len(message.ToolCalls) > 0 || message.ToolCallID != "" {
-				return nil, false
-			}
-		case "tool":
-			if len(message.ToolCalls) > 0 || message.ToolCallID == "" {
-				return nil, false
-			}
-		case "assistant":
-			if message.ToolCallID != "" {
-				return nil, false
-			}
-			for _, call := range message.ToolCalls {
-				if call.Type != "function" || call.ID == "" || call.Function.Name == "" {
-					return nil, false
-				}
-			}
-			out.ToolCalls = message.ToolCalls
-			if len(message.ToolCalls) > 0 && content == "" {
-				out.Content = nil
-			}
-		default:
-			return nil, false
-		}
-		wire = append(wire, out)
-	}
-	return wire, true
 }
 
 // apiStatusFailure consults only the status, an allowlisted error code and a
@@ -379,119 +234,20 @@ func retryAfter(value string) time.Duration {
 	return delay
 }
 
-type chatCompletionResponse struct {
-	Choices []struct {
-		FinishReason *string `json:"finish_reason"`
-		Message      *struct {
-			Role      string          `json:"role"`
-			Content   json.RawMessage `json:"content"`
-			Refusal   *string         `json:"refusal"`
-			ToolCalls []struct {
-				ID       string `json:"id"`
-				Type     string `json:"type"`
-				Function *struct {
-					Name      string `json:"name"`
-					Arguments string `json:"arguments"`
-				} `json:"function"`
-			} `json:"tool_calls"`
-		} `json:"message"`
-	} `json:"choices"`
-	Usage json.RawMessage `json:"usage"`
-}
-
-// parseChatCompletion accepts only an unambiguous terminal response. Anything
-// else returns no reply, alongside the usage the response reported.
-func parseChatCompletion(data []byte, tools []Tool) (Message, Usage, error) {
-	usage := chatUsage(data)
-	var response chatCompletionResponse
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	if decoder.Decode(&response) != nil || decoder.Decode(new(any)) != io.EOF {
-		return Message{}, usage, apiResponseFailure("malformed_response")
-	}
-	if len(response.Choices) != 1 {
-		return Message{}, usage, apiResponseFailure("unexpected_choice_count")
-	}
-	choice := response.Choices[0]
-	message := choice.Message
-	if message == nil || (message.Role != "" && message.Role != "assistant") {
-		return Message{}, usage, apiResponseFailure("malformed_response")
-	}
-	if message.Refusal != nil && *message.Refusal != "" {
-		return Message{}, usage, apiResponseFailure("model_refusal")
-	}
-	result := Message{Role: "assistant"}
-	if len(message.Content) > 0 && string(message.Content) != "null" && json.Unmarshal(message.Content, &result.Content) != nil {
-		return Message{}, usage, apiResponseFailure("malformed_response")
-	}
-	if code := finishFailure(choice.FinishReason, len(message.ToolCalls)); code != "" {
-		return Message{}, usage, apiResponseFailure(code)
-	}
-	if len(message.ToolCalls) > maxToolProposals {
-		return Message{}, usage, apiResponseFailure("invalid_tool_call")
-	}
-	allowed, _ := toolCatalog(tools)
-	seen := map[string]bool{}
-	for _, call := range message.ToolCalls {
-		if call.Type != "function" || call.Function == nil || call.ID == "" || len(call.ID) > apiToolCallIDLimit || seen[call.ID] || !allowed[call.Function.Name] || !jsonObject(call.Function.Arguments) {
-			return Message{}, usage, apiResponseFailure("invalid_tool_call")
-		}
-		seen[call.ID] = true
-		proposal := ToolCall{ID: call.ID, Type: "function"}
-		proposal.Function.Name = call.Function.Name
-		proposal.Function.Arguments = call.Function.Arguments
-		result.ToolCalls = append(result.ToolCalls, proposal)
-	}
-	return result, usage, nil
-}
-
-func finishFailure(reason *string, calls int) string {
-	if reason == nil {
-		return "ambiguous_terminal_state"
-	}
-	switch {
-	case *reason == "stop" && calls == 0, *reason == "tool_calls" && calls > 0:
-		return ""
-	case *reason == "length":
-		return "output_truncated"
-	case *reason == "content_filter":
-		return "content_filtered"
-	}
-	return "ambiguous_terminal_state"
-}
-
-func jsonObject(arguments string) bool {
-	var object map[string]json.RawMessage
-	return json.Unmarshal([]byte(arguments), &object) == nil && object != nil
-}
-
-// chatUsage applies the CLI adapters' rule: a report counts only when complete
-// and consistent. prompt_tokens already includes cached input.
-func chatUsage(data []byte) Usage {
-	var response struct {
-		Usage *struct {
-			Prompt     *int `json:"prompt_tokens"`
-			Completion *int `json:"completion_tokens"`
-			Total      *int `json:"total_tokens"`
-		} `json:"usage"`
-	}
-	if json.Unmarshal(data, &response) != nil || response.Usage == nil {
-		return Usage{}
-	}
-	usage, ok := normalizedUsage(response.Usage.Prompt, response.Usage.Completion, nil, nil)
-	if !ok || (response.Usage.Total != nil && *response.Usage.Total != usage.TotalTokens) {
-		return Usage{}
-	}
-	return usage
-}
-
 func messageContains(message Message, token string) bool {
-	if strings.Contains(message.Content, token) {
+	if echoes(message.Content, token) {
 		return true
 	}
 	for _, call := range message.ToolCalls {
-		if strings.Contains(call.ID+call.Function.Name+call.Function.Arguments, token) {
+		if echoes(call.ID+call.Function.Name+call.Function.Arguments, token) {
 			return true
 		}
 	}
 	return false
+}
+
+// echoes reports whether text carries the request's credential. An
+// unauthenticated request has none, and every text contains "".
+func echoes(text, token string) bool {
+	return token != "" && strings.Contains(text, token)
 }

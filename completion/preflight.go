@@ -34,7 +34,7 @@ func (e *RequestError) diagnosticDetail() string {
 		}
 		return "Codex executable not found; install Codex and run codex login"
 	case "unsupported_engine":
-		return "unsupported CLI harness"
+		return "unsupported engine; use codex, claude or openai-compatible"
 	case "model_required":
 		return "model is required"
 	case "invalid_limits":
@@ -119,9 +119,17 @@ func (e *RequestError) diagnosticDetail() string {
 	case "api_base_url_insecure":
 		return "API base URL must use https unless it names a loopback host"
 	case "api_credentials_required":
-		return "API credential source is required; ambient API keys are never read"
-	case "api_effort_unsupported":
-		return "reasoning effort is not supported for API transports yet; leave Effort empty"
+		return "API credential source is required; ambient API keys are never read (set Unauthenticated only for a local server that takes no credential)"
+	case "api_credentials_conflict":
+		return "API config sets both a credential source and Unauthenticated; choose one"
+	case "api_unauthenticated_remote":
+		return "Unauthenticated is allowed only for a loopback API base URL"
+	case "api_effort_parameter_required":
+		return "reasoning effort needs APIConfig.EffortParameter: EffortReasoningEffort (OpenAI, xAI) or EffortReasoningObject (Vercel AI Gateway, OpenRouter)"
+	case "api_effort_parameter_unsupported":
+		return "unsupported APIConfig.EffortParameter; use EffortReasoningEffort or EffortReasoningObject"
+	case "api_effort_invalid":
+		return "reasoning effort must be a short lowercase level such as low, medium or high"
 	case "invalid_messages":
 		return "invalid conversation; use system, user, assistant and tool roles, with tool call IDs only where the role allows them"
 	case "credential_unavailable":
