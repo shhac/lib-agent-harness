@@ -24,7 +24,7 @@ func (p GrokTelemetryPolicy) valid() bool {
 }
 
 // These documented process overrides opt out of client telemetry and prevent
-// ambient Cursor/Claude compatibility scanners from importing other harnesses'
+// ambient Cursor/Claude/Codex compatibility scanners from importing other harnesses'
 // local configuration (including their MCP servers) into this Grok run. They
 // are intentionally opt-in. External OpenTelemetry (GROK_EXTERNAL_OTEL) is left
 // alone: it reports to the operator's own collector, not to xAI.
@@ -45,6 +45,14 @@ var grokReducedTelemetryEnvironment = []string{
 	"GROK_CLAUDE_AGENTS_ENABLED=0",
 	"GROK_CLAUDE_MCPS_ENABLED=0",
 	"GROK_CLAUDE_HOOKS_ENABLED=0",
+	"GROK_CLAUDE_SESSIONS_ENABLED=0",
+	"GROK_CURSOR_SESSIONS_ENABLED=0",
+	"GROK_CODEX_SKILLS_ENABLED=0",
+	"GROK_CODEX_RULES_ENABLED=0",
+	"GROK_CODEX_AGENTS_ENABLED=0",
+	"GROK_CODEX_MCPS_ENABLED=0",
+	"GROK_CODEX_HOOKS_ENABLED=0",
+	"GROK_CODEX_SESSIONS_ENABLED=0",
 }
 
 // withGrokReducedTelemetry overlays the reduced policy onto env; nil means
