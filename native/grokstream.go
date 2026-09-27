@@ -1,15 +1,17 @@
 package native
 
-// Grok's `--output-format streaming-json` is an NDJSON view of its ACP
-// session updates. Current builds have also emitted the update object directly,
-// so the reader accepts both representations. The terminal `end` update is the
-// only successful terminal marker; streamed prose is never itself a result.
+// Grok's `--output-format streaming-json` is NDJSON, one `type`-tagged object
+// per line, derived from its ACP session updates (verified against grok
+// 1.0.41: available_commands, thought, text, tool_call, tool_call_update,
+// usage, end). ACP `session/update` envelopes are unwrapped too, since the
+// leaf shapes are the same. The terminal `end` event is the only successful
+// terminal marker; streamed prose is never itself a result.
 
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
+	"math"
 	"strings"
 	"time"
 )
@@ -29,64 +31,75 @@ type grokWireEvent struct {
 	RawInput      json.RawMessage `json:"rawInput"`
 	RawOutput     json.RawMessage `json:"rawOutput"`
 	Output        json.RawMessage `json:"output"`
-	Usage         json.RawMessage `json:"usage"`
 	StopReason    string          `json:"stopReason"`
 	Message       string          `json:"message"`
 	Error         json.RawMessage `json:"error"`
+
+	// Spend fields, on `end` (and on `error` when usage was recorded).
+	Usage            *grokUsage      `json:"usage"`
+	UsageIncomplete  bool            `json:"usage_is_incomplete"`
+	TotalCostUSD     *float64        `json:"total_cost_usd"`
+	TotalCostTicks   *int64          `json:"total_cost_usd_ticks"`
+	CostPartial      bool            `json:"cost_is_partial"`
+	StructuredOutput json.RawMessage `json:"structuredOutput"`
 }
 
-// grokUsage is deliberately a union of the snake-case headless and camel-case
-// ACP spellings. The raw record is retained because Grok's resumed-session
-// accounting scope is not yet documented.
+// grokUsage is the headless spend projection. Its input_tokens is uncached
+// input only, as TokenUsage.Input requires; ACP's camel-case inputTokens is the
+// full prompt and is deliberately not read.
 type grokUsage struct {
-	Input           *int `json:"input_tokens"`
-	InputCamel      *int `json:"inputTokens"`
-	Output          *int `json:"output_tokens"`
-	OutputCamel     *int `json:"outputTokens"`
-	CacheRead       *int `json:"cache_read_input_tokens"`
-	CacheReadCamel  *int `json:"cacheReadInputTokens"`
-	CacheWrite      *int `json:"cache_creation_input_tokens"`
-	CacheWriteCamel *int `json:"cacheCreationInputTokens"`
-	Reasoning       *int `json:"reasoning_tokens"`
-	ReasoningCamel  *int `json:"reasoningTokens"`
+	Input      int `json:"input_tokens"`
+	Output     int `json:"output_tokens"`
+	CacheRead  int `json:"cache_read_input_tokens"`
+	CacheWrite int `json:"cache_creation_input_tokens"`
+	Reasoning  int `json:"reasoning_tokens"`
 }
 
-func (u grokUsage) tokenUsage() TokenUsage {
-	return TokenUsage{
-		Input:      grokUsageValue(u.Input, u.InputCamel),
-		Output:     grokUsageValue(u.Output, u.OutputCamel),
-		CacheRead:  grokUsageValue(u.CacheRead, u.CacheReadCamel),
-		CacheWrite: grokUsageValue(u.CacheWrite, u.CacheWriteCamel),
-		Reasoning:  grokUsageValue(u.Reasoning, u.ReasoningCamel),
-	}
-}
-
-func grokUsageValue(first, second *int) int {
-	if first != nil {
-		return *first
-	}
-	if second != nil {
-		return *second
-	}
-	return 0
+// addGrokUsage folds one invocation into the session total. Grok's headless
+// usage covers the prompt just run, not the session, so a resumed run adds to
+// it exactly as Claude's does.
+func addGrokUsage(acc TokenUsage, u grokUsage) TokenUsage {
+	acc.Input += u.Input
+	acc.Output += u.Output
+	acc.CacheRead += u.CacheRead
+	acc.CacheWrite += u.CacheWrite
+	acc.Reasoning += u.Reasoning
+	return acc
 }
 
 type grokTranscoder struct {
 	markerSink
 
-	structured bool
-	completed  bool
-	sawUsage   bool
-	sessionID  string
-	turns      int
-	usage      TokenUsage
-	rawUsage   []json.RawMessage
-	report     json.RawMessage
-	failure    string
-	text       strings.Builder
+	structured      bool
+	completed       bool
+	sawUsage        bool
+	sawCost         bool
+	usageIncomplete bool
+	costIncomplete  bool
+	sessionID       string
+	usage           TokenUsage // summed across every invocation
+	costTicks       int64      // exact integer cost, 1 USD = 10^10 ticks
+	rawUsage        []json.RawMessage
+	report          json.RawMessage
+	failure         string
+	// text is the prose of the model response in progress. A per-response
+	// `usage` line closes it into lastResponse, so narration before a tool call
+	// is never the report, and a final response without prose leaves none.
+	text         strings.Builder
+	lastResponse string
+	// errorSpend is spend an `error` event carried. It counts only if `end`
+	// reports none, since `end` would otherwise report the same spend again.
+	errorSpend *grokSpend
 	running    map[string]time.Time
 	now        func() time.Time
 }
+
+type grokSpend struct {
+	ev   grokWireEvent
+	line []byte
+}
+
+const grokCostTicksPerUSD = 1e10
 
 func newGrokTranscoder(out io.Writer) *grokTranscoder {
 	return &grokTranscoder{markerSink: markerSink{out: out}, running: map[string]time.Time{}, now: time.Now}
@@ -94,33 +107,47 @@ func newGrokTranscoder(out io.Writer) *grokTranscoder {
 
 func (t *grokTranscoder) Write(p []byte) (int, error) { return t.writeLines(p, t.consume) }
 
+// beginTurn clears the previous report and failure. Usage and cost flags
+// survive, as for Claude: they describe the summed session, not this turn.
 func (t *grokTranscoder) beginTurn(prompt string) {
 	t.completed = false
-	t.sawUsage = false
 	t.report = nil
 	t.failure = ""
 	t.text.Reset()
+	t.lastResponse = ""
+	t.errorSpend = nil
 	t.userPrompt(prompt)
 }
 
 func (t *grokTranscoder) reachedTerminal() bool { return t.completed }
 
 func (t *grokTranscoder) snapshot() Result {
-	// Grok documents per-event usage but not whether a resumed invocation is a
-	// session total. A first completed invocation is unambiguous; afterwards we
-	// retain the latest observation and raw records without claiming a total.
-	known := t.completed && t.sawUsage && t.turns == 1
 	return Result{
 		SessionID:  t.sessionID,
 		Report:     append(json.RawMessage(nil), t.report...),
 		Usage:      t.usage,
+		CostUSD:    float64(t.costTicks) / grokCostTicksPerUSD,
 		RawUsage:   joinRawUsage(t.rawUsage),
-		UsageKnown: known,
+		UsageKnown: t.completed && t.sawUsage && !t.usageIncomplete,
+		CostKnown:  t.completed && t.sawCost && !t.costIncomplete,
 		Failure:    t.failure,
 	}
 }
 
-func (t *grokTranscoder) Close() { t.flushPartial(t.consume) }
+// Close flushes a trailing line. An invocation that never reached `end` has
+// unaccounted spend no later invocation can repair.
+func (t *grokTranscoder) Close() {
+	t.flushPartial(t.consume)
+	if t.completed {
+		return
+	}
+	if t.errorSpend != nil {
+		t.recordSpend(*t.errorSpend)
+		t.errorSpend = nil
+	}
+	t.usageIncomplete = true
+	t.costIncomplete = true
+}
 
 func (t *grokTranscoder) consume(line []byte) {
 	if len(bytes.TrimSpace(line)) == 0 {
@@ -137,14 +164,10 @@ func (t *grokTranscoder) consume(line []byte) {
 		t.emit("", "session id: "+ev.SessionID)
 	}
 
-	kind := ev.Type
-	if kind == "" {
-		kind = ev.SessionUpdate
-	}
-	switch kind {
+	switch ev.Type {
 	case "agent_message_chunk", "text":
 		t.renderText(grokEventText(ev))
-	case "agent_thought_chunk", "thinking", "reasoning":
+	case "agent_thought_chunk", "thought":
 		text := grokEventText(ev)
 		if text != "" {
 			t.flushPrompt()
@@ -155,18 +178,27 @@ func (t *grokTranscoder) consume(line []byte) {
 		t.renderToolStart(ev)
 	case "tool_call_update":
 		t.renderToolUpdate(ev)
+	case "usage":
+		t.lastResponse = t.text.String()
+		t.text.Reset()
 	case "error":
+		if ev.hasSpend() {
+			t.errorSpend = &grokSpend{ev: ev, line: append([]byte(nil), line...)}
+		}
 		t.renderFailure(grokEventError(ev))
 	case "end":
-		t.renderEnd(ev)
+		t.renderEnd(ev, line)
 	}
 }
 
+// decodeGrokWireEvent reads a type-tagged line or an ACP session/update
+// notification. Any other JSON-RPC message, such as a response, is not a
+// stream event: treating a response as `end` would report success for a turn
+// that never finished.
 func decodeGrokWireEvent(line []byte) (grokWireEvent, bool) {
 	var outer struct {
 		Method string          `json:"method"`
 		Params json.RawMessage `json:"params"`
-		Result json.RawMessage `json:"result"`
 	}
 	if err := json.Unmarshal(line, &outer); err != nil {
 		return grokWireEvent{}, false
@@ -186,23 +218,21 @@ func decodeGrokWireEvent(line []byte) (grokWireEvent, bool) {
 		if ev.SessionID == "" {
 			ev.SessionID = params.SessionID
 		}
-		return ev, true
-	}
-	if len(bytes.TrimSpace(outer.Result)) > 0 && !bytes.Equal(bytes.TrimSpace(outer.Result), []byte("null")) {
-		var ev grokWireEvent
-		if json.Unmarshal(outer.Result, &ev) != nil {
-			return grokWireEvent{}, false
-		}
-		if ev.Type == "" {
-			ev.Type = "end"
-		}
-		return ev, true
+		return ev.normalized()
 	}
 	var ev grokWireEvent
-	if json.Unmarshal(line, &ev) != nil || (ev.Type == "" && ev.SessionUpdate == "") {
+	if json.Unmarshal(line, &ev) != nil {
 		return grokWireEvent{}, false
 	}
-	return ev, true
+	return ev.normalized()
+}
+
+// normalized files an ACP update under Type, the one field consume reads.
+func (ev grokWireEvent) normalized() (grokWireEvent, bool) {
+	if ev.Type == "" {
+		ev.Type = ev.SessionUpdate
+	}
+	return ev, ev.Type != ""
 }
 
 func (t *grokTranscoder) renderText(text string) {
@@ -217,11 +247,7 @@ func (t *grokTranscoder) renderText(text string) {
 
 func (t *grokTranscoder) renderToolStart(ev grokWireEvent) {
 	t.flushPrompt()
-	name := ev.ToolName
-	if name == "" {
-		name = ev.Title
-	}
-	t.event(Event{Kind: "tool_start", ItemID: ev.ToolCallID, ToolName: name, Input: append(json.RawMessage(nil), ev.RawInput...)})
+	t.event(Event{Kind: "tool_start", ItemID: ev.ToolCallID, ToolName: ev.toolName(), Input: append(json.RawMessage(nil), ev.RawInput...)})
 	if ev.ToolCallID != "" {
 		t.running[ev.ToolCallID] = t.now()
 	}
@@ -234,16 +260,13 @@ func (t *grokTranscoder) renderToolUpdate(ev grokWireEvent) {
 	case "completed", "failed", "error", "cancelled":
 		failed := ev.Status != "completed"
 		t.event(Event{Kind: "tool_end", ItemID: ev.ToolCallID, Output: output, Failed: failed})
-		elapsed := ""
-		if started, ok := t.running[ev.ToolCallID]; ok {
-			elapsed = " in " + t.now().Sub(started).Truncate(10*time.Millisecond).String()
+		var elapsed time.Duration
+		started, timed := t.running[ev.ToolCallID]
+		if timed {
+			elapsed = t.now().Sub(started)
 			delete(t.running, ev.ToolCallID)
 		}
-		status := "succeeded"
-		if failed {
-			status = "failed"
-		}
-		_, _ = fmt.Fprintf(t.out, " %s%s:\n%s\n", status, elapsed, output)
+		t.toolEnded(failed, elapsed, timed, output)
 	default:
 		if output != "" {
 			t.event(Event{Kind: "tool_output", ItemID: ev.ToolCallID, Output: output})
@@ -262,32 +285,132 @@ func (t *grokTranscoder) renderFailure(failure string) {
 	t.emit("error", failure)
 }
 
-func (t *grokTranscoder) renderEnd(ev grokWireEvent) {
+func (t *grokTranscoder) renderEnd(ev grokWireEvent, line []byte) {
 	t.flushPrompt()
-	t.completed = true
-	t.turns++
-	if text := grokEventText(ev); text != "" && t.text.Len() == 0 {
+	if text := grokEventText(ev); text != "" && t.finalText() == "" {
 		t.renderText(text)
 	}
+	if failure := t.recordEnd(ev, line); failure != "" {
+		t.renderFailure(failure)
+	}
+	t.writeSpendTrailer()
+}
+
+// recordEnd folds the terminal event into the transcoder's state and reports
+// why the turn failed, if it did; nothing is written. A failed turn keeps no
+// report, so partial prose can never be read back as an answer.
+func (t *grokTranscoder) recordEnd(ev grokWireEvent, line []byte) string {
+	t.completed = true
+	t.settleSpend(ev, line)
+	report := t.endReport(ev)
+	failure := grokEndFailure(ev, t.structured, len(report) > 0)
+	if failure == "" && t.failure == "" {
+		t.report = report
+	}
+	return failure
+}
+
+func (t *grokTranscoder) endReport(ev grokWireEvent) json.RawMessage {
+	if t.structured {
+		if jsonAbsent(ev.StructuredOutput) {
+			return nil
+		}
+		return append(json.RawMessage(nil), ev.StructuredOutput...)
+	}
+	text := t.finalText()
+	if text == "" {
+		return nil
+	}
+	report, _ := json.Marshal(text)
+	return report
+}
+
+// finalText is the last response's prose: the one in progress if it has any,
+// or else the last one a `usage` line closed.
+func (t *grokTranscoder) finalText() string {
 	if t.text.Len() > 0 {
-		if t.structured {
-			t.report = json.RawMessage(t.text.String())
-		} else {
-			t.report, _ = json.Marshal(t.text.String())
-		}
+		return t.text.String()
 	}
-	if len(ev.Usage) > 0 && !bytes.Equal(bytes.TrimSpace(ev.Usage), []byte("null")) {
-		var usage grokUsage
-		if json.Unmarshal(ev.Usage, &usage) == nil {
-			t.usage = usage.tokenUsage()
-			t.sawUsage = true
-			t.rawUsage = append(t.rawUsage, append(json.RawMessage(nil), ev.Usage...))
-			t.event(Event{Kind: "usage", Usage: t.usage, UsageKnown: t.turns == 1})
-		}
+	return t.lastResponse
+}
+
+// settleSpend records the invocation's spend once: from `end`, or from an
+// earlier `error` when `end` carries none. End's incompleteness flags hold
+// either way, since they describe the whole invocation.
+func (t *grokTranscoder) settleSpend(ev grokWireEvent, line []byte) {
+	spend := grokSpend{ev: ev, line: line}
+	if !ev.hasSpend() && t.errorSpend != nil {
+		spend = *t.errorSpend
 	}
+	t.errorSpend = nil
+	t.recordSpend(spend)
+	if ev.UsageIncomplete {
+		t.usageIncomplete = true
+	}
+	if ev.UsageIncomplete || ev.CostPartial {
+		t.costIncomplete = true
+	}
+}
+
+// recordSpend folds one invocation's usage and cost in. Grok omits spend
+// fields when a prompt never reached the model, marks partial figures, and
+// omits cost it could not fully account; none of those is evidence of zero.
+func (t *grokTranscoder) recordSpend(spend grokSpend) {
+	ev := spend.ev
+	if ev.Usage != nil {
+		raw := extractUsage(spend.line)
+		if raw == nil {
+			raw, _ = json.Marshal(ev.Usage)
+		}
+		t.rawUsage = append(t.rawUsage, raw)
+		t.usage = addGrokUsage(t.usage, *ev.Usage)
+		t.sawUsage = true
+	}
+	if ev.Usage == nil || ev.UsageIncomplete {
+		t.usageIncomplete = true
+	}
+	switch {
+	case ev.TotalCostTicks != nil:
+		t.costTicks += *ev.TotalCostTicks
+		t.sawCost = true
+	case ev.TotalCostUSD != nil:
+		t.costTicks += int64(math.Round(*ev.TotalCostUSD * grokCostTicksPerUSD))
+		t.sawCost = true
+	}
+	if (ev.TotalCostUSD == nil && ev.TotalCostTicks == nil) || ev.CostPartial || ev.UsageIncomplete {
+		t.costIncomplete = true
+	}
+}
+
+func (ev grokWireEvent) hasSpend() bool {
+	return ev.Usage != nil || ev.TotalCostUSD != nil || ev.TotalCostTicks != nil
+}
+
+func (t *grokTranscoder) writeSpendTrailer() {
+	usageKnown := t.sawUsage && !t.usageIncomplete
+	costKnown := t.sawCost && !t.costIncomplete
+	costUSD := float64(t.costTicks) / grokCostTicksPerUSD
+	t.event(Event{Kind: "usage", Usage: t.usage, CostUSD: costUSD, UsageKnown: usageKnown, CostKnown: costKnown})
+	t.spendTrailer(t.usage, t.sawUsage, usageKnown, costUSD, costKnown)
+}
+
+// grokEndFailure reads the turn's stop reason. Only end_turn is a finished
+// turn; max_tokens, max_turn_requests, refusal, cancelled and any reason this
+// parser does not know are failures, never a report.
+func grokEndFailure(ev grokWireEvent, structured, hasReport bool) string {
 	if ev.Status == "failed" || ev.Status == "error" || ev.StopReason == "error" {
-		t.renderFailure(grokEventError(ev))
+		if message := grokEventError(ev); message != "" {
+			return message
+		}
+		return "the run reported an error with no detail"
 	}
+	if ev.StopReason != "" && ev.StopReason != "end_turn" {
+		return "the run stopped: " + ev.StopReason
+	}
+	if structured && !hasReport {
+		return "the run ended without structured output"
+	}
+	return ""
 }
 
 func grokEventText(ev grokWireEvent) string {
@@ -315,7 +438,7 @@ func grokEventText(ev grokWireEvent) string {
 
 func grokEventOutput(ev grokWireEvent) string {
 	for _, value := range []json.RawMessage{ev.RawOutput, ev.Output, ev.Content} {
-		if len(value) == 0 || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+		if jsonAbsent(value) {
 			continue
 		}
 		var text string
@@ -343,13 +466,16 @@ func grokEventError(ev grokWireEvent) string {
 	return ""
 }
 
+func (ev grokWireEvent) toolName() string {
+	if ev.ToolName != "" {
+		return ev.ToolName
+	}
+	return ev.Title
+}
+
 func grokToolDescription(ev grokWireEvent) string {
-	name := ev.ToolName
-	if name == "" {
-		name = ev.Title
+	if jsonAbsent(ev.RawInput) {
+		return ev.toolName()
 	}
-	if len(ev.RawInput) == 0 || bytes.Equal(bytes.TrimSpace(ev.RawInput), []byte("null")) {
-		return name
-	}
-	return name + "\n" + string(ev.RawInput)
+	return ev.toolName() + "\n" + string(ev.RawInput)
 }
