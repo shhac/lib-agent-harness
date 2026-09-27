@@ -206,7 +206,6 @@ func TestCompleteRefusesUnusableEnginesFirst(t *testing.T) {
 		engine harness.Engine
 		want   harness.Engine
 	}{
-		{harness.Grok, harness.Grok},
 		{"", ""},
 		{"secret-engine", ""},
 	} {

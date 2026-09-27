@@ -111,6 +111,8 @@ func Complete(ctx context.Context, cfg Config, messages []Message, tools []Tool)
 		return codexComplete(ctx, cfg, messages, tools)
 	case harness.Claude:
 		return claudeComplete(ctx, cfg, messages, tools)
+	case harness.Grok:
+		return grokComplete(ctx, cfg, messages, tools)
 	case harness.OpenAICompatible:
 		return openAIComplete(ctx, cfg, messages, tools)
 	}

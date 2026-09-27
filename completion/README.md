@@ -1,6 +1,6 @@
 # Constrained completions
 
-`completion.Complete` invokes a local Codex or Claude CLI, or a configured
+`completion.Complete` invokes a local Codex, Claude or Grok CLI, or a configured
 OpenAI-compatible Chat Completions endpoint, once and returns a `Result`: a
 message with optional proposed application tool calls, and the shared
 `harness.Usage`, `harness.Cost` and stated context window. It never executes
@@ -8,11 +8,11 @@ proposed tools. The caller owns authorization, execution, conversation history,
 retries, and budgets.
 
 `Config.Provider` is the shared `harness.Provider`. Its `Engine` is
-`harness.Codex`, `harness.Claude` or `harness.OpenAICompatible`; the CLI
-engines read `Provider.CLI` (`Binary`, `Home`) and the API engine reads
+`harness.Codex`, `harness.Claude`, `harness.Grok` or `harness.OpenAICompatible`;
+the CLI engines read `Provider.CLI` (`Binary`, `Home`) and the API engine reads
 `Provider.API`. Before anything else, an engine for which
-`harness.Support(engine, harness.Complete, harness.Available)` is not usable,
-Grok included, is refused with `unsupported_engine`. A provider whose
+`harness.Support(engine, harness.Complete, harness.Available)` is not usable is
+refused with `unsupported_engine`. A provider whose
 `Problem()` is non-empty, such as one setting the half its engine does not read
 (`api_config_for_cli_engine`, `cli_config_for_api_engine`), is then refused
 with that code before any process, credential or request.
@@ -45,6 +45,37 @@ actual tool/instruction surface. These probes perform no inference. An unknown
 or incompatible CLI fails closed. Codex homes containing nonempty global
 `AGENTS.md` or `AGENTS.override.md` are rejected because this invocation mode
 cannot reliably disable those instructions.
+
+Grok requires `WorkDirRoot`. Its runs use a private runtime home at
+`<WorkDirRoot>/grok-home` holding configuration this library writes, and share
+only `auth.json` with the operator's Grok home (`Provider.CLI.Home`, else
+`GROK_HOME`, else `~/.grok`), so the operator's MCP servers, hooks, plugins and
+rules are never read. A digest record decides which login copy wins: an
+operator login change or logout always does; a refresh Grok made in the runtime
+home is kept while the source is unchanged, and is written back after the run.
+Each run gets a private `HOME`, temporary directory and empty working
+directory, and the prompt is passed in a file, never on the command line.
+Native tools are removed with `--tools=read_file
+--disallowed-tools=read_file,search_tool,use_tool --no-subagents
+--disable-web-search`, the system prompt is replaced, and the action envelope
+is requested with `--json-schema`. Before the first launch of each binary
+(path, file identity and version) and flag set, the same launch runs against a
+disposable home whose only model is a loopback provider that refuses inference
+(declared like Grok's own models: Responses API, backend search, the requested
+effort). The request must carry no tools, our system text, exactly one vendor
+context message (`<user_info>` plus Grok's built-in `<user_rules>` and nothing
+else), our prompt, schema, model and effort; Grok's own session-title request is
+tolerated but not relied on. Only proven configurations are cached, in process.
+Every real run is judged again: a non-empty native tool catalog or any native
+tool call in its stream stops it at once (`unexpected_native_tool_catalog`,
+`unexpected_native_tool_call`), and its persisted transcript must repeat the
+probe's vendor context with no system or user message added after the prompt
+(`unexpected_native_instructions`), since an authenticated run may receive
+remote settings the probe cannot. These are request failures, since the
+request may have started. The persisted session is deleted after each run.
+Grok completion is refused on Windows (`grok_platform_unsupported`) because the
+runtime home cannot be made owner-only there. Effort is passed through as
+`--reasoning-effort`; `catalog.Discover` lists what a model accepts.
 
 `BeforeRequest` runs only after these non-billable checks and immediately before
 the inference invocation. Its error prevents that invocation. It gates one CLI
@@ -81,6 +112,13 @@ zero cache figures without it mean unreported, not uncached:
 - Codex: `input_tokens` already includes `cached_input_tokens`, which becomes
   `CacheRead` when present; `reasoning_output_tokens` becomes `Reasoning`. A
   part larger than its whole makes the report unknown. Codex states no cost.
+- Grok: the single `end` event. `input_tokens` is uncached input, so `Input`
+  adds `cache_read_input_tokens` and `cache_creation_input_tokens` back; the
+  split is known when both are present. `Cost` is `total_cost_usd_ticks`
+  (10^-10 USD), else `total_cost_usd`. `usage_is_incomplete` makes both
+  unknown and `cost_is_partial` makes the cost unknown; an `error` event's
+  spend counts only when `end` reports none. Whether Grok's own session-title
+  request is included is unverified. No context window is stated.
 - Chat Completions: `Input` is `prompt_tokens` and `Output` is
   `completion_tokens`, which must agree with any `total_tokens`. Optional
   `prompt_tokens_details.cached_tokens` and

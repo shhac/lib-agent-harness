@@ -224,6 +224,8 @@ func capabilityCode(code string) bool {
 	switch code {
 	case "unsupported_engine",
 		"unexpected_native_tool", "unexpected_native_tool_catalog", "unexpected_native_tool_call",
+		"unexpected_native_instructions", "missing_native_tool_catalog", "missing_native_transcript",
+		"grok_platform_unsupported", "probe_missing_tool_catalog", "probe_transcript_unverified",
 		"probe_mismatch", "probe_invalid_request", "probe_unexpected_tools", "probe_invalid_schema",
 		"probe_changed_schema", "probe_changed_effort", "probe_instruction_type",
 		"probe_unexpected_instructions", "probe_missing_instructions", "probe_changed_model",

@@ -24,9 +24,57 @@ func preflightFailure(engine harness.Engine, code string) *RequestError {
 func (e *RequestError) diagnosticDetail() string {
 	switch e.Code {
 	case "unexpected_native_tool_catalog":
+		if e.Engine == harness.Grok {
+			return "Grok advertised native tools during constrained completion and was stopped; no application actions were accepted"
+		}
 		return "Claude advertised native tools during constrained completion; check CLI tool isolation before resuming"
 	case "unexpected_native_tool_call":
+		if e.Engine == harness.Grok {
+			return "Grok attempted a native tool call during constrained completion and was stopped; no application actions were accepted"
+		}
 		return "Claude emitted a native tool call without a verified unavailable-tool rejection; no application actions were accepted"
+	case "unexpected_native_instructions":
+		return "Grok's persisted transcript showed instructions the capability check did not prove; the reply was discarded"
+	case "missing_native_tool_catalog":
+		return "Grok did not state an empty native tool catalog; the reply was discarded"
+	case "missing_native_transcript":
+		return "Grok's persisted transcript could not be read to verify its instructions; the reply was discarded"
+	case "missing_structured_output":
+		return "Grok ended without structured output"
+	case "max_tokens", "max_turn_requests":
+		return "Grok stopped at its output or turn limit before finishing; no proposal was returned"
+	case "refusal":
+		return "Grok's model refused the request; no proposal was returned"
+	case "cancelled":
+		return "Grok cancelled the turn before finishing; no proposal was returned"
+	case "unexpected_stop_reason", "end_error":
+		return "Grok ended the turn without finishing; no proposal was returned"
+	case "grok_error":
+		return "Grok reported a request failure; outcome or usage may be unknown"
+	case "grok_platform_unsupported":
+		return "Grok constrained completion is unavailable on this platform: its private runtime home needs owner-only files"
+	case "work_dir_root_required":
+		return "Grok constrained completion requires WorkDirRoot, the private state directory its runtime home lives in"
+	case "grok_home_unresolved":
+		return "cannot resolve Grok login home"
+	case "grok_home_invalid":
+		return "Grok home must be an absolute directory path"
+	case "grok_home_is_runtime":
+		return "Grok login home must be separate from the runtime home under WorkDirRoot"
+	case "grok_login_unavailable":
+		return "Grok login home has no file-backed login (auth.json); run grok and sign in with that home"
+	case "grok_login_unreadable":
+		return "Grok login could not be read as a credential file; check the login home"
+	case "grok_runtime_home":
+		return "cannot prepare Grok's private runtime home under WorkDirRoot"
+	case "grok_version_unavailable":
+		return "cannot read the installed Grok version; check the CLI installation (no account inference was attempted)"
+	case "invalid_effort":
+		return "reasoning effort cannot be passed to the CLI as given"
+	case "probe_missing_tool_catalog":
+		return "CLI capability check saw no empty native tool catalog; constrained completion remains disabled (not an account login check)"
+	case "probe_transcript_unverified":
+		return "CLI capability check could not verify the transcript the CLI persists; constrained completion remains disabled (not an account login check)"
 	case "unexpected_native_tool":
 		return "Claude advertised or attempted an unexpected native tool; this older diagnostic does not distinguish the two"
 
@@ -34,9 +82,12 @@ func (e *RequestError) diagnosticDetail() string {
 		if e.Engine == harness.Claude {
 			return "Claude executable not found; install Claude Code and sign in"
 		}
+		if e.Engine == harness.Grok {
+			return "Grok executable not found; install Grok and sign in"
+		}
 		return "Codex executable not found; install Codex and run codex login"
 	case "unsupported_engine":
-		return "unsupported engine; use codex, claude or openai-compatible"
+		return "unsupported engine; use codex, claude, grok or openai-compatible"
 	case "api_config_for_cli_engine":
 		return "a CLI engine reads Provider.CLI; clear Provider.API"
 	case "cli_config_for_api_engine":

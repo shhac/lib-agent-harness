@@ -108,6 +108,14 @@ func TestSupportIsTheOnlyEngineQuestion(t *testing.T) {
 	if Support(Grok, Models, ContextWindow).Availability != Native || Support(OpenAICompatible, Models, ContextWindow).Availability != Unknown || Support(Codex, Models, ContextWindow).Usable() {
 		t.Fatal("context window listing claims changed")
 	}
+	for _, f := range []Feature{Available, Effort, Tools, CacheSplit, CostReport} {
+		if c := Support(Grok, Complete, f); c.Availability != Native {
+			t.Errorf("Grok completion %s: %+v", f, c)
+		}
+	}
+	if Support(Grok, Complete, Available).Reason == "" || Support(Grok, Complete, ContextWindow).Usable() || Support(Grok, Complete, StructuredOutput).Usable() {
+		t.Fatal("Grok completion claims changed")
+	}
 	restricted := Support(Claude, Session, RestrictTools)
 	if (runtime.GOOS == "windows") == restricted.Usable() {
 		t.Fatalf("restricted hosting on %s: %+v", runtime.GOOS, restricted)

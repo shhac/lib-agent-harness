@@ -299,9 +299,9 @@ func TestRequestErrorFacts(t *testing.T) {
 
 // Facts come from what Complete actually returned, end to end.
 func TestCompleteFailuresCarryFacts(t *testing.T) {
-	_, err := Complete(context.Background(), Config{Provider: harness.Provider{Engine: harness.Grok}}, nil, nil)
+	_, err := Complete(context.Background(), Config{Provider: harness.Provider{Engine: "gemini"}}, nil, nil)
 	facts, ok := harness.ErrorFacts(err)
-	if !ok || facts.Engine != harness.Grok || facts.Family != harness.FailureCapability || facts.Code != "unsupported_engine" || facts.Operation != harness.Complete || facts.Retryable {
+	if !ok || facts.Engine != "" || facts.Family != harness.FailureCapability || facts.Code != "unsupported_engine" || facts.Operation != harness.Complete || facts.Retryable {
 		t.Fatalf("%+v", facts)
 	}
 	_, err = Complete(context.Background(), apiConfig(respondWith(429, ``, "Retry-After", "3")), userMessage, nil)

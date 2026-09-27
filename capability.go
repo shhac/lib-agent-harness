@@ -94,16 +94,19 @@ func Support(e Engine, op Operation, f Feature) Capability {
 		}
 	}
 	if c, ok := supportTable[supportKey{e, op, f}]; ok {
-		return platform(op, f, c)
+		return platform(e, op, f, c)
 	}
 	return Capability{Unsupported, "not offered by this engine"}
 }
 
 // platform applies what the operating system rules out: restricted and
 // sandboxed hosting are unavailable on Windows.
-func platform(op Operation, f Feature, c Capability) Capability {
+func platform(e Engine, op Operation, f Feature, c Capability) Capability {
 	if runtime.GOOS == "windows" && op == Session && (f == RestrictTools || f == Sandbox || f == Tools) {
 		return Capability{Unsupported, "restricted and sandboxed hosting are unavailable on Windows"}
+	}
+	if runtime.GOOS == "windows" && e == Grok && op == Complete {
+		return Capability{Unsupported, "Grok's restricted runtime home is unavailable on Windows"}
 	}
 	return c
 }
@@ -125,6 +128,11 @@ var supportTable = map[supportKey]Capability{
 	{Claude, Complete, CacheSplit}:           native,
 	{Claude, Complete, CostReport}:           native,
 	{Claude, Complete, ContextWindow}:        native,
+	{Grok, Complete, Available}:              {Native, "native tools and instructions are proven against a local refusing provider before the first launch of each binary and flag set, and checked again in each run's stream and transcript; unavailable on Windows"},
+	{Grok, Complete, Effort}:                 native,
+	{Grok, Complete, Tools}:                  native,
+	{Grok, Complete, CacheSplit}:             native,
+	{Grok, Complete, CostReport}:             native,
 	{OpenAICompatible, Complete, Available}:  native,
 	{OpenAICompatible, Complete, Effort}:     {Native, "requires API.EffortParameter"},
 	{OpenAICompatible, Complete, Tools}:      native,
@@ -186,7 +194,6 @@ var supportTable = map[supportKey]Capability{
 	{OpenAICompatible, Models, Effort}:        {Unsupported, "endpoints do not list efforts"},
 	{OpenAICompatible, Models, ContextWindow}: {Unknown, "reported only by some gateways"},
 
-	{Grok, Complete, Available}:            {Unsupported, "no proof yet that Grok's native tools can be removed"},
 	{Grok, Session, Available}:             {Unsupported, "no persistent Grok session adapter yet"},
 	{OpenAICompatible, Run, Available}:     {Unsupported, "an API endpoint has no native agent; use Complete"},
 	{OpenAICompatible, Session, Available}: {Unsupported, "remote sessions are not implemented"},
