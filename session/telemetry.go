@@ -60,6 +60,7 @@ func Inspect(ctx context.Context, o Options) (Inspection, error) {
 	out.Account, err = s.ReadAccount(ctx)
 	var quotaErr error
 	out.Quota, quotaErr = s.ReadQuota(ctx)
+	out.Credits = s.Telemetry().Credits
 	out.Capabilities = s.Capabilities()
 	return out, errors.Join(err, quotaErr)
 }
@@ -70,14 +71,14 @@ func Inspect(ctx context.Context, o Options) (Inspection, error) {
 func (s *Session) Telemetry() Telemetry {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return Telemetry{Account: cloneAccount(s.telemetry.Account), Quota: cloneQuota(s.telemetry.Quota), Context: cloneContext(s.telemetry.Context)}
+	return Telemetry{Account: cloneAccount(s.telemetry.Account), Quota: cloneQuota(s.telemetry.Quota), Credits: cloneCredits(s.telemetry.Credits), Context: cloneContext(s.telemetry.Context)}
 }
 
 // ReadAccount reads Codex's native account endpoint. Claude reports its account
 // in the initialize handshake; this method returns that observation. To inspect
 // a changed Claude login, use Inspect (or reopen the session), not a second
 // initialize on a running conversation.
-func (s *Session) ReadAccount(ctx context.Context) (AccountSnapshot, error) {
+func (s *Session) ReadAccount(ctx context.Context) (harness.AccountSnapshot, error) {
 	if err := s.lockOp(ctx); err != nil {
 		return s.Telemetry().Account, err
 	}
@@ -92,7 +93,7 @@ func (s *Session) ReadAccount(ctx context.Context) (AccountSnapshot, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	raw, err := s.transport.request(ctx, "account/read", map[string]any{"refreshToken": false})
-	var a AccountSnapshot
+	var a harness.AccountSnapshot
 	if err == nil {
 		a, err = parseCodexAccount(raw)
 	}
@@ -111,7 +112,11 @@ func (s *Session) ReadAccount(ctx context.Context) (AccountSnapshot, error) {
 // ReadQuota asks the native CLI for current allowance windows. Claude's
 // experimental get_usage method skips its local transcript/behavior scan.
 // Neither path performs inference or reads native credential storage itself.
-func (s *Session) ReadQuota(ctx context.Context) (QuotaSnapshot, error) {
+//
+// The same response also refreshes Telemetry().Credits. A credit report the
+// library cannot read invalidates the credits and joins ErrProtocol to the
+// result, while the quota snapshot is still returned.
+func (s *Session) ReadQuota(ctx context.Context) (harness.QuotaSnapshot, error) {
 	if err := s.lockOp(ctx); err != nil {
 		return s.Telemetry().Quota, err
 	}
@@ -127,13 +132,16 @@ func (s *Session) ReadQuota(ctx context.Context) (QuotaSnapshot, error) {
 		params["skip_behaviors"] = true
 	}
 	raw, err := s.transport.request(ctx, method, params)
-	var q QuotaSnapshot
+	var q harness.QuotaSnapshot
+	var c harness.CreditSnapshot
+	creditErr := err
 	if err == nil {
-		if s.options.Provider.Engine == harness.Codex {
-			q, err = parseCodexQuota(raw)
-		} else {
-			q, err = parseClaudeQuota(raw)
+		parseQuota, parseCredits := parseCodexQuota, parseCodexCredits
+		if s.options.Provider.Engine == harness.Claude {
+			parseQuota, parseCredits = parseClaudeQuota, parseClaudeCredits
 		}
+		q, err = parseQuota(raw)
+		c, creditErr = parseCredits(raw)
 	}
 	s.mu.Lock()
 	if err == nil {
@@ -144,10 +152,18 @@ func (s *Session) ReadQuota(ctx context.Context) (QuotaSnapshot, error) {
 			invalidate(&s.telemetry.Quota.Windows[i].Observation, "quota refresh failed")
 		}
 	}
+	if creditErr == nil {
+		s.telemetry.Credits = c
+	} else {
+		invalidate(&s.telemetry.Credits.Observation, "credits refresh failed")
+	}
 	recordCapability(&s.caps.Quota, err)
 	q = cloneQuota(s.telemetry.Quota)
 	s.mu.Unlock()
-	return q, err
+	if err != nil {
+		return q, err
+	}
+	return q, creditErr
 }
 
 // ReadContext returns Codex's latest streamed context observation; its timestamp
@@ -193,10 +209,10 @@ func (s *Session) telemetryOpen() error {
 	}
 	return nil
 }
-func observation(source string, quality Measurement) Observation {
-	return Observation{Source: source, Quality: quality, ObservedAt: time.Now().UTC()}
+func observation(source string, quality harness.Measurement) harness.Observation {
+	return harness.Observation{Source: source, Quality: quality, ObservedAt: time.Now().UTC()}
 }
-func invalidate(o *Observation, reason string) { o.Invalidated = true; o.Reason = reason }
+func invalidate(o *harness.Observation, reason string) { o.Invalidated = true; o.Reason = reason }
 func recordCapability(c *harness.Capability, err error) {
 	if err == nil {
 		*c = harness.Capability{Availability: harness.Native, Reason: "observed native telemetry"}
@@ -224,7 +240,20 @@ func cloneValue[T any](p *T) *T {
 	v := *p
 	return &v
 }
-func cloneAccount(a AccountSnapshot) AccountSnapshot { a.LoggedIn = cloneValue(a.LoggedIn); return a }
+func cloneAccount(a harness.AccountSnapshot) harness.AccountSnapshot {
+	a.LoggedIn = cloneValue(a.LoggedIn)
+	return a
+}
+func cloneCredits(c harness.CreditSnapshot) harness.CreditSnapshot {
+	c.Enabled = cloneValue(c.Enabled)
+	c.Unlimited = cloneValue(c.Unlimited)
+	c.LimitReached = cloneValue(c.LimitReached)
+	c.Balance = cloneValue(c.Balance)
+	c.Used = cloneValue(c.Used)
+	c.Limit = cloneValue(c.Limit)
+	c.ResetsAvailable = cloneValue(c.ResetsAvailable)
+	return c
+}
 func cloneContext(c ContextSnapshot) ContextSnapshot {
 	c.UsedTokens = cloneValue(c.UsedTokens)
 	c.CapacityTokens = cloneValue(c.CapacityTokens)
@@ -233,9 +262,10 @@ func cloneContext(c ContextSnapshot) ContextSnapshot {
 	c.AutoCompactAtTokens = cloneValue(c.AutoCompactAtTokens)
 	return c
 }
-func cloneQuota(q QuotaSnapshot) QuotaSnapshot {
+func cloneQuota(q harness.QuotaSnapshot) harness.QuotaSnapshot {
 	q.UsingOverage = cloneValue(q.UsingOverage)
-	q.Windows = append([]QuotaWindow(nil), q.Windows...)
+	q.LimitReached = cloneValue(q.LimitReached)
+	q.Windows = append([]harness.QuotaWindow(nil), q.Windows...)
 	for i := range q.Windows {
 		w := &q.Windows[i]
 		w.UsedPercent = cloneValue(w.UsedPercent)

@@ -107,9 +107,9 @@ func telemetryFixture() int {
 				}
 				continue
 			}
-			result = json.RawMessage(`{"rateLimits":{"primary":{"usedPercent":12.5,"windowDurationMins":300,"resetsAt":1900000000}}}`)
+			result = json.RawMessage(`{"rateLimits":{"primary":{"usedPercent":12.5,"windowDurationMins":300,"resetsAt":1900000000},"credits":{"hasCredits":true,"unlimited":false,"balance":"4"}}}`)
 			if engine == harness.Claude {
-				result = json.RawMessage(`{"rate_limits_available":true,"rate_limits":{"five_hour":{"utilization":12.5,"resets_at":"2030-01-01T00:00:00Z"}}}`)
+				result = json.RawMessage(`{"rate_limits_available":true,"rate_limits":{"five_hour":{"utilization":12.5,"resets_at":"2030-01-01T00:00:00Z"}},"spend":{"used":{"amount_minor":4,"currency":"USD","exponent":0},"enabled":true}}`)
 			}
 		default:
 			return 20
@@ -148,8 +148,11 @@ func TestInspectUsesConfiguredCLIAndHomeWithoutInference(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !got.Account.Known() || !got.Quota.Known() || len(got.Quota.Windows) != 1 || *got.Quota.Windows[0].UsedPercent != 12.5 {
+			if !got.Account.Known() || !got.Quota.Known() || len(got.Quota.Windows) != 1 || *got.Quota.Windows[0].UsedPercent != 12.5 || got.Quota.Windows[0].Kind != harness.QuotaSession {
 				t.Fatalf("bad inspection: %+v", got)
+			}
+			if !got.Credits.Known() || got.Credits.Enabled == nil || !*got.Credits.Enabled {
+				t.Fatalf("credits not inspected: %+v", got.Credits)
 			}
 			if got.Capabilities.Account.Availability != harness.Native || got.Capabilities.Quota.Availability != harness.Native || got.Capabilities.Start.Availability != harness.Unknown {
 				t.Fatal("inspection falsely acknowledged session support")
@@ -199,7 +202,7 @@ func TestInspectOlderCLIHasPartialDataAndSanitizedError(t *testing.T) {
 			o := telemetryFixtureOptions(t, engine)
 			t.Setenv("LIB_HARNESS_TELEMETRY_MODE", "unsupported")
 			got, err := Inspect(testContext(t), o)
-			if !errors.Is(err, ErrUnsupported) || !got.Account.Known() || got.Quota.Known() || got.Capabilities.Quota.Availability != harness.Unsupported {
+			if !errors.Is(err, ErrUnsupported) || !got.Account.Known() || got.Quota.Known() || got.Credits.Known() || got.Capabilities.Quota.Availability != harness.Unsupported {
 				t.Fatalf("partial response lost: %+v %v", got, err)
 			}
 			raw, _ := json.Marshal(got)

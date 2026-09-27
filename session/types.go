@@ -190,16 +190,17 @@ type SteerResult struct {
 	Turn     *Turn
 }
 type Event struct {
-	Kind    string           `json:"kind"` // text_delta, text, tool_started, tool_completed, status, usage, context, quota, account
-	TurnID  string           `json:"turn_id"`
-	ItemID  string           `json:"item_id,omitempty"`
-	Text    string           `json:"text,omitempty"`
-	Tool    string           `json:"tool,omitempty"`
-	Status  string           `json:"status,omitempty"`
-	Usage   *Usage           `json:"usage,omitempty"`
-	Context *ContextSnapshot `json:"context,omitempty"`
-	Quota   *QuotaSnapshot   `json:"quota,omitempty"`
-	Account *AccountSnapshot `json:"account,omitempty"`
+	Kind    string                   `json:"kind"` // text_delta, text, tool_started, tool_completed, status, usage, context, quota, credits, account
+	TurnID  string                   `json:"turn_id"`
+	ItemID  string                   `json:"item_id,omitempty"`
+	Text    string                   `json:"text,omitempty"`
+	Tool    string                   `json:"tool,omitempty"`
+	Status  string                   `json:"status,omitempty"`
+	Usage   *Usage                   `json:"usage,omitempty"`
+	Context *ContextSnapshot         `json:"context,omitempty"`
+	Quota   *harness.QuotaSnapshot   `json:"quota,omitempty"`
+	Credits *harness.CreditSnapshot  `json:"credits,omitempty"`
+	Account *harness.AccountSnapshot `json:"account,omitempty"`
 }
 
 // Usage is what a provider reported, in the shared harness shape: Input counts

@@ -15,7 +15,7 @@ import (
 func TestQuotaMappings(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
-		parse func(json.RawMessage) (QuotaSnapshot, error)
+		parse func(json.RawMessage) (harness.QuotaSnapshot, error)
 		raw   string
 		want  []string
 		pct   []float64
@@ -67,10 +67,10 @@ func TestUnknownIsNotZeroOrUnlimited(t *testing.T) {
 			t.Fatalf("unknown quota became known: %+v %v", q, err)
 		}
 	}
-	if (QuotaWindow{}).RemainingPercent() != nil {
+	if (harness.QuotaWindow{}).RemainingPercent() != nil {
 		t.Fatal("unknown quota looks free")
 	}
-	for _, parse := range []func(json.RawMessage) (QuotaSnapshot, error){parseCodexQuota, parseClaudeQuota, parseClaudeQuotaEvent} {
+	for _, parse := range []func(json.RawMessage) (harness.QuotaSnapshot, error){parseCodexQuota, parseClaudeQuota, parseClaudeQuotaEvent} {
 		for _, raw := range []string{`{}`, `null`, `[]`, `{"rate_limits_available":true,"rate_limits":{"five_hour":{"utilization":-1,"resets_at":null}},"rateLimits":{"primary":{"usedPercent":-1}},"status":"allowed","rateLimitType":"five_hour","utilization":-1}`} {
 			if _, err := parse(json.RawMessage(raw)); !errors.Is(err, ErrProtocol) {
 				t.Fatalf("accepted malformed quota %s: %v", raw, err)
@@ -180,7 +180,7 @@ func TestCodexContextUsesActiveSizeAndSurvivesCompaction(t *testing.T) {
 	frame := `{"method":"thread/tokenUsage/updated","params":{"threadId":"session-1","turnId":"turn-1","tokenUsage":{"last":{"inputTokens":800,"cachedInputTokens":700,"outputTokens":100,"reasoningOutputTokens":0,"totalTokens":900},"total":{"inputTokens":800000,"cachedInputTokens":700000,"outputTokens":100000,"reasoningOutputTokens":0,"totalTokens":900000},"modelContextWindow":1000}}}`
 	notify(s, frame)
 	c := s.Telemetry().Context
-	if c.UsedTokens == nil || *c.UsedTokens != 900 || *c.UsedPercent != 90 || c.Quality != Measured {
+	if c.UsedTokens == nil || *c.UsedTokens != 900 || *c.UsedPercent != 90 || c.Quality != harness.Measured {
 		t.Fatalf("billing mistaken for context: %+v", c)
 	}
 	notify(s, strings.Replace(frame, `"turn-1"`, `"old-turn"`, 1))
@@ -228,7 +228,7 @@ func TestClaudeContextLatestPromptNotCumulativeOrSubagent(t *testing.T) {
 	msg := `{"type":"assistant","session_id":"session-1","message":{"id":"m","model":"fixture-model","usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":100,"cache_creation_input_tokens":20},"content":[]}}`
 	notify(s, msg)
 	c := s.Telemetry().Context
-	if c.UsedTokens == nil || *c.UsedTokens != 130 || c.CapacityTokens != nil || c.Quality != Estimated {
+	if c.UsedTokens == nil || *c.UsedTokens != 130 || c.CapacityTokens != nil || c.Quality != harness.Estimated {
 		t.Fatalf("wrong input estimate: %+v", c)
 	}
 	notify(s, strings.Replace(msg, `"type":"assistant"`, `"type":"assistant","parent_tool_use_id":"child"`, 1))
@@ -255,7 +255,7 @@ func TestClaudeContextQueryIsSummaryAndCompactionInvalidates(t *testing.T) {
 		return json.RawMessage(`{"totalTokens":200,"maxTokens":1000,"rawMaxTokens":1200,"autoCompactThreshold":850,"model":"fixture-model","apiUsage":{"input_tokens":190}}`), nil
 	}
 	c, err := s.ReadContext(testContext(t))
-	if err != nil || c.Quality != Estimated || *c.UsedPercent != 20 || *c.ModelCapacityTokens != 1200 || *c.AutoCompactAtTokens != 850 {
+	if err != nil || c.Quality != harness.Estimated || *c.UsedPercent != 20 || *c.ModelCapacityTokens != 1200 || *c.AutoCompactAtTokens != 850 {
 		t.Fatalf("bad context summary %+v %v", c, err)
 	}
 	_, err = s.StartTurn(testContext(t), Input{"next"})
@@ -273,8 +273,8 @@ func TestClaudeContextQueryIsSummaryAndCompactionInvalidates(t *testing.T) {
 }
 
 func TestFreshnessAndCancelledInspection(t *testing.T) {
-	o := observation("fixture", Measured)
-	if o.IsStale(o.ObservedAt, time.Second) || !o.IsStale(o.ObservedAt.Add(2*time.Second), time.Second) || !(Observation{}).IsStale(time.Now(), 0) {
+	o := observation("fixture", harness.Measured)
+	if o.IsStale(o.ObservedAt, time.Second) || !o.IsStale(o.ObservedAt.Add(2*time.Second), time.Second) || !(harness.Observation{}).IsStale(time.Now(), 0) {
 		t.Fatal("freshness mismatch")
 	}
 	ctx, cancel := context.WithCancel(context.Background())

@@ -188,7 +188,6 @@ var supportTable = map[supportKey]Capability{
 
 	{Grok, Complete, Available}:            {Unsupported, "no proof yet that Grok's native tools can be removed"},
 	{Grok, Session, Available}:             {Unsupported, "no persistent Grok session adapter yet"},
-	{Grok, Account, Available}:             {Unsupported, "Grok account inspection is not implemented yet"},
 	{OpenAICompatible, Run, Available}:     {Unsupported, "an API endpoint has no native agent; use Complete"},
 	{OpenAICompatible, Session, Available}: {Unsupported, "remote sessions are not implemented"},
 	{OpenAICompatible, Account, Available}: {Unsupported, "API endpoints expose no account inspection"},
@@ -199,4 +198,10 @@ var supportTable = map[supportKey]Capability{
 	{Claude, Account, Available}: unverified,
 	{Claude, Account, Login}:     unverified,
 	{Claude, Account, Quota}:     unverified,
+	{Codex, Account, Credits}:    unverified,
+	{Claude, Account, Credits}:   unverified,
+	{Grok, Account, Available}:   {Native, "read over Grok's agent protocol without a session"},
+	{Grok, Account, Login}:       native,
+	{Grok, Account, Quota}:       {Unsupported, "Grok exposes no quota windows"},
+	{Grok, Account, Credits}:     {Unsupported, "Grok exposes no credit balance"},
 }

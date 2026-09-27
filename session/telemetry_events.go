@@ -20,6 +20,10 @@ func (s *Session) accountTelemetryEvent(m map[string]json.RawMessage, ref Ref, t
 				q.Source = "account/rateLimits/updated"
 				s.observeQuota(q, t)
 			}
+			if c, err := parseCodexCredits(m["params"]); err == nil && c.Known() {
+				c.Source = "account/rateLimits/updated"
+				s.observeCredits(c, t)
+			}
 			return true
 		case "account/updated":
 			var p struct {
@@ -29,7 +33,7 @@ func (s *Session) accountTelemetryEvent(m map[string]json.RawMessage, ref Ref, t
 			if json.Unmarshal(m["params"], &p) != nil || len(p.Auth) == 0 {
 				return true
 			}
-			a := AccountSnapshot{Observation: observation("account/updated", Measured), Plan: p.Plan}
+			a := harness.AccountSnapshot{Observation: observation("account/updated", harness.Measured), Plan: p.Plan}
 			logged := string(p.Auth) != "null"
 			a.LoggedIn = &logged
 			if logged && json.Unmarshal(p.Auth, &a.AuthMethod) != nil {
@@ -37,8 +41,10 @@ func (s *Session) accountTelemetryEvent(m map[string]json.RawMessage, ref Ref, t
 			}
 			s.mu.Lock()
 			s.telemetry.Account = a
-			// Identity may have changed. Never retain the previous account's quota.
-			s.telemetry.Quota = QuotaSnapshot{Observation: Observation{Reason: "account changed; refresh quota"}}
+			// Identity may have changed. Never retain the previous account's
+			// quota or credits.
+			s.telemetry.Quota = harness.QuotaSnapshot{Observation: harness.Observation{Reason: "account changed; refresh quota"}}
+			s.telemetry.Credits = harness.CreditSnapshot{Observation: harness.Observation{Reason: "account changed; refresh credits"}}
 			recordCapability(&s.caps.Account, nil)
 			s.mu.Unlock()
 			if t != nil {
@@ -61,13 +67,13 @@ func (s *Session) accountTelemetryEvent(m map[string]json.RawMessage, ref Ref, t
 	}
 	return false
 }
-func (s *Session) observeQuota(q QuotaSnapshot, t *Turn) {
+func (s *Session) observeQuota(q harness.QuotaSnapshot, t *Turn) {
 	s.mu.Lock()
 	for i := range q.Windows {
 		q.Windows[i].Source = q.Source
 	}
 	if !q.Complete {
-		windows := map[string]QuotaWindow{}
+		windows := map[string]harness.QuotaWindow{}
 		for _, w := range s.telemetry.Quota.Windows {
 			windows[w.ID] = w
 		}
@@ -90,6 +96,18 @@ func (s *Session) observeQuota(q QuotaSnapshot, t *Turn) {
 	if t != nil {
 		copy := cloneQuota(q)
 		s.emit(t, Event{Kind: "quota", Quota: &copy})
+	}
+}
+
+// observeCredits replaces the credit snapshot: a notification that states
+// credits states all of them.
+func (s *Session) observeCredits(c harness.CreditSnapshot, t *Turn) {
+	s.mu.Lock()
+	s.telemetry.Credits = cloneCredits(c)
+	s.mu.Unlock()
+	if t != nil {
+		copy := cloneCredits(c)
+		s.emit(t, Event{Kind: "credits", Credits: &copy})
 	}
 }
 
@@ -161,7 +179,7 @@ func (s *Session) claudeMessageContext(t *Turn, raw json.RawMessage) {
 	if c.Model != r.Model {
 		c = ContextSnapshot{Model: r.Model}
 	}
-	c.Observation = observation("assistant.message.usage", Estimated)
+	c.Observation = observation("assistant.message.usage", harness.Estimated)
 	c.Reason = "latest model input; pending output and tool results are not counted"
 	c.UsedTokens = &used
 	setContextPercent(&c)
