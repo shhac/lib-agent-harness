@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 // blockedStdin parks the first Write until it is closed, the way a real CLI
@@ -102,7 +104,7 @@ func TestCancelledBlockedWriteClosesSessionOnceWithQueuedSender(t *testing.T) {
 
 	var stops atomic.Int32
 	w := &streamWire{
-		engine:    Codex,
+		engine:    harness.Codex,
 		stdin:     stdin,
 		stdout:    io.NopCloser(strings.NewReader("")),
 		pending:   map[string]chan response{},

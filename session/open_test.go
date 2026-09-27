@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 // The installed CLI's own answers, from Claude Code 2.1.282 run with a
@@ -43,7 +45,7 @@ func TestClaudeProjectKeyFollowsTheCLIsInputs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	o := mustNormalize(t, Options{Engine: Claude, WorkDir: link, Home: t.TempDir()})
+	o := mustNormalize(t, Options{Provider: harness.Provider{Engine: harness.Claude, CLI: harness.CLI{Home: t.TempDir()}}, WorkDir: link})
 	if got, want := claudeProjectKey(o), claudeProjectSlug(resolved); got != want {
 		t.Fatalf("symlinked working directory keyed as %s, want %s", got, want)
 	}
@@ -58,7 +60,7 @@ func TestClaudeProjectKeyFollowsTheCLIsInputs(t *testing.T) {
 }
 
 func TestOpenWithoutAReferenceStarts(t *testing.T) {
-	o, log := persistentOptions(t, Claude)
+	o, log := persistentOptions(t, harness.Claude)
 	ctx := probeContext(t)
 	s, opened, err := Open(ctx, o, nil)
 	if err != nil {
@@ -74,7 +76,7 @@ func TestOpenWithoutAReferenceStarts(t *testing.T) {
 }
 
 func TestOpenResumesAStoredConversation(t *testing.T) {
-	for _, engine := range []Engine{Claude, Codex} {
+	for _, engine := range []harness.Engine{harness.Claude, harness.Codex} {
 		t.Run(string(engine), func(t *testing.T) {
 			o, _ := persistentOptions(t, engine)
 			ctx := probeContext(t)
@@ -101,7 +103,7 @@ func TestOpenResumesAStoredConversation(t *testing.T) {
 // it, and still notices when its transcript is gone.
 func TestOpenResumesAnOrdinaryClaudeSession(t *testing.T) {
 	binary, log := fakeHarness(t, fakeClean, fakePersistEnv+"=1")
-	o := Options{Engine: Claude, Binary: binary, WorkDir: t.TempDir(), Home: t.TempDir()}
+	o := Options{Provider: harness.Provider{Engine: harness.Claude, CLI: harness.CLI{Binary: binary, Home: t.TempDir()}}, WorkDir: t.TempDir()}
 	ctx := probeContext(t)
 	s, _, err := Open(ctx, o, nil)
 	if err != nil {
@@ -115,7 +117,7 @@ func TestOpenResumesAnOrdinaryClaudeSession(t *testing.T) {
 		t.Fatalf("an ordinary session did not resume: %+v %v", opened, err)
 	}
 	resumed.Close()
-	if err = os.RemoveAll(filepath.Join(o.Home, "projects")); err != nil {
+	if err = os.RemoveAll(filepath.Join(o.Provider.CLI.Home, "projects")); err != nil {
 		t.Fatal(err)
 	}
 	fresh, opened, err := Open(ctx, o, &ref)
@@ -129,11 +131,11 @@ func TestOpenResumesAnOrdinaryClaudeSession(t *testing.T) {
 }
 
 func TestOpenStartsFreshForAnIncompatibleReference(t *testing.T) {
-	o, _ := persistentOptions(t, Claude)
+	o, _ := persistentOptions(t, harness.Claude)
 	ctx := probeContext(t)
 	for name, ref := range map[string]Ref{
 		"another model":  reference(mustNormalize(t, withModel(o, "other")), newID()),
-		"another engine": {Engine: Codex, ID: "thread", Home: o.Home, WorkDir: o.WorkDir},
+		"another engine": {Engine: harness.Codex, ID: "thread", Home: o.Provider.CLI.Home, WorkDir: o.WorkDir},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, opened, err := Open(ctx, o, &ref)
@@ -153,7 +155,7 @@ func withModel(o Options, model string) Options { o.Model = model; return o }
 // A conversation the harness no longer has starts fresh. Claude's is checked
 // before launching; Codex's is found missing when thread/resume is refused.
 func TestOpenStartsFreshWhenTheConversationIsGone(t *testing.T) {
-	for _, engine := range []Engine{Claude, Codex} {
+	for _, engine := range []harness.Engine{harness.Claude, harness.Codex} {
 		t.Run(string(engine), func(t *testing.T) {
 			o, log := persistentOptions(t, engine)
 			ctx := probeContext(t)
@@ -164,8 +166,8 @@ func TestOpenStartsFreshWhenTheConversationIsGone(t *testing.T) {
 			runTurn(t, ctx, s, "hello")
 			ref := s.Ref()
 			release(t, ctx, s)
-			gone := filepath.Join(o.Home, "projects")
-			if engine == Codex {
+			gone := filepath.Join(o.Provider.CLI.Home, "projects")
+			if engine == harness.Codex {
 				gone = filepath.Join(o.RuntimeHome, "fake-threads")
 			}
 			if err = os.RemoveAll(gone); err != nil {
@@ -180,7 +182,7 @@ func TestOpenStartsFreshWhenTheConversationIsGone(t *testing.T) {
 				t.Fatalf("a missing conversation reported %+v", opened)
 			}
 			launches := strings.Join(logged(t, log, "args:"), "\n")
-			if engine == Claude {
+			if engine == harness.Claude {
 				if strings.Contains(launches, `"--resume"`) {
 					t.Fatal("a missing transcript was launched with --resume")
 				}
@@ -198,10 +200,10 @@ func TestOpenStartsFreshWhenTheConversationIsGone(t *testing.T) {
 // A transcript can be there and still not be a conversation the CLI will
 // reopen. The resumed harness exits during startup, and Open starts fresh.
 func TestOpenStartsFreshWhenAResumedClaudeExits(t *testing.T) {
-	o, log := persistentOptions(t, Claude)
+	o, log := persistentOptions(t, harness.Claude)
 	ctx := probeContext(t)
 	id := newID()
-	project := filepath.Join(o.Home, "projects", claudeProjectKey(mustNormalize(t, o)))
+	project := filepath.Join(o.Provider.CLI.Home, "projects", claudeProjectKey(mustNormalize(t, o)))
 	if err := os.MkdirAll(project, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -223,8 +225,8 @@ func TestOpenStartsFreshWhenAResumedClaudeExits(t *testing.T) {
 
 // Open never starts a harness over one it cannot confirm gone.
 func TestOpenHoldsAnUnconfirmedLaunch(t *testing.T) {
-	o, log := persistentOptions(t, Claude)
-	if err := recordLaunch(o.Restriction.Tools.Dir, launchRecord{Engine: string(Claude), Launch: "elsewhere", Started: time.Now()}); err != nil {
+	o, log := persistentOptions(t, harness.Claude)
+	if err := recordLaunch(o.Restriction.Tools.Dir, launchRecord{Engine: string(harness.Claude), Launch: "elsewhere", Started: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	s, _, err := Open(probeContext(t), o, nil)
@@ -243,7 +245,7 @@ func TestOpenHoldsAnUnconfirmedLaunch(t *testing.T) {
 // A session that is running holds its lease, and Open refuses rather than
 // reclaiming — and so killing — the harness that session is driving.
 func TestOpenLeavesALiveSessionAlone(t *testing.T) {
-	o, log := persistentOptions(t, Claude)
+	o, log := persistentOptions(t, harness.Claude)
 	ctx := probeContext(t)
 	live, err := Start(ctx, o)
 	if err != nil {
@@ -269,7 +271,7 @@ func TestOpenLeavesALiveSessionAlone(t *testing.T) {
 // live bridge naming it, it cannot be identified as this launch, so it is held
 // rather than signalled or replaced.
 func TestOpenHoldsAnOrphanedHarness(t *testing.T) {
-	o, log := persistentOptions(t, Claude)
+	o, log := persistentOptions(t, harness.Claude)
 	ctx := probeContext(t)
 	orphan, err := Start(ctx, o)
 	if err != nil {
@@ -313,7 +315,7 @@ func TestOpenHoldsAnOrphanedHarness(t *testing.T) {
 // process can take the assignment and launch a harness whose record this
 // launch would then overwrite.
 func TestOpenHoldsTheLeaseFromReclaimToLaunch(t *testing.T) {
-	o, _ := persistentOptions(t, Claude)
+	o, _ := persistentOptions(t, harness.Claude)
 	ctx := probeContext(t)
 	n := mustNormalize(t, o)
 	path := leasePath(n.Restriction.Tools.Dir)
@@ -351,7 +353,7 @@ func TestOpenHoldsTheLeaseFromReclaimToLaunch(t *testing.T) {
 	if lease, err = reclaimBeforeOpen(ctx, n); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = open(ctx, o, &Ref{Engine: Claude, ID: "elsewhere"}, lease); !errors.Is(err, ErrIncompatibleResume) {
+	if _, err = open(ctx, o, &Ref{Engine: harness.Claude, ID: "elsewhere"}, lease); !errors.Is(err, ErrIncompatibleResume) {
 		t.Fatalf("an incompatible resume was not refused: %v", err)
 	}
 	if !leaseFree() {

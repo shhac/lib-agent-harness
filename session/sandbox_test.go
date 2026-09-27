@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 // Sandbox scenarios: how the fake canary behaves, what the fake status check
@@ -140,12 +142,12 @@ func fakeCodexThread(scenario string, overrides map[string]string) map[string]an
 	return result
 }
 
-func sandboxOptions(t *testing.T, engine Engine, binary string, write bool) Options {
+func sandboxOptions(t *testing.T, engine harness.Engine, binary string, write bool) Options {
 	t.Helper()
-	o := Options{Engine: engine, Binary: binary, WorkDir: t.TempDir(), Sandbox: &Sandbox{Write: write}}
-	if engine == Codex {
-		o.Home = t.TempDir()
-		if err := os.WriteFile(filepath.Join(o.Home, codexCredentialFile), []byte(`{"synthetic":true}`), 0600); err != nil {
+	o := Options{Provider: harness.Provider{Engine: engine, CLI: harness.CLI{Binary: binary}}, WorkDir: t.TempDir(), Sandbox: &Sandbox{Write: write}}
+	if engine == harness.Codex {
+		o.Provider.CLI.Home = t.TempDir()
+		if err := os.WriteFile(filepath.Join(o.Provider.CLI.Home, codexCredentialFile), []byte(`{"synthetic":true}`), 0600); err != nil {
 			t.Fatal(err)
 		}
 		o.RuntimeHome = filepath.Join(t.TempDir(), "runtime")
@@ -165,13 +167,13 @@ func capabilityCode(t *testing.T, err error) string {
 func TestSandboxRejectsSettingsItWouldOverride(t *testing.T) {
 	work := t.TempDir()
 	cases := map[string]Options{
-		"restricted and sandboxed": {Engine: Claude, WorkDir: work, Sandbox: &Sandbox{}, Restriction: &Restriction{}},
-		"codex legacy sandbox":     {Engine: Codex, WorkDir: work, RuntimeHome: t.TempDir(), Sandbox: &Sandbox{}, Policy: Policy{CodexSandbox: "workspace-write"}},
-		"codex approval":           {Engine: Codex, WorkDir: work, RuntimeHome: t.TempDir(), Sandbox: &Sandbox{}, Policy: Policy{CodexApproval: "on-request"}},
-		"codex without home":       {Engine: Codex, WorkDir: work, Sandbox: &Sandbox{}},
-		"claude permission":        {Engine: Claude, WorkDir: work, Sandbox: &Sandbox{Write: true}, Policy: Policy{ClaudePermission: "acceptEdits"}},
-		"claude web tool":          {Engine: Claude, WorkDir: work, Sandbox: &Sandbox{Write: true}, Policy: Policy{ClaudeTools: []string{"Bash", "WebFetch"}}},
-		"claude read-only edit":    {Engine: Claude, WorkDir: work, Sandbox: &Sandbox{}, Policy: Policy{ClaudeTools: []string{"Read", "Edit"}}},
+		"restricted and sandboxed": {Provider: harness.Provider{Engine: harness.Claude}, WorkDir: work, Sandbox: &Sandbox{}, Restriction: &Restriction{}},
+		"codex legacy sandbox":     {Provider: harness.Provider{Engine: harness.Codex}, WorkDir: work, RuntimeHome: t.TempDir(), Sandbox: &Sandbox{}, Policy: Policy{CodexSandbox: "workspace-write"}},
+		"codex approval":           {Provider: harness.Provider{Engine: harness.Codex}, WorkDir: work, RuntimeHome: t.TempDir(), Sandbox: &Sandbox{}, Policy: Policy{CodexApproval: "on-request"}},
+		"codex without home":       {Provider: harness.Provider{Engine: harness.Codex}, WorkDir: work, Sandbox: &Sandbox{}},
+		"claude permission":        {Provider: harness.Provider{Engine: harness.Claude}, WorkDir: work, Sandbox: &Sandbox{Write: true}, Policy: Policy{ClaudePermission: "acceptEdits"}},
+		"claude web tool":          {Provider: harness.Provider{Engine: harness.Claude}, WorkDir: work, Sandbox: &Sandbox{Write: true}, Policy: Policy{ClaudeTools: []string{"Bash", "WebFetch"}}},
+		"claude read-only edit":    {Provider: harness.Provider{Engine: harness.Claude}, WorkDir: work, Sandbox: &Sandbox{}, Policy: Policy{ClaudeTools: []string{"Read", "Edit"}}},
 	}
 	for name, o := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -184,7 +186,7 @@ func TestSandboxRejectsSettingsItWouldOverride(t *testing.T) {
 
 func TestSandboxedClaudeArguments(t *testing.T) {
 	for _, write := range []bool{true, false} {
-		o, err := normalize(Options{Engine: Claude, WorkDir: t.TempDir(), Sandbox: &Sandbox{Write: write}})
+		o, err := normalize(Options{Provider: harness.Provider{Engine: harness.Claude}, WorkDir: t.TempDir(), Sandbox: &Sandbox{Write: write}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -235,7 +237,7 @@ func TestSandboxedClaudeArguments(t *testing.T) {
 }
 
 func TestSandboxedCodexThreadCarriesNoLegacyMode(t *testing.T) {
-	o, err := normalize(Options{Engine: Codex, WorkDir: t.TempDir(), RuntimeHome: t.TempDir(), Sandbox: &Sandbox{Write: true}})
+	o, err := normalize(Options{Provider: harness.Provider{Engine: harness.Codex}, WorkDir: t.TempDir(), RuntimeHome: t.TempDir(), Sandbox: &Sandbox{Write: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +250,7 @@ func TestSandboxedCodexThreadCarriesNoLegacyMode(t *testing.T) {
 			t.Fatalf("resume=%v: approval %v", resume, params["approvalPolicy"])
 		}
 	}
-	ordinary, err := normalize(Options{Engine: Codex, WorkDir: t.TempDir()})
+	ordinary, err := normalize(Options{Provider: harness.Provider{Engine: harness.Codex}, WorkDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +263,7 @@ func TestSandboxIsPartOfTheReference(t *testing.T) {
 	work, home := t.TempDir(), t.TempDir()
 	hashes := map[string]bool{}
 	for _, sandbox := range []*Sandbox{nil, {Write: false}, {Write: true}} {
-		o, err := normalize(Options{Engine: Claude, WorkDir: work, Home: home, Sandbox: sandbox})
+		o, err := normalize(Options{Provider: harness.Provider{Engine: harness.Claude, CLI: harness.CLI{Home: home}}, WorkDir: work, Sandbox: sandbox})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -331,7 +333,7 @@ func TestCodexSandboxCanary(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.scenario, func(t *testing.T) {
 			binary, log := fakeHarness(t, c.scenario)
-			err := VerifySandbox(context.Background(), sandboxOptions(t, Codex, binary, c.write))
+			err := VerifySandbox(context.Background(), sandboxOptions(t, harness.Codex, binary, c.write))
 			if c.want == "" {
 				if err != nil {
 					t.Fatal(err)
@@ -358,7 +360,7 @@ func TestClaudeSandboxStatus(t *testing.T) {
 	for scenario, want := range cases {
 		t.Run(scenario, func(t *testing.T) {
 			binary, log := fakeHarness(t, scenario)
-			err := VerifySandbox(context.Background(), sandboxOptions(t, Claude, binary, true))
+			err := VerifySandbox(context.Background(), sandboxOptions(t, harness.Claude, binary, true))
 			if want == "" {
 				if err != nil {
 					t.Fatal(err)
@@ -375,7 +377,7 @@ func TestClaudeSandboxStatus(t *testing.T) {
 
 func TestSandboxEvidenceIsCachedPerBinaryAndMode(t *testing.T) {
 	binary, log := fakeHarness(t, fakeSandboxOK)
-	o := sandboxOptions(t, Codex, binary, true)
+	o := sandboxOptions(t, harness.Codex, binary, true)
 	for range 2 {
 		if err := VerifySandbox(context.Background(), o); err != nil {
 			t.Fatal(err)
@@ -396,7 +398,7 @@ func TestSandboxEvidenceIsCachedPerBinaryAndMode(t *testing.T) {
 func TestSandboxedCodexSessionChecksItsThread(t *testing.T) {
 	t.Setenv("LIB_HARNESS_SESSION_FIXTURE", "1")
 	binary, log := fakeHarness(t, fakeSandboxOK)
-	s, err := Start(context.Background(), sandboxOptions(t, Codex, binary, true))
+	s, err := Start(context.Background(), sandboxOptions(t, harness.Codex, binary, true))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -408,7 +410,7 @@ func TestSandboxedCodexSessionChecksItsThread(t *testing.T) {
 	}
 
 	binary, log = fakeHarness(t, fakeSandboxLegacy)
-	s, err = Start(context.Background(), sandboxOptions(t, Codex, binary, true))
+	s, err = Start(context.Background(), sandboxOptions(t, harness.Codex, binary, true))
 	if s != nil {
 		s.Close()
 		t.Fatal("a session running without its profile was returned")
@@ -424,7 +426,7 @@ func TestSandboxedCodexSessionChecksItsThread(t *testing.T) {
 
 func TestSandboxedCodexFailingCanaryStartsNothing(t *testing.T) {
 	binary, log := fakeHarness(t, fakeCanaryNetwork)
-	s, err := Start(context.Background(), sandboxOptions(t, Codex, binary, true))
+	s, err := Start(context.Background(), sandboxOptions(t, harness.Codex, binary, true))
 	if s != nil {
 		s.Close()
 		t.Fatal("session started")
@@ -473,7 +475,7 @@ func TestOpenCanaryEscapesAreEachDetected(t *testing.T) {
 func TestSandboxedCodexResumeChecksItsThread(t *testing.T) {
 	t.Setenv("LIB_HARNESS_SESSION_FIXTURE", "1")
 	binary, _ := fakeHarness(t, fakeResumeLegacy)
-	o := sandboxOptions(t, Codex, binary, true)
+	o := sandboxOptions(t, harness.Codex, binary, true)
 	s, err := Start(context.Background(), o)
 	if err != nil {
 		t.Fatal(err)
@@ -483,7 +485,7 @@ func TestSandboxedCodexResumeChecksItsThread(t *testing.T) {
 		t.Fatal(err)
 	}
 	binary, _ = fakeHarness(t, fakeResumeLegacy, "AGENT_HARNESS_TEST_RESUMING=1")
-	o.Binary = binary
+	o.Provider.CLI.Binary = binary
 	ref = reference(mustNormalize(t, o), ref.ID)
 	resumed, err := Resume(context.Background(), o, ref)
 	if resumed != nil {
@@ -499,7 +501,7 @@ func TestSandboxedCodexResumeChecksItsThread(t *testing.T) {
 func TestSandboxedCodexReleaseReturnsARefreshedLogin(t *testing.T) {
 	t.Setenv("LIB_HARNESS_SESSION_FIXTURE", "1")
 	binary, _ := fakeHarness(t, fakeSandboxOK, fakeRefreshEnv+`={"refreshed":true}`)
-	o := sandboxOptions(t, Codex, binary, true)
+	o := sandboxOptions(t, harness.Codex, binary, true)
 	s, err := Start(context.Background(), o)
 	if err != nil {
 		t.Fatal(err)
@@ -508,7 +510,7 @@ func TestSandboxedCodexReleaseReturnsARefreshedLogin(t *testing.T) {
 	if err != nil || !out.Confirmed {
 		t.Fatalf("release: %+v %v", out, err)
 	}
-	raw, err := os.ReadFile(filepath.Join(o.Home, codexCredentialFile))
+	raw, err := os.ReadFile(filepath.Join(o.Provider.CLI.Home, codexCredentialFile))
 	if err != nil || string(raw) != `{"refreshed":true}` {
 		t.Fatalf("refreshed login was not returned to the source home: %q %v", raw, err)
 	}
@@ -516,8 +518,8 @@ func TestSandboxedCodexReleaseReturnsARefreshedLogin(t *testing.T) {
 
 func TestVerifySandboxRequiresACodexLogin(t *testing.T) {
 	binary, log := fakeHarness(t, fakeSandboxOK)
-	o := sandboxOptions(t, Codex, binary, true)
-	if err := os.Remove(filepath.Join(o.Home, codexCredentialFile)); err != nil {
+	o := sandboxOptions(t, harness.Codex, binary, true)
+	if err := os.Remove(filepath.Join(o.Provider.CLI.Home, codexCredentialFile)); err != nil {
 		t.Fatal(err)
 	}
 	if code := capabilityCode(t, VerifySandbox(context.Background(), o)); code != CapabilityLoginUnavailable {
@@ -558,7 +560,7 @@ func TestClaudeSandboxKeepsOperatorInstructionsOut(t *testing.T) {
 	if err != nil {
 		t.Skip("no home directory")
 	}
-	o, err := normalize(Options{Engine: Claude, WorkDir: t.TempDir(), Sandbox: &Sandbox{Write: true}})
+	o, err := normalize(Options{Provider: harness.Provider{Engine: harness.Claude}, WorkDir: t.TempDir(), Sandbox: &Sandbox{Write: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -588,7 +590,7 @@ func TestClaudeSandboxKeepsOperatorInstructionsOut(t *testing.T) {
 }
 
 func TestEnvAdditionsComeLastAndCannotTouchManagedKeys(t *testing.T) {
-	o, err := normalize(Options{Engine: Claude, WorkDir: t.TempDir(), Env: []string{"GOCACHE=/work/.crew/go", "TMPDIR=/work/.crew/tmp"}})
+	o, err := normalize(Options{Provider: harness.Provider{Engine: harness.Claude}, WorkDir: t.TempDir(), Env: []string{"GOCACHE=/work/.crew/go", "TMPDIR=/work/.crew/tmp"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -598,7 +600,7 @@ func TestEnvAdditionsComeLastAndCannotTouchManagedKeys(t *testing.T) {
 	}
 	for _, bad := range []string{"HOME=/x", "PATH=/x", "CODEX_HOME=/x", "ANTHROPIC_API_KEY=x", "CLAUDE_CODE_USE_BEDROCK=1", "no-equals", "1BAD=x",
 		"DYLD_INSERT_LIBRARIES=/x", "LD_PRELOAD=/x", "NODE_OPTIONS=--require=/x", "HTTPS_PROXY=http://x", "https_proxy=http://x", "GIT_DIR=/x", "SSL_CERT_FILE=/x"} {
-		if _, err := normalize(Options{Engine: Claude, WorkDir: t.TempDir(), Env: []string{bad}}); err == nil {
+		if _, err := normalize(Options{Provider: harness.Provider{Engine: harness.Claude}, WorkDir: t.TempDir(), Env: []string{bad}}); err == nil {
 			t.Errorf("accepted %s", bad)
 		}
 	}
@@ -607,7 +609,7 @@ func TestEnvAdditionsComeLastAndCannotTouchManagedKeys(t *testing.T) {
 func TestSandboxedSessionsInheritOnlyWhatTheyNeed(t *testing.T) {
 	t.Setenv("CREW_TEST_SECRET_TOKEN", "should-not-leak")
 	t.Setenv("LC_ALL", "C")
-	o, err := normalize(Options{Engine: Claude, WorkDir: t.TempDir(), Sandbox: &Sandbox{Write: true}, Env: []string{"TMPDIR=/work/.crew/tmp"}})
+	o, err := normalize(Options{Provider: harness.Provider{Engine: harness.Claude}, WorkDir: t.TempDir(), Sandbox: &Sandbox{Write: true}, Env: []string{"TMPDIR=/work/.crew/tmp"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -620,7 +622,7 @@ func TestSandboxedSessionsInheritOnlyWhatTheyNeed(t *testing.T) {
 			t.Errorf("sandboxed session environment lacks %s", want)
 		}
 	}
-	ordinary, err := normalize(Options{Engine: Claude, WorkDir: t.TempDir()})
+	ordinary, err := normalize(Options{Provider: harness.Provider{Engine: harness.Claude}, WorkDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -631,7 +633,7 @@ func TestSandboxedSessionsInheritOnlyWhatTheyNeed(t *testing.T) {
 
 func TestSandboxReadPathsReopenOnlyWhatIsNamed(t *testing.T) {
 	cache := t.TempDir()
-	o, err := normalize(Options{Engine: Claude, WorkDir: t.TempDir(), Sandbox: &Sandbox{Write: true, Read: []string{cache}}})
+	o, err := normalize(Options{Provider: harness.Provider{Engine: harness.Claude}, WorkDir: t.TempDir(), Sandbox: &Sandbox{Write: true, Read: []string{cache}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -654,11 +656,11 @@ func TestSandboxReadPathsReopenOnlyWhatIsNamed(t *testing.T) {
 		t.Skip("no home directory")
 	}
 	for _, bad := range []string{"relative/cache", cache + "/../x", "/", home, filepath.Dir(home)} {
-		if _, err := normalize(Options{Engine: Claude, WorkDir: t.TempDir(), Sandbox: &Sandbox{Read: []string{bad}}}); err == nil {
+		if _, err := normalize(Options{Provider: harness.Provider{Engine: harness.Claude}, WorkDir: t.TempDir(), Sandbox: &Sandbox{Read: []string{bad}}}); err == nil {
 			t.Errorf("accepted read path %q", bad)
 		}
 	}
-	plain, err := normalize(Options{Engine: Claude, WorkDir: t.TempDir(), Sandbox: &Sandbox{}})
+	plain, err := normalize(Options{Provider: harness.Provider{Engine: harness.Claude}, WorkDir: t.TempDir(), Sandbox: &Sandbox{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -683,8 +685,8 @@ func TestSandboxedClaudeWeb(t *testing.T) {
 	}
 	for _, write := range []bool{true, false} {
 		work := t.TempDir()
-		closed := mustNormalize(t, Options{Engine: Claude, WorkDir: work, Sandbox: &Sandbox{Write: write}})
-		open := mustNormalize(t, Options{Engine: Claude, WorkDir: work, Sandbox: &Sandbox{Write: write, Web: true}})
+		closed := mustNormalize(t, Options{Provider: harness.Provider{Engine: harness.Claude}, WorkDir: work, Sandbox: &Sandbox{Write: write}})
+		open := mustNormalize(t, Options{Provider: harness.Provider{Engine: harness.Claude}, WorkDir: work, Sandbox: &Sandbox{Write: write, Web: true}})
 		closedArgs := commandArgs(closed, "id", false, &launch{extra: claudeSandboxArgs(closed)})
 		openArgs := commandArgs(open, "id", false, &launch{extra: claudeSandboxArgs(open)})
 		want := "--tools=" + strings.Join(append(sandboxClaudeTools(write, false), "WebFetch", "WebSearch"), ",")
@@ -712,7 +714,7 @@ func TestSandboxedClaudeWeb(t *testing.T) {
 			t.Fatalf("write=%v: a domain rule would reach the shell's allowlist", write)
 		}
 	}
-	if _, err := normalize(Options{Engine: Claude, WorkDir: t.TempDir(), Sandbox: &Sandbox{Web: true}, Policy: Policy{ClaudeTools: []string{"Bash", "WebSearch"}}}); err != nil {
+	if _, err := normalize(Options{Provider: harness.Provider{Engine: harness.Claude}, WorkDir: t.TempDir(), Sandbox: &Sandbox{Web: true}, Policy: Policy{ClaudeTools: []string{"Bash", "WebSearch"}}}); err != nil {
 		t.Fatalf("a web sandbox refused a web tool: %v", err)
 	}
 }
@@ -737,8 +739,8 @@ func TestSandboxedCodexWeb(t *testing.T) {
 // without it keeps the digest earlier releases wrote.
 func TestSandboxWebIsPartOfTheReference(t *testing.T) {
 	work, home := t.TempDir(), t.TempDir()
-	closed := mustNormalize(t, Options{Engine: Claude, WorkDir: work, Home: home, Sandbox: &Sandbox{Write: true}})
-	open := mustNormalize(t, Options{Engine: Claude, WorkDir: work, Home: home, Sandbox: &Sandbox{Write: true, Web: true}})
+	closed := mustNormalize(t, Options{Provider: harness.Provider{Engine: harness.Claude, CLI: harness.CLI{Home: home}}, WorkDir: work, Sandbox: &Sandbox{Write: true}})
+	open := mustNormalize(t, Options{Provider: harness.Provider{Engine: harness.Claude, CLI: harness.CLI{Home: home}}, WorkDir: work, Sandbox: &Sandbox{Write: true, Web: true}})
 	if reference(closed, "id").ConfigHash == reference(open, "id").ConfigHash {
 		t.Fatal("a resume could open the web without changing the reference")
 	}
@@ -747,7 +749,7 @@ func TestSandboxWebIsPartOfTheReference(t *testing.T) {
 		Instructions          Instructions
 		Policy                Policy
 		ToolsSpecified        bool
-	}{closed.Binary, closed.Model, closed.Effort, closed.Instructions, closed.Policy, true})
+	}{closed.Provider.CLI.Binary, closed.Model, closed.Effort, closed.Instructions, closed.Policy, true})
 	earlier, _ := json.Marshal(struct {
 		Legacy      any
 		Sandboxed   bool
@@ -763,7 +765,7 @@ func TestSandboxWebIsPartOfTheReference(t *testing.T) {
 
 func TestSandboxWebEvidenceIsSeparate(t *testing.T) {
 	binary, log := fakeHarness(t, fakeSandboxOK)
-	o := sandboxOptions(t, Codex, binary, true)
+	o := sandboxOptions(t, harness.Codex, binary, true)
 	for _, web := range []bool{false, true} {
 		o.Sandbox = &Sandbox{Write: true, Web: web}
 		if err := VerifySandbox(context.Background(), o); err != nil {

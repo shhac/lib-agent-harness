@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf16"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 // Opened says how Open produced a session.
@@ -55,7 +57,7 @@ func Open(ctx context.Context, o Options, ref *Ref) (*Session, Opened, error) {
 	if !compatible(n, *ref) {
 		return openFresh(ctx, o, FreshIncompatible, lease)
 	}
-	if n.Engine == Claude && !claudeConversationStored(n, ref.ID) {
+	if n.Provider.Engine == harness.Claude && !claudeConversationStored(n, ref.ID) {
 		return openFresh(ctx, o, FreshUnavailable, lease)
 	}
 	s, err := open(ctx, o, ref, lease)
@@ -116,7 +118,7 @@ func claudeConversationStored(o Options, id string) bool {
 	if !claudeSessionID.MatchString(id) {
 		return false
 	}
-	projects := filepath.Join(o.Home, "projects")
+	projects := filepath.Join(o.Provider.CLI.Home, "projects")
 	if transcriptPresent(filepath.Join(projects, claudeProjectKey(o), id+".jsonl")) {
 		return true
 	}
@@ -138,9 +140,9 @@ func transcriptPresent(path string) bool {
 }
 
 // claudeProjectKey names the folder the CLI keeps this working directory's
-// transcripts in. The session's config directory is Options.Home: the harness
-// passes it as CLAUDE_CONFIG_DIR, or leaves it unset when it is the CLI's own
-// default. CLAUDE_CODE_PROJECT_DIR_NAME, inherited from this process, replaces
+// transcripts in. The session's config directory is Options.Provider.CLI.Home:
+// the harness passes it as CLAUDE_CONFIG_DIR, or leaves it unset when it is the
+// CLI's own default. CLAUDE_CODE_PROJECT_DIR_NAME, inherited from this process, replaces
 // the key when a config directory is set, as it does in the CLI.
 func claudeProjectKey(o Options) string {
 	env := environment(o)

@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/process"
 )
 
@@ -24,7 +25,7 @@ import (
 func probeRestriction(ctx context.Context, o Options, l *launch) error {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return &CapabilityError{Engine: string(o.Engine), Code: CapabilityProbeFailed, Phase: BeforeLaunch}
+		return &CapabilityError{Engine: o.Provider.Engine, Code: CapabilityProbeFailed, Phase: BeforeLaunch}
 	}
 	var mu sync.Mutex
 	captured := [][]byte{}
@@ -56,7 +57,7 @@ func probeRestriction(ctx context.Context, o Options, l *launch) error {
 
 	dir, err := os.MkdirTemp("", "agent-harness-probe-")
 	if err != nil {
-		return &CapabilityError{Engine: string(o.Engine), Code: CapabilityProbeFailed, Phase: BeforeLaunch}
+		return &CapabilityError{Engine: o.Provider.Engine, Code: CapabilityProbeFailed, Phase: BeforeLaunch}
 	}
 	defer os.RemoveAll(dir)
 	probeCtx, cancel := context.WithTimeout(ctx, o.Restriction.Probe)
@@ -92,22 +93,22 @@ func probeRestriction(ctx context.Context, o Options, l *launch) error {
 func judgeProbe(o Options, requests [][]byte, timedOut bool, runErr error, served bool) error {
 	if len(requests) == 0 {
 		if timedOut {
-			return &CapabilityError{Engine: string(o.Engine), Code: CapabilityProbeTimeout, Phase: BeforeLaunch}
+			return &CapabilityError{Engine: o.Provider.Engine, Code: CapabilityProbeTimeout, Phase: BeforeLaunch}
 		}
 		if runErr != nil {
-			return &CapabilityError{Engine: string(o.Engine), Code: CapabilityProbeFailed, Phase: BeforeLaunch}
+			return &CapabilityError{Engine: o.Provider.Engine, Code: CapabilityProbeFailed, Phase: BeforeLaunch}
 		}
-		return &CapabilityError{Engine: string(o.Engine), Code: CapabilityProbeNoRequest, Phase: BeforeLaunch}
+		return &CapabilityError{Engine: o.Provider.Engine, Code: CapabilityProbeNoRequest, Phase: BeforeLaunch}
 	}
 	hosted := toolNames(o.Restriction.Tools.Tools)
 	var surfaces []requestSurface
 	for _, body := range requests {
 		if body == nil {
-			return &CapabilityError{Engine: string(o.Engine), Code: CapabilityProbeUnreadable, Phase: BeforeLaunch}
+			return &CapabilityError{Engine: o.Provider.Engine, Code: CapabilityProbeUnreadable, Phase: BeforeLaunch}
 		}
 		surface, ok := readSurface(body, o.Restriction.Tools.Server)
 		if !ok {
-			return &CapabilityError{Engine: string(o.Engine), Code: CapabilityProbeUnreadable, Phase: BeforeLaunch}
+			return &CapabilityError{Engine: o.Provider.Engine, Code: CapabilityProbeUnreadable, Phase: BeforeLaunch}
 		}
 		surfaces = append(surfaces, surface)
 		if failure := inspectRequestIdentity(o, body); failure != nil {
@@ -119,7 +120,7 @@ func judgeProbe(o Options, requests [][]byte, timedOut bool, runErr error, serve
 	//
 	// Assign before returning: a typed nil pointer returned straight into an
 	// error result is not nil, and every passing check would read as a failure.
-	if failure := judgeSurfaces(string(o.Engine), hosted, surfaces, served); failure != nil {
+	if failure := judgeSurfaces(o.Provider.Engine, hosted, surfaces, served); failure != nil {
 		return failure
 	}
 	return nil
@@ -129,7 +130,7 @@ func judgeProbe(o Options, requests [][]byte, timedOut bool, runErr error, serve
 // than its tool surface: that the selected model and effort survived, and that
 // no inherited instruction material was merged in.
 func inspectRequestIdentity(o Options, body []byte) *CapabilityError {
-	if o.Engine != Codex {
+	if o.Provider.Engine != harness.Codex {
 		return nil
 	}
 	var request struct {
@@ -139,18 +140,18 @@ func inspectRequestIdentity(o Options, body []byte) *CapabilityError {
 		} `json:"reasoning"`
 	}
 	if json.Unmarshal(body, &request) != nil {
-		return &CapabilityError{Engine: string(o.Engine), Code: CapabilityProbeUnreadable, Phase: BeforeLaunch}
+		return &CapabilityError{Engine: o.Provider.Engine, Code: CapabilityProbeUnreadable, Phase: BeforeLaunch}
 	}
 	// Auxiliary requests need not name the model; only a request that does is
 	// evidence about it.
 	if request.Model != "" && request.Model != o.Model {
-		return &CapabilityError{Engine: string(o.Engine), Code: CapabilityChangedModel, Phase: BeforeLaunch}
+		return &CapabilityError{Engine: o.Provider.Engine, Code: CapabilityChangedModel, Phase: BeforeLaunch}
 	}
 	if o.Effort != "" && request.Reasoning.Effort != "" && request.Reasoning.Effort != o.Effort {
-		return &CapabilityError{Engine: string(o.Engine), Code: CapabilityChangedEffort, Phase: BeforeLaunch}
+		return &CapabilityError{Engine: o.Provider.Engine, Code: CapabilityChangedEffort, Phase: BeforeLaunch}
 	}
 	if bytes.Contains(body, []byte("# AGENTS.md instructions")) {
-		return &CapabilityError{Engine: string(o.Engine), Code: CapabilityInstructionsMerged, Phase: BeforeLaunch}
+		return &CapabilityError{Engine: o.Provider.Engine, Code: CapabilityInstructionsMerged, Phase: BeforeLaunch}
 	}
 	return nil
 }
@@ -169,7 +170,7 @@ func driveProbe(ctx context.Context, o Options, l *launch, dir, endpoint string)
 	env := disposableEnvironment(o, dir)
 	id := newID()
 	args := commandArgs(o, id, false, l)
-	if o.Engine == Claude {
+	if o.Provider.Engine == harness.Claude {
 		env = append(env, "ANTHROPIC_API_KEY=agent-harness-local-probe", "ANTHROPIC_BASE_URL=http://"+endpoint, "MAX_RETRIES=0", "DISABLE_AUTOUPDATER=1", "DISABLE_TELEMETRY=1")
 		return driveClaudeProbe(ctx, o, args, id, dir, env)
 	}
@@ -180,7 +181,7 @@ func driveProbe(ctx context.Context, o Options, l *launch, dir, endpoint string)
 
 func driveClaudeProbe(ctx context.Context, o Options, args []string, id, dir string, env []string) error {
 	prompt, _ := json.Marshal(claudeUserFrame(id, "Capability check only."))
-	cmd, p, err := process.Command(ctx, o.Binary, args...)
+	cmd, p, err := process.Command(ctx, o.Provider.CLI.Binary, args...)
 	if err != nil {
 		return err
 	}

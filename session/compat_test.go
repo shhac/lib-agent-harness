@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 // An ordinary session's reference digest is persisted by callers and has to keep
@@ -20,7 +22,7 @@ import (
 // shape that existed before restricted sessions were added; if it moves, every
 // stored reference for an ordinary session stops resuming.
 func TestOrdinaryReferenceDigestIsUnchanged(t *testing.T) {
-	o, err := normalize(Options{Engine: Claude, Binary: "claude", Model: "haiku", Effort: "low", WorkDir: t.TempDir(), Home: t.TempDir()})
+	o, err := normalize(Options{Provider: harness.Provider{Engine: harness.Claude, CLI: harness.CLI{Binary: "claude", Home: t.TempDir()}}, Model: "haiku", Effort: "low", WorkDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +31,7 @@ func TestOrdinaryReferenceDigestIsUnchanged(t *testing.T) {
 		Instructions          Instructions
 		Policy                Policy
 		ToolsSpecified        bool
-	}{o.Binary, o.Model, o.Effort, o.Instructions, o.Policy, false})
+	}{o.Provider.CLI.Binary, o.Model, o.Effort, o.Instructions, o.Policy, false})
 	expected := digestOf(legacy)
 	if got := reference(o, "s1").ConfigHash; got != expected {
 		t.Fatalf("ordinary reference digest changed:\n got %s\nwant %s", got, expected)
@@ -57,7 +59,7 @@ func TestNormalizeDoesNotMutateTheCallersRestriction(t *testing.T) {
 		Tools:   []ToolDefinition{{Name: "read_file", Schema: schema}},
 		Handler: echoHandler(t), Dir: privateDir(t), Bridge: Bridge{Path: "/usr/bin/true"},
 	}}
-	o := Options{Engine: Claude, Binary: "claude", Model: "haiku", WorkDir: t.TempDir(), Home: t.TempDir(), RuntimeHome: t.TempDir(), Restriction: caller}
+	o := Options{Provider: harness.Provider{Engine: harness.Claude, CLI: harness.CLI{Binary: "claude", Home: t.TempDir()}}, Model: "haiku", WorkDir: t.TempDir(), RuntimeHome: t.TempDir(), Restriction: caller}
 	normalized, err := normalize(o)
 	if err != nil {
 		t.Fatal(err)
@@ -106,8 +108,8 @@ func TestUnidentifiedLaunchMarkerReservesTheAssignment(t *testing.T) {
 func TestConfirmedFailedLaunchSettlesItsMarker(t *testing.T) {
 	dir := privateDir(t)
 	o, err := normalize(Options{
-		Engine: Claude, Binary: filepath.Join(t.TempDir(), "absent-harness"),
-		WorkDir: t.TempDir(), Home: t.TempDir(), RuntimeHome: t.TempDir(),
+		Provider: harness.Provider{Engine: harness.Claude, CLI: harness.CLI{Binary: filepath.Join(t.TempDir(), "absent-harness"), Home: t.TempDir()}},
+		WorkDir:  t.TempDir(), RuntimeHome: t.TempDir(),
 		Restriction: &Restriction{Tools: ToolHost{
 			Server: "agent_workspace", Handler: echoHandler(t), Dir: dir,
 			Bridge: Bridge{Path: "/usr/bin/true"},
@@ -152,7 +154,7 @@ func TestLiveLaunchIsNotSettledAsFailed(t *testing.T) {
 		t.Fatal(err)
 	}
 	o, err := normalize(Options{
-		Engine: Claude, Binary: "/usr/bin/true", WorkDir: t.TempDir(), Home: t.TempDir(), RuntimeHome: t.TempDir(),
+		Provider: harness.Provider{Engine: harness.Claude, CLI: harness.CLI{Binary: "/usr/bin/true", Home: t.TempDir()}}, WorkDir: t.TempDir(), RuntimeHome: t.TempDir(),
 		Restriction: &Restriction{Tools: ToolHost{
 			Server: "agent_workspace", Handler: echoHandler(t), Dir: dir,
 			Bridge: Bridge{Path: "/usr/bin/true"},

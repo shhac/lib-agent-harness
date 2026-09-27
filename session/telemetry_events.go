@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"math"
 	"sort"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 // Account and quota updates can arrive while idle or after a turn's result.
 // They must not disappear behind the active-turn gate used for model output.
 func (s *Session) accountTelemetryEvent(m map[string]json.RawMessage, ref Ref, t *Turn) bool {
-	if s.options.Engine == Codex {
+	if s.options.Provider.Engine == harness.Codex {
 		switch str(m, "method") {
 		case "account/rateLimits/updated":
 			q, err := parseCodexQuota(m["params"])
@@ -191,7 +193,7 @@ func (s *Session) claudeModelCapacity(t *Turn, raw json.RawMessage) {
 // Late telemetry and resumed-thread observations can arrive outside a live turn.
 // Update the session snapshot without reopening a finished turn's event stream.
 func (s *Session) idleTelemetry(m map[string]json.RawMessage, ref Ref, last *Turn) {
-	if s.accountTelemetryEvent(m, ref, nil) || s.options.Engine != Codex {
+	if s.accountTelemetryEvent(m, ref, nil) || s.options.Provider.Engine != harness.Codex {
 		return
 	}
 	var p map[string]json.RawMessage

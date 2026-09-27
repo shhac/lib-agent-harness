@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 type fakeWire struct {
@@ -46,9 +48,9 @@ func (w *fakeWire) request(ctx context.Context, method string, p map[string]any)
 	return json.RawMessage(`{}`), nil
 }
 func (w *fakeWire) close() { w.mu.Lock(); w.closed = true; w.mu.Unlock() }
-func fakeSession(t *testing.T, e Engine) (*Session, *fakeWire) {
+func fakeSession(t *testing.T, e harness.Engine) (*Session, *fakeWire) {
 	t.Helper()
-	o, err := normalize(Options{Engine: e, WorkDir: t.TempDir(), Home: t.TempDir()})
+	o, err := normalize(Options{Provider: harness.Provider{Engine: e, CLI: harness.CLI{Home: t.TempDir()}}, WorkDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +81,7 @@ func finishClaude(s *Session, failed bool) {
 }
 
 func TestCodexBuffersEventsBeforeStartResponse(t *testing.T) {
-	s, w := fakeSession(t, Codex)
+	s, w := fakeSession(t, harness.Codex)
 	ctx := testContext(t)
 	w.requestFn = func(method string, p map[string]any) (json.RawMessage, error) {
 		if method != "turn/start" {
@@ -108,7 +110,7 @@ func TestCodexBuffersEventsBeforeStartResponse(t *testing.T) {
 	}
 }
 func TestClaudeComposedSteerWaitsForTerminal(t *testing.T) {
-	s, w := fakeSession(t, Claude)
+	s, w := fakeSession(t, harness.Claude)
 	ctx := testContext(t)
 	turn, err := s.StartTurn(ctx, Input{"initial"})
 	if err != nil {
@@ -136,7 +138,7 @@ func TestClaudeComposedSteerWaitsForTerminal(t *testing.T) {
 	if err := <-errs; err != nil {
 		t.Fatal(err)
 	}
-	if next.Strategy != Composed || next.Turn == turn || next.Turn.ID() == turn.ID() {
+	if next.Strategy != harness.Composed || next.Turn == turn || next.Turn.ID() == turn.ID() {
 		t.Fatalf("%+v", next)
 	}
 	old, err := turn.Wait(ctx)
@@ -148,7 +150,7 @@ func TestClaudeComposedSteerWaitsForTerminal(t *testing.T) {
 	if err != nil || result.Text != "answer" || result.Usage.CacheRead != 40 {
 		t.Fatalf("%+v %v", result, err)
 	}
-	if s.Capabilities().Steer.Availability != Composed {
+	if s.Capabilities().Steer.Availability != harness.Composed {
 		t.Fatal("unrecorded capability")
 	}
 	w.mu.Lock()
@@ -159,7 +161,7 @@ func TestClaudeComposedSteerWaitsForTerminal(t *testing.T) {
 	}
 }
 func TestSteerRequiresNativeAndExpectedTurn(t *testing.T) {
-	s, w := fakeSession(t, Claude)
+	s, w := fakeSession(t, harness.Claude)
 	ctx := testContext(t)
 	turn, err := s.StartTurn(ctx, Input{"initial"})
 	if err != nil {
@@ -184,7 +186,7 @@ func TestSteerRequiresNativeAndExpectedTurn(t *testing.T) {
 	}
 }
 func TestCodexSteerPreservesTurnAndUnsupportedCapability(t *testing.T) {
-	s, w := fakeSession(t, Codex)
+	s, w := fakeSession(t, harness.Codex)
 	ctx := testContext(t)
 	w.requestFn = func(method string, p map[string]any) (json.RawMessage, error) {
 		return json.RawMessage(`{"turn":{"id":"turn-1"}}`), nil
@@ -200,19 +202,19 @@ func TestCodexSteerPreservesTurnAndUnsupportedCapability(t *testing.T) {
 		return json.RawMessage(`{"turnId":"turn-1"}`), nil
 	}
 	r, err := s.Steer(ctx, turn.ID(), Input{"new"}, SteerOptions{RequireNative: true})
-	if err != nil || r.Turn != turn || r.Strategy != Native {
+	if err != nil || r.Turn != turn || r.Strategy != harness.Native {
 		t.Fatalf("%+v %v", r, err)
 	}
 	w.requestFn = func(string, map[string]any) (json.RawMessage, error) { return nil, ErrUnsupported }
 	_, err = s.Steer(ctx, turn.ID(), Input{"new"}, SteerOptions{})
-	if !errors.Is(err, ErrUnsupported) || s.Capabilities().Steer.Availability != Unsupported {
+	if !errors.Is(err, ErrUnsupported) || s.Capabilities().Steer.Availability != harness.Unsupported {
 		t.Fatal(err)
 	}
 }
 func TestUncertainControlClosesSession(t *testing.T) {
 	for _, operation := range []string{"steer", "interrupt"} {
 		t.Run(operation, func(t *testing.T) {
-			s, w := fakeSession(t, Codex)
+			s, w := fakeSession(t, harness.Codex)
 			ctx := testContext(t)
 			w.requestFn = func(string, map[string]any) (json.RawMessage, error) {
 				return json.RawMessage(`{"turn":{"id":"turn-1"}}`), nil
@@ -237,7 +239,7 @@ func TestUncertainControlClosesSession(t *testing.T) {
 	}
 }
 func TestBackpressureStopsInsteadOfDropping(t *testing.T) {
-	s, _ := fakeSession(t, Claude)
+	s, _ := fakeSession(t, harness.Claude)
 	s.options.EventBuffer = 1
 	ctx := testContext(t)
 	turn, err := s.StartTurn(ctx, Input{"start"})
@@ -251,7 +253,7 @@ func TestBackpressureStopsInsteadOfDropping(t *testing.T) {
 	}
 }
 func TestTurnCancellationAndConcurrentClose(t *testing.T) {
-	s, _ := fakeSession(t, Claude)
+	s, _ := fakeSession(t, harness.Claude)
 	ctx, cancel := context.WithCancel(context.Background())
 	turn, err := s.StartTurn(ctx, Input{"start"})
 	if err != nil {
@@ -270,7 +272,7 @@ func TestTurnCancellationAndConcurrentClose(t *testing.T) {
 	wg.Wait()
 }
 func TestFailedResultOmitsProviderError(t *testing.T) {
-	s, _ := fakeSession(t, Claude)
+	s, _ := fakeSession(t, harness.Claude)
 	ctx := testContext(t)
 	turn, err := s.StartTurn(ctx, Input{"start"})
 	if err != nil {
@@ -283,7 +285,7 @@ func TestFailedResultOmitsProviderError(t *testing.T) {
 	}
 }
 func TestResumeIdentityAndNativeEnvironment(t *testing.T) {
-	o, err := normalize(Options{Engine: Claude, Home: t.TempDir(), WorkDir: t.TempDir(), AccountIdentity: "personal", Instructions: Instructions{Append, "private instructions"}, Policy: Policy{ClaudeTools: []string{}}})
+	o, err := normalize(Options{Provider: harness.Provider{Engine: harness.Claude, CLI: harness.CLI{Home: t.TempDir()}}, WorkDir: t.TempDir(), AccountIdentity: "personal", Instructions: Instructions{Append, "private instructions"}, Policy: Policy{ClaudeTools: []string{}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,7 +303,7 @@ func TestResumeIdentityAndNativeEnvironment(t *testing.T) {
 		t.Fatal("nil tools widened resume")
 	}
 	changed = o
-	changed.Home = t.TempDir()
+	changed.Provider.CLI.Home = t.TempDir()
 	if compatible(changed, r) {
 		t.Fatal("different home accepted")
 	}
@@ -321,13 +323,13 @@ func TestResumeIdentityAndNativeEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	o.Home = home + "/.claude"
+	o.Provider.CLI.Home = home + "/.claude"
 	if strings.Contains(strings.Join(environment(o), "\n"), "CLAUDE_CONFIG_DIR=") {
 		t.Fatal("default keychain namespace changed")
 	}
 }
 func TestCodexUsageDoesNotChargeResumedHistory(t *testing.T) {
-	s, w := fakeSession(t, Codex)
+	s, w := fakeSession(t, harness.Codex)
 	ctx := testContext(t)
 	w.requestFn = func(string, map[string]any) (json.RawMessage, error) {
 		return json.RawMessage(`{"turn":{"id":"turn-1"}}`), nil
@@ -341,13 +343,14 @@ func TestCodexUsageDoesNotChargeResumedHistory(t *testing.T) {
 	notify(s, event)
 	notify(s, `{"method":"turn/completed","params":{"threadId":"session-1","turn":{"id":"turn-1","status":"completed"}}}`)
 	r, err := turn.Wait(ctx)
-	if err != nil || r.Usage.Input != 20 || r.Usage.CacheRead != 80 || r.Usage.Output != 10 {
+	// Codex's inputTokens already counts cached input, as the shared Input does.
+	if err != nil || r.Usage.Input != 100 || r.Usage.CacheRead != 80 || !r.Usage.CacheKnown || r.Usage.Output != 10 {
 		t.Fatalf("%+v %v", r, err)
 	}
 }
 
 func TestMissingUsageRemainsUnknown(t *testing.T) {
-	for _, e := range []Engine{Codex, Claude} {
+	for _, e := range []harness.Engine{harness.Codex, harness.Claude} {
 		t.Run(string(e), func(t *testing.T) {
 			s, w := fakeSession(t, e)
 			ctx := testContext(t)
@@ -358,7 +361,7 @@ func TestMissingUsageRemainsUnknown(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if e == Codex {
+			if e == harness.Codex {
 				notify(s, `{"method":"thread/tokenUsage/updated","params":{"threadId":"session-1","turnId":"turn-1","tokenUsage":{}}}`)
 				notify(s, `{"method":"turn/completed","params":{"threadId":"session-1","turn":{"id":"turn-1","status":"completed"}}}`)
 			} else {
@@ -372,7 +375,7 @@ func TestMissingUsageRemainsUnknown(t *testing.T) {
 	}
 }
 func TestComposedSteerDoesNotContinueAfterNaturalCompletion(t *testing.T) {
-	s, w := fakeSession(t, Claude)
+	s, w := fakeSession(t, harness.Claude)
 	ctx := testContext(t)
 	turn, err := s.StartTurn(ctx, Input{"start"})
 	if err != nil {
@@ -394,7 +397,7 @@ func TestComposedSteerDoesNotContinueAfterNaturalCompletion(t *testing.T) {
 }
 
 func TestCancelledControlDoesNotWaitForAnotherControl(t *testing.T) {
-	s, _ := fakeSession(t, Claude)
+	s, _ := fakeSession(t, harness.Claude)
 	if err := s.lockOp(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -406,7 +409,7 @@ func TestCancelledControlDoesNotWaitForAnotherControl(t *testing.T) {
 	}
 }
 func TestInterruptedUsageRemainsUnknown(t *testing.T) {
-	s, w := fakeSession(t, Claude)
+	s, w := fakeSession(t, harness.Claude)
 	ctx := testContext(t)
 	turn, err := s.StartTurn(ctx, Input{"start"})
 	if err != nil {
@@ -428,7 +431,7 @@ func TestInterruptedUsageRemainsUnknown(t *testing.T) {
 func TestDefinitiveRejectionPreservesSession(t *testing.T) {
 	for _, operation := range []string{"start", "steer", "interrupt"} {
 		t.Run(operation, func(t *testing.T) {
-			s, w := fakeSession(t, Codex)
+			s, w := fakeSession(t, harness.Codex)
 			ctx := testContext(t)
 			w.requestFn = func(string, map[string]any) (json.RawMessage, error) {
 				return json.RawMessage(`{"turn":{"id":"turn-1"}}`), nil
@@ -474,7 +477,7 @@ func TestDefinitiveRejectionPreservesSession(t *testing.T) {
 func TestCodexExactToolTypes(t *testing.T) {
 	for _, typ := range []string{"collabAgentToolCall", "subAgentActivity", "sleep", "imageGeneration"} {
 		t.Run(typ, func(t *testing.T) {
-			s, w := fakeSession(t, Codex)
+			s, w := fakeSession(t, harness.Codex)
 			ctx := testContext(t)
 			w.requestFn = func(string, map[string]any) (json.RawMessage, error) {
 				return json.RawMessage(`{"turn":{"id":"turn-1"}}`), nil
@@ -499,7 +502,7 @@ func TestCodexExactToolTypes(t *testing.T) {
 func TestCorrelatedClaudeInterruptPreservesNativeFailure(t *testing.T) {
 	for _, subtype := range []string{"error_during_execution", "error_max_turns"} {
 		t.Run(subtype, func(t *testing.T) {
-			s, w := fakeSession(t, Claude)
+			s, w := fakeSession(t, harness.Claude)
 			ctx := testContext(t)
 			turn, err := s.StartTurn(ctx, Input{"start"})
 			if err != nil {
@@ -533,17 +536,28 @@ func TestNormalizePolicyDefaultsAndRefuses(t *testing.T) {
 		want Policy
 		ok   bool
 	}{
-		"codex defaults":        {Options{Engine: Codex}, Policy{CodexSandbox: "read-only", CodexApproval: "never", ClaudePermission: "dontAsk"}, true},
-		"codex chosen":          {Options{Engine: Codex, Policy: Policy{CodexSandbox: "workspace-write", CodexApproval: "untrusted"}}, Policy{CodexSandbox: "workspace-write", CodexApproval: "untrusted", ClaudePermission: "dontAsk"}, true},
-		"codex bad sandbox":     {Options{Engine: Codex, Policy: Policy{CodexSandbox: "everything"}}, Policy{}, false},
-		"codex bad approval":    {Options{Engine: Codex, Policy: Policy{CodexApproval: "always"}}, Policy{}, false},
-		"claude defaults":       {Options{Engine: Claude}, Policy{CodexSandbox: "read-only", CodexApproval: "never", ClaudePermission: "dontAsk"}, true},
-		"claude chosen":         {Options{Engine: Claude, Policy: Policy{ClaudePermission: "plan"}}, Policy{CodexSandbox: "read-only", CodexApproval: "never", ClaudePermission: "plan"}, true},
-		"claude bad permission": {Options{Engine: Claude, Policy: Policy{ClaudePermission: "bypassPermissions"}}, Policy{}, false},
-		"claude ignores codex":  {Options{Engine: Claude, Policy: Policy{CodexSandbox: "everything"}}, Policy{CodexSandbox: "everything", CodexApproval: "never", ClaudePermission: "dontAsk"}, true},
+		"codex defaults":        {Options{Provider: harness.Provider{Engine: harness.Codex}}, Policy{CodexSandbox: "read-only", CodexApproval: "never", ClaudePermission: "dontAsk"}, true},
+		"codex chosen":          {Options{Provider: harness.Provider{Engine: harness.Codex}, Policy: Policy{CodexSandbox: "workspace-write", CodexApproval: "untrusted"}}, Policy{CodexSandbox: "workspace-write", CodexApproval: "untrusted", ClaudePermission: "dontAsk"}, true},
+		"codex bad sandbox":     {Options{Provider: harness.Provider{Engine: harness.Codex}, Policy: Policy{CodexSandbox: "everything"}}, Policy{}, false},
+		"codex bad approval":    {Options{Provider: harness.Provider{Engine: harness.Codex}, Policy: Policy{CodexApproval: "always"}}, Policy{}, false},
+		"claude defaults":       {Options{Provider: harness.Provider{Engine: harness.Claude}}, Policy{CodexSandbox: "read-only", CodexApproval: "never", ClaudePermission: "dontAsk"}, true},
+		"claude chosen":         {Options{Provider: harness.Provider{Engine: harness.Claude}, Policy: Policy{ClaudePermission: "plan"}}, Policy{CodexSandbox: "read-only", CodexApproval: "never", ClaudePermission: "plan"}, true},
+		"claude bad permission": {Options{Provider: harness.Provider{Engine: harness.Claude}, Policy: Policy{ClaudePermission: "bypassPermissions"}}, Policy{}, false},
+		// A field only the other engine reads would be silently ignored, so it
+		// is refused instead — even a value that engine would accept.
+		"claude refuses codex sandbox":  {Options{Provider: harness.Provider{Engine: harness.Claude}, Policy: Policy{CodexSandbox: "read-only"}}, Policy{}, false},
+		"claude refuses codex approval": {Options{Provider: harness.Provider{Engine: harness.Claude}, Policy: Policy{CodexApproval: "never"}}, Policy{}, false},
+		"codex refuses claude mode":     {Options{Provider: harness.Provider{Engine: harness.Codex}, Policy: Policy{ClaudePermission: "dontAsk"}}, Policy{}, false},
+		"codex refuses claude tools":    {Options{Provider: harness.Provider{Engine: harness.Codex}, Policy: Policy{ClaudeTools: []string{}}}, Policy{}, false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			got, err := normalizePolicy(tc.in)
+			// The order normalize applies them in: the caller's own fields are
+			// judged before any default is filled in.
+			err := otherEnginePolicy(tc.in)
+			got := tc.in
+			if err == nil {
+				got, err = normalizePolicy(tc.in)
+			}
 			if (err == nil) != tc.ok {
 				t.Fatalf("want ok=%v, got %v", tc.ok, err)
 			}
@@ -553,7 +567,7 @@ func TestNormalizePolicyDefaultsAndRefuses(t *testing.T) {
 		})
 	}
 	tools := []string{"Read"}
-	got, err := normalizePolicy(Options{Engine: Claude, Policy: Policy{ClaudeTools: tools}})
+	got, err := normalizePolicy(Options{Provider: harness.Provider{Engine: harness.Claude}, Policy: Policy{ClaudeTools: tools}})
 	if err != nil {
 		t.Fatal(err)
 	}

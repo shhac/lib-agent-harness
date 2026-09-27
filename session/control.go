@@ -8,6 +8,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 // StartTurn begins one user turn. A session permits one active turn; queueing is
@@ -63,13 +65,13 @@ func (s *Session) startTurnScoped(lifetime, request context.Context, in Input) (
 	s.tools.reopen()
 	host := s.tools
 	t := &Turn{id: newID(), events: make(chan Event, s.options.EventBuffer), done: make(chan struct{}), closeTools: host.closeAdmission}
-	t.starting = s.options.Engine == Codex
+	t.starting = s.options.Provider.Engine == harness.Codex
 	s.active = t
 	invalidate(&s.telemetry.Context.Observation, "conversation is changing; awaiting a fresh observation")
 	t.result.Context = cloneContext(s.telemetry.Context)
 	ref := s.ref
 	s.mu.Unlock()
-	if s.options.Engine == Codex {
+	if s.options.Provider.Engine == harness.Codex {
 		err = s.startCodexTurn(request, t, ref, in)
 	} else {
 		err = s.transport.send(request, claudeUserFrame(ref.ID, in.Text))
@@ -196,7 +198,7 @@ func (s *Session) interrupt(ctx context.Context, expected string) error {
 	}
 	method := "interrupt"
 	p := map[string]any{}
-	if s.options.Engine == Codex {
+	if s.options.Provider.Engine == harness.Codex {
 		method = "turn/interrupt"
 		p["threadId"] = s.Ref().ID
 		p["turnId"] = expected
@@ -217,7 +219,7 @@ func (s *Session) interrupt(ctx context.Context, expected string) error {
 	if result.Status != "interrupted" {
 		return ErrStaleTurn
 	}
-	s.setCapability(&s.caps.Interrupt, Capability{Native, "acknowledged interrupt and terminal turn event"})
+	s.setCapability(&s.caps.Interrupt, harness.Capability{Availability: harness.Native, Reason: "acknowledged interrupt and terminal turn event"})
 	return nil
 }
 
@@ -236,9 +238,9 @@ func (s *Session) Steer(ctx context.Context, expected string, in Input, o SteerO
 	if in.Text == "" {
 		return SteerResult{}, errors.New("steering input is empty")
 	}
-	if s.options.Engine == Claude {
+	if s.options.Provider.Engine == harness.Claude {
 		if o.RequireNative {
-			return SteerResult{}, &UnsupportedError{"steer", Capability{Composed, "Claude steering interrupts and starts another turn"}}
+			return SteerResult{}, &UnsupportedError{Engine: harness.Claude, Operation: "steer", Code: RefusedNotNative, Capability: harness.Capability{Availability: harness.Composed, Reason: "Claude steering interrupts and starts another turn"}}
 		}
 		if err = s.interrupt(ctx, expected); err != nil {
 			return SteerResult{}, err
@@ -262,8 +264,8 @@ func (s *Session) Steer(ctx context.Context, expected string, in Input, o SteerO
 		if err != nil {
 			return SteerResult{}, err
 		}
-		s.setCapability(&s.caps.Steer, Capability{Composed, "interrupt-and-continue succeeded in the installed harness"})
-		return SteerResult{Composed, next}, nil
+		s.setCapability(&s.caps.Steer, harness.Capability{Availability: harness.Composed, Reason: "interrupt-and-continue succeeded in the installed harness"})
+		return SteerResult{harness.Composed, next}, nil
 	}
 	body, err := s.transport.request(ctx, "turn/steer", map[string]any{"threadId": s.Ref().ID, "expectedTurnId": expected, "input": codexInput(in.Text)})
 	if err != nil {
@@ -276,8 +278,8 @@ func (s *Session) Steer(ctx context.Context, expected string, in Input, o SteerO
 		s.fail(ErrProtocol)
 		return SteerResult{}, ErrProtocol
 	}
-	s.setCapability(&s.caps.Steer, Capability{Native, "turn/steer acknowledged by installed harness"})
-	return SteerResult{Native, t}, nil
+	s.setCapability(&s.caps.Steer, harness.Capability{Availability: harness.Native, Reason: "turn/steer acknowledged by installed harness"})
+	return SteerResult{harness.Native, t}, nil
 }
 
 // controlOp names a control request whose native method an installed harness
@@ -307,7 +309,7 @@ func (s *Session) operationError(op controlOp, err error) error {
 	if !errors.Is(err, ErrUnsupported) {
 		return err
 	}
-	c := Capability{Unsupported, "method unavailable in installed harness"}
+	c := harness.Capability{Availability: harness.Unsupported, Reason: "method unavailable in installed harness"}
 	s.mu.Lock()
 	switch op {
 	case opCompact:
@@ -318,11 +320,11 @@ func (s *Session) operationError(op controlOp, err error) error {
 		s.caps.Interrupt = c
 	}
 	s.mu.Unlock()
-	return &UnsupportedError{string(op), c}
+	return &UnsupportedError{Engine: s.options.Provider.Engine, Operation: string(op), Code: RefusedMethodMissing, Capability: c}
 }
 
 // setCapability records what a control established about the harness.
-func (s *Session) setCapability(field *Capability, c Capability) {
+func (s *Session) setCapability(field *harness.Capability, c harness.Capability) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	*field = c

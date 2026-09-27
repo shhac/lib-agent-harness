@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 // A paused channel admits nothing. Cancelling only what happened to be running
@@ -175,7 +177,7 @@ func TestCaseAliasCannotReplaceSourceConfiguration(t *testing.T) {
 // control request that asked for it — binding it to that context ended the
 // session the moment steering returned.
 func TestComposedSteerReplacementOutlivesItsControlRequest(t *testing.T) {
-	s, w := fakeSession(t, Claude)
+	s, w := fakeSession(t, harness.Claude)
 	s.lifetime = context.Background()
 	ctx := testContext(t)
 	turn, err := s.StartTurn(ctx, Input{"initial"})
@@ -198,7 +200,7 @@ func TestComposedSteerReplacementOutlivesItsControlRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Turn == nil || result.Strategy != Composed {
+	if result.Turn == nil || result.Strategy != harness.Composed {
 		t.Fatalf("unexpected steer result: %+v", result)
 	}
 	replacement := result.Turn

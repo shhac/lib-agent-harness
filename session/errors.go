@@ -10,6 +10,8 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 var (
@@ -37,9 +39,16 @@ var (
 	ErrLeaseHeld = errors.New("another process holds this session's assignment lease")
 )
 
+// UnsupportedError refuses something a session cannot do as configured, before
+// it is attempted: a setting the engine cannot honour, a value no engine
+// accepts, or a control the installed harness lacks. Operation names the
+// option or control; Code is a fixed Refused* constant, and Capability says
+// how, and whether, the thing asked for is available.
 type UnsupportedError struct {
+	Engine     harness.Engine
 	Operation  string
-	Capability Capability
+	Code       string
+	Capability harness.Capability
 }
 
 func (e *UnsupportedError) Error() string { return e.Operation + ": " + e.Capability.Reason }
@@ -48,6 +57,61 @@ func (e *UnsupportedError) Unwrap() error { return ErrUnsupported }
 // errConversationGone marks a resume that failed because the harness no longer
 // has the conversation, as opposed to one that failed for any other reason.
 var errConversationGone = errors.New("harness conversation is unavailable to resume")
+
+// Refusal codes an UnsupportedError carries. Like every other code they are
+// fixed library constants. A refusal about what the engine or library can
+// honour is a capability failure; one about a value or this machine's setup is
+// a preflight failure (see refusalFamily).
+const (
+	// RefusedEngine: harness.Support offers no session for the engine.
+	RefusedEngine = "unsupported_engine"
+	// RefusedOtherEnginePolicy: a Policy field that only another engine reads.
+	RefusedOtherEnginePolicy      = "policy_for_other_engine"
+	RefusedPolicy                 = "policy_invalid"
+	RefusedInstructionMode        = "instruction_mode_invalid"
+	RefusedInstructionModeMissing = "instruction_mode_required"
+	RefusedWorkDir                = "work_dir_unavailable"
+	RefusedHome                   = "home_unavailable"
+	RefusedRuntimeHome            = "runtime_home_unusable"
+	RefusedLimit                  = "limit_exceeded"
+	RefusedEnvMalformed           = "env_malformed"
+	// RefusedEnvManaged: an environment addition the harness manages itself,
+	// or one that would change the CLI outside its sandbox.
+	RefusedEnvManaged = "env_managed"
+	RefusedToolHost   = "tool_host_invalid"
+	// RefusedConflict: settings that would silently disagree, such as a
+	// restriction beside a sandbox, or a policy a sandbox or restriction owns.
+	RefusedConflict      = "conflicting_options"
+	RefusedModelRequired = "model_required"
+	RefusedSandboxRead   = "sandbox_read_path_invalid"
+	RefusedSandboxTool   = "sandbox_tool_unsupported"
+	RefusedNotConfigured = "not_configured"
+	RefusedNotNative     = "not_native"
+	RefusedMethodMissing = "method_unavailable"
+	RefusedNotOffered    = "not_offered"
+)
+
+// refusalFamily says whether a refusal is about what can be honoured or about
+// a value or this machine. A provider's own problem codes are preflight.
+func refusalFamily(code string) harness.Family {
+	switch code {
+	case RefusedEngine, RefusedOtherEnginePolicy, RefusedEnvManaged, RefusedConflict, RefusedModelRequired,
+		RefusedSandboxTool, RefusedNotNative, RefusedMethodMissing, RefusedNotOffered:
+		return harness.FailureCapability
+	}
+	return harness.FailurePreflight
+}
+
+// refuse builds an option refusal: nothing is available as configured.
+func refuse(o Options, operation, code, reason string) *UnsupportedError {
+	return &UnsupportedError{Engine: o.Provider.Engine, Operation: operation, Code: code, Capability: harness.Capability{Availability: harness.Unsupported, Reason: reason}}
+}
+
+// toolHostRefusal refuses a tool host that failed validation. The reason is
+// one of validate's own fixed messages.
+func toolHostRefusal(o Options, err error) *UnsupportedError {
+	return refuse(o, "tools", RefusedToolHost, err.Error())
+}
 
 // Capability failure codes. They are fixed library constants: no provider text,
 // path or credential ever enters one.
@@ -96,7 +160,7 @@ const (
 // come from the caller's own configuration or from a fixed native-name
 // comparison — never from free text.
 type CapabilityError struct {
-	Engine string
+	Engine harness.Engine
 	Code   string
 	Phase  string
 	Tools  []string
@@ -125,7 +189,7 @@ func (e *CapabilityError) Error() string {
 	if message == "" {
 		message = "the restricted session configuration could not be established"
 	}
-	out := e.Engine + ": " + message
+	out := string(e.Engine) + ": " + message
 	if len(e.Tools) > 0 {
 		out += " (" + strings.Join(e.Tools, ", ") + ")"
 	}
@@ -154,13 +218,13 @@ const (
 // is what keeps "the CLI died" from arriving as an unexplained transport error.
 // An exit status does not establish whether a request was billed.
 type ProcessError struct {
-	Engine   string
+	Engine   harness.Engine
 	Code     string
 	ExitCode *int
 }
 
 func (e *ProcessError) Error() string {
-	out := e.Engine + " harness "
+	out := string(e.Engine) + " harness "
 	switch e.Code {
 	case ProcessSignalled:
 		out += "was terminated by a signal"
@@ -185,12 +249,12 @@ func (e *ProcessError) Unwrap() error { return ErrTransport }
 // through Options.OnDiagnostic instead, so a diagnostic can be recorded without
 // a message that might be displayed carrying anything a provider wrote.
 type TurnError struct {
-	Engine string
+	Engine harness.Engine
 	Code   string
 }
 
 func (e *TurnError) Error() string {
-	return e.Engine + " harness turn failed: " + e.Code
+	return string(e.Engine) + " harness turn failed: " + e.Code
 }
 
 // Unwrap keeps ErrTurnFailed identity, so callers that classified a failed turn

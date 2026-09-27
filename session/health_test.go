@@ -6,12 +6,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 // Health describes a process, never progress. A session that has said nothing
 // recently is unknown, and the library must not turn that into a verdict.
 func TestHealthDistinguishesQuietFromExited(t *testing.T) {
-	s, _ := fakeSession(t, Claude)
+	s, _ := fakeSession(t, harness.Claude)
 	ctx := testContext(t)
 	s.options.QuietAfter = 50 * time.Millisecond
 	if got := s.Health(); got.State != Idle {
@@ -42,7 +44,7 @@ func TestHealthDistinguishesQuietFromExited(t *testing.T) {
 }
 
 func TestHealthReportsExplicitProviderFailureSeparately(t *testing.T) {
-	s, _ := fakeSession(t, Claude)
+	s, _ := fakeSession(t, harness.Claude)
 	s.fail(ErrProtocol)
 	health := s.Health()
 	if health.State != Failed || health.Reason != "protocol" {
@@ -93,7 +95,7 @@ func TestSanitizeBoundsAndRedactsCapturedOutput(t *testing.T) {
 // A turn makes many requests. A caller holding a budget has to see them as they
 // happen; waiting for the terminal figure is waiting until it is too late.
 func TestUsageIsPublishedPerModelResponse(t *testing.T) {
-	s, _ := fakeSession(t, Claude)
+	s, _ := fakeSession(t, harness.Claude)
 	ctx := testContext(t)
 	turn, err := s.StartTurn(ctx, Input{"work"})
 	if err != nil {
@@ -123,17 +125,19 @@ func TestUsageIsPublishedPerModelResponse(t *testing.T) {
 	if interim[0].Final || interim[1].Final {
 		t.Errorf("a per-response observation was published as the turn's accounting: %+v", interim)
 	}
-	if interim[1].Input != 30 || interim[1].Output != 10 {
+	// Claude's input_tokens leaves out cache reads; the shared Input counts them.
+	if interim[1].Input != 32 || interim[1].CacheRead != 2 || !interim[1].CacheKnown || interim[1].Output != 10 {
 		t.Errorf("per-response observations were not accumulated: %+v", interim[1])
 	}
 	last := interim[len(interim)-1]
-	if !last.Final || last.Input != 12 {
+	// The terminal report omitted cache writes, so its split is not known.
+	if !last.Final || last.Input != 52 || last.CacheRead != 40 || last.CacheKnown {
 		t.Errorf("the turn's own accounting was not published as final: %+v", last)
 	}
-	if result.Observed.Input != 30 || result.Observed.Output != 10 || !result.Observed.Known {
+	if result.Observed.Input != 32 || result.Observed.Output != 10 || !result.Observed.Known {
 		t.Errorf("observations were not retained on the result: %+v", result.Observed)
 	}
-	if result.Usage.Input != 12 || !result.Usage.Known {
+	if result.Usage.Input != 52 || !result.Usage.Known {
 		t.Errorf("terminal accounting was lost: %+v", result.Usage)
 	}
 }
@@ -141,7 +145,7 @@ func TestUsageIsPublishedPerModelResponse(t *testing.T) {
 // A failed turn consumed something. Keeping the observations as evidence is not
 // the same as claiming they measure the turn, and the distinction is the point.
 func TestFailedTurnKeepsObservedUsageWithoutClaimingItMeasuresTheTurn(t *testing.T) {
-	s, _ := fakeSession(t, Claude)
+	s, _ := fakeSession(t, harness.Claude)
 	ctx := testContext(t)
 	turn, err := s.StartTurn(ctx, Input{"work"})
 	if err != nil {
@@ -165,15 +169,49 @@ func TestFailedTurnKeepsObservedUsageWithoutClaimingItMeasuresTheTurn(t *testing
 	}
 }
 
+// Every engine reports in the shared shape: Input is the whole prompt, and the
+// cache figures are parts of it that are known only when the provider split them.
+func TestUsageIsReportedInTheSharedShape(t *testing.T) {
+	claude := parseClaudeUsage(json.RawMessage(`{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":100,"cache_creation_input_tokens":20}`))
+	if !claude.Known || claude.Input != 130 || claude.CacheRead != 100 || claude.CacheWrite != 20 || !claude.CacheKnown {
+		t.Errorf("Claude's cache figures were not folded into Input: %+v", claude)
+	}
+	if fresh, ok := claude.Fresh(); !ok || fresh != 10 {
+		t.Errorf("fresh input was not recoverable: %d %v", fresh, ok)
+	}
+	partial := parseClaudeUsage(json.RawMessage(`{"input_tokens":10,"output_tokens":5}`))
+	if !partial.Known || partial.Input != 10 || partial.CacheKnown {
+		t.Errorf("an unreported split was presented as uncached: %+v", partial)
+	}
+	if huge := parseClaudeUsage(json.RawMessage(`{"input_tokens":9223372036854775000,"output_tokens":1,"cache_read_input_tokens":9223372036854775000,"cache_creation_input_tokens":0}`)); huge.Known {
+		t.Errorf("an unrepresentable prompt total was reported as known: %+v", huge)
+	}
+	codex, ok := parseCodexUsage(json.RawMessage(`{"inputTokens":100,"cachedInputTokens":80,"outputTokens":10,"reasoningOutputTokens":4}`))
+	if got := codex.normalized(); !ok || got.Input != 100 || got.CacheRead != 80 || !got.CacheKnown || got.Reasoning != 4 {
+		t.Errorf("Codex usage was not taken as the whole prompt: %+v", got)
+	}
+	if _, ok := parseCodexUsage(json.RawMessage(`{"inputTokens":100,"cachedInputTokens":80,"cacheWriteInputTokens":30,"outputTokens":10,"reasoningOutputTokens":0}`)); ok {
+		t.Error("cache figures larger than the prompt were accepted")
+	}
+	split := Usage{Usage: harness.Usage{Known: true, Input: 5, CacheKnown: true}}
+	unsplit := Usage{Usage: harness.Usage{Known: true, Input: 5}}
+	if got := (Usage{}).add(split); !got.CacheKnown {
+		t.Errorf("a first split observation lost its split: %+v", got)
+	}
+	if got := (Usage{}).add(split).add(unsplit); got.CacheKnown || got.Input != 10 {
+		t.Errorf("an accumulation with an unsplit response kept a known split: %+v", got)
+	}
+}
+
 func TestUsageAccumulationRefusesToWrap(t *testing.T) {
-	near := Usage{Known: true, Input: maxInt64 - 1}
-	if got := near.add(Usage{Known: true, Input: 5}); got.Known {
+	near := Usage{Usage: harness.Usage{Known: true, Input: maxInt64 - 1}}
+	if got := near.add(Usage{Usage: harness.Usage{Known: true, Input: 5}}); got.Known {
 		t.Errorf("an unrepresentable total was reported as known: %+v", got)
 	}
 	if got := near.add(Usage{}); got != near {
 		t.Errorf("an unknown observation changed the accumulation: %+v", got)
 	}
-	if got := (Usage{}).add(Usage{Known: true, Output: 7}); !got.Known || got.Output != 7 {
+	if got := (Usage{}).add(Usage{Usage: harness.Usage{Known: true, Output: 7}}); !got.Known || got.Output != 7 {
 		t.Errorf("a first observation was lost: %+v", got)
 	}
 }
@@ -181,22 +219,22 @@ func TestUsageAccumulationRefusesToWrap(t *testing.T) {
 // The startup cross-check runs on the frame the harness emits before any
 // prompt, so a mismatch still precedes inference — and it ends the session.
 func TestAdvertisedToolMismatchClosesTheSession(t *testing.T) {
-	s, _ := fakeSession(t, Claude)
+	s, _ := fakeSession(t, harness.Claude)
 	s.options.Restriction = &Restriction{Tools: ToolHost{Server: "agent_workspace", Tools: []ToolDefinition{{Name: "read_file"}}}}
 	notify(s, `{"type":"system","subtype":"init","session_id":"session-1","mcp_servers":[{"name":"agent_workspace","status":"connected"}],"tools":["mcp__agent_workspace__read_file","Bash"]}`)
 	if s.Health().State != Exited && s.Health().State != Failed {
 		t.Fatalf("session survived an unauthorized tool surface: %+v", s.Health())
 	}
-	if s.Capabilities().RestrictTools.Availability != Unsupported {
+	if s.Capabilities().RestrictTools.Availability != harness.Unsupported {
 		t.Errorf("capability was not recorded as unsupported: %+v", s.Capabilities().RestrictTools)
 	}
 }
 
 func TestAdvertisedToolMatchRecordsTheCapability(t *testing.T) {
-	s, _ := fakeSession(t, Claude)
+	s, _ := fakeSession(t, harness.Claude)
 	s.options.Restriction = &Restriction{Tools: ToolHost{Server: "agent_workspace", Tools: []ToolDefinition{{Name: "read_file"}, {Name: "finish"}}}}
 	notify(s, `{"type":"system","subtype":"init","session_id":"session-1","mcp_servers":[{"name":"agent_workspace","source":"dynamic","status":"connected"}],"tools":["mcp__agent_workspace__finish","mcp__agent_workspace__read_file"]}`)
-	if s.Capabilities().RestrictTools.Availability != Native {
+	if s.Capabilities().RestrictTools.Availability != harness.Native {
 		t.Fatalf("a matching surface was not recorded: %+v", s.Capabilities().RestrictTools)
 	}
 	if s.Health().State == Exited || s.Health().State == Failed {
@@ -209,13 +247,13 @@ func TestAdvertisedToolMatchRecordsTheCapability(t *testing.T) {
 // while reporting success. A session with nothing to work with is not a working
 // session, so this ends it too.
 func TestSilentlyDroppedToolServerClosesTheSession(t *testing.T) {
-	s, _ := fakeSession(t, Claude)
+	s, _ := fakeSession(t, harness.Claude)
 	s.options.Restriction = &Restriction{Tools: ToolHost{Server: "agent_workspace", Tools: []ToolDefinition{{Name: "read_file"}}}}
 	notify(s, `{"type":"system","subtype":"init","session_id":"session-1","mcp_servers":[],"tools":[]}`)
 	if s.Health().State != Exited && s.Health().State != Failed {
 		t.Fatalf("session survived without its tool server: %+v", s.Health())
 	}
-	if s.Capabilities().RestrictTools.Availability != Unsupported {
+	if s.Capabilities().RestrictTools.Availability != harness.Unsupported {
 		t.Fatalf("a dropped server was not recorded as unsupported: %+v", s.Capabilities().RestrictTools)
 	}
 }
@@ -223,7 +261,7 @@ func TestSilentlyDroppedToolServerClosesTheSession(t *testing.T) {
 // A reserved name is refused before anything is launched, so an operator is
 // told what to change rather than seeing an empty session.
 func TestReservedToolServerNameIsRefused(t *testing.T) {
-	o := restrictedOptions(t, Claude)
+	o := restrictedOptions(t, harness.Claude)
 	o.Restriction = &Restriction{Tools: o.Restriction.Tools}
 	o.Restriction.Tools.Server = "workspace"
 	_, err := normalize(o)
@@ -235,7 +273,7 @@ func TestReservedToolServerNameIsRefused(t *testing.T) {
 		t.Errorf("refusal did not name the server: %v", failure.Tools)
 	}
 	// Codex has no such reservation, so the same name is fine there.
-	codex := restrictedOptions(t, Codex)
+	codex := restrictedOptions(t, harness.Codex)
 	codex.Restriction = &Restriction{Tools: codex.Restriction.Tools}
 	codex.Restriction.Tools.Server = "workspace"
 	if _, err = normalize(codex); err != nil {
@@ -245,7 +283,7 @@ func TestReservedToolServerNameIsRefused(t *testing.T) {
 
 // An unrestricted session is not subject to any of this.
 func TestUnrestrictedSessionIgnoresTheToolCrossCheck(t *testing.T) {
-	s, _ := fakeSession(t, Claude)
+	s, _ := fakeSession(t, harness.Claude)
 	var frame map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(`{"type":"system","subtype":"init","tools":["Bash","Read"]}`), &frame); err != nil {
 		t.Fatal(err)

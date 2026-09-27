@@ -1,6 +1,10 @@
 package session
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	harness "github.com/shhac/lib-agent-harness"
+)
 
 // Codex's app-server dialect. Kept apart from Claude's because the two
 // protocols evolve independently; in particular the usage rule here (sum each
@@ -167,8 +171,11 @@ func parseCodexUsage(raw json.RawMessage) (codexUsage, bool) {
 			return u, false
 		}
 	}
-	return u, u.Input >= 0 && u.Output >= 0 && u.CacheRead >= 0 && u.CacheRead <= u.Input && u.CacheWrite >= 0 && u.Reasoning >= 0 && u.Reasoning <= u.Output
+	return u, u.Input >= 0 && u.Output >= 0 && u.CacheRead >= 0 && u.CacheRead <= u.Input && u.CacheWrite >= 0 && u.CacheWrite <= u.Input-u.CacheRead && u.Reasoning >= 0 && u.Reasoning <= u.Output
 }
+
+// normalized is already the shared shape: Codex's inputTokens counts every
+// prompt token, cached ones included, and its cached figure is always reported.
 func (u codexUsage) normalized() Usage {
-	return Usage{Known: true, Input: max(0, u.Input-u.CacheRead), Output: u.Output, CacheRead: u.CacheRead, CacheWrite: u.CacheWrite, Reasoning: u.Reasoning}
+	return Usage{Usage: harness.Usage{Known: true, Input: u.Input, Output: u.Output, CacheRead: u.CacheRead, CacheWrite: u.CacheWrite, Reasoning: u.Reasoning, CacheKnown: true}}
 }

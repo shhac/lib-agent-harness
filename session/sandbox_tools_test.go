@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 func sandboxToolHost(t *testing.T) *ToolHost {
@@ -21,7 +23,7 @@ func sandboxToolHost(t *testing.T) *ToolHost {
 	}
 }
 
-func sandboxToolOptions(t *testing.T, engine Engine, binary string, web bool) Options {
+func sandboxToolOptions(t *testing.T, engine harness.Engine, binary string, web bool) Options {
 	t.Helper()
 	o := sandboxOptions(t, engine, binary, true)
 	o.Sandbox.Web = web
@@ -46,7 +48,7 @@ func argValue(args []string, flag string) (string, bool) {
 // only its tools are allowed, and the connectors a login would fetch are off.
 func TestSandboxedClaudeHostsTools(t *testing.T) {
 	for _, web := range []bool{false, true} {
-		o := mustNormalize(t, sandboxToolOptions(t, Claude, "/usr/bin/true", web))
+		o := mustNormalize(t, sandboxToolOptions(t, harness.Claude, "/usr/bin/true", web))
 		host, err := newToolHost(*o.Sandbox.Tools, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -95,14 +97,14 @@ func TestSandboxedClaudeHostsTools(t *testing.T) {
 			t.Fatalf("web=%v: a wildcard MCP allow rule: %v", web, settings.Permissions.Allow)
 		}
 	}
-	plain := mustNormalize(t, Options{Engine: Claude, WorkDir: t.TempDir(), Sandbox: &Sandbox{Write: true}})
+	plain := mustNormalize(t, Options{Provider: harness.Provider{Engine: harness.Claude}, WorkDir: t.TempDir(), Sandbox: &Sandbox{Write: true}})
 	if strings.Contains(claudeSandboxSettings(plain), "disableClaudeAiConnectors") {
 		t.Fatal("a sandbox without tools changed its settings")
 	}
 }
 
 func TestSandboxedCodexHostsTools(t *testing.T) {
-	o := mustNormalize(t, sandboxToolOptions(t, Codex, "/usr/bin/true", false))
+	o := mustNormalize(t, sandboxToolOptions(t, harness.Codex, "/usr/bin/true", false))
 	host, err := newToolHost(*o.Sandbox.Tools, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -137,14 +139,14 @@ func TestSandboxToolsAreRefusedWhenTheyCannotBeHosted(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			host := sandboxToolHost(t)
 			edit(host)
-			if _, err := normalize(Options{Engine: Claude, WorkDir: work, Sandbox: &Sandbox{Write: true, Tools: host}}); err == nil {
+			if _, err := normalize(Options{Provider: harness.Provider{Engine: harness.Claude}, WorkDir: work, Sandbox: &Sandbox{Write: true, Tools: host}}); err == nil {
 				t.Fatal("tool host accepted")
 			}
 		})
 	}
 	host := sandboxToolHost(t)
 	caller := host.Tools[0].Schema
-	o := mustNormalize(t, Options{Engine: Claude, WorkDir: work, Sandbox: &Sandbox{Tools: host}})
+	o := mustNormalize(t, Options{Provider: harness.Provider{Engine: harness.Claude}, WorkDir: work, Sandbox: &Sandbox{Tools: host}})
 	o.Sandbox.Tools.Tools[0].Schema["edited"] = true
 	o.Sandbox.Tools.Server = "other"
 	if _, edited := caller["edited"]; edited || host.Server != "crew" {
@@ -157,7 +159,7 @@ func TestSandboxToolsAreRefusedWhenTheyCannotBeHosted(t *testing.T) {
 func TestSandboxToolServerIsPartOfTheReference(t *testing.T) {
 	work, home := t.TempDir(), t.TempDir()
 	hash := func(tools *ToolHost) string {
-		return reference(mustNormalize(t, Options{Engine: Claude, WorkDir: work, Home: home, Sandbox: &Sandbox{Write: true, Tools: tools}}), "id").ConfigHash
+		return reference(mustNormalize(t, Options{Provider: harness.Provider{Engine: harness.Claude, CLI: harness.CLI{Home: home}}, WorkDir: work, Sandbox: &Sandbox{Write: true, Tools: tools}}), "id").ConfigHash
 	}
 	first, second, renamed := sandboxToolHost(t), sandboxToolHost(t), sandboxToolHost(t)
 	second.Tools = second.Tools[:1]
@@ -184,7 +186,7 @@ func TestSandboxedClaudeStartupCrossCheck(t *testing.T) {
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			s, _ := fakeSession(t, Claude)
+			s, _ := fakeSession(t, harness.Claude)
 			s.options.Sandbox = &Sandbox{Write: true, Tools: &ToolHost{Server: "crew", Tools: []ToolDefinition{{Name: "read_file"}, {Name: "finish"}}}}
 			notify(s, c.frame)
 			failed := s.Health().State == Exited || s.Health().State == Failed
@@ -198,7 +200,7 @@ func TestSandboxedClaudeStartupCrossCheck(t *testing.T) {
 					t.Fatalf("want %s, got %v", c.code, s.failure)
 				}
 			}
-			if s.Capabilities().RestrictTools.Availability != CapabilitiesFor(Claude).RestrictTools.Availability {
+			if s.Capabilities().RestrictTools.Availability != CapabilitiesFor(harness.Claude).RestrictTools.Availability {
 				t.Fatal("a sandboxed session reported itself restricted")
 			}
 		})
@@ -209,7 +211,7 @@ func TestSandboxedClaudeStartupCrossCheck(t *testing.T) {
 // opens under the assignment lease with a launch record, the harness is
 // launched with both the sandbox and the bridge, and Release settles it all.
 func TestSandboxedSessionServesItsTools(t *testing.T) {
-	for _, engine := range []Engine{Claude, Codex} {
+	for _, engine := range []harness.Engine{harness.Claude, harness.Codex} {
 		t.Run(string(engine), func(t *testing.T) {
 			t.Setenv("LIB_HARNESS_SESSION_FIXTURE", "1")
 			binary, log := fakeHarness(t, fakeSandboxOK)
@@ -234,7 +236,7 @@ func TestSandboxedSessionServesItsTools(t *testing.T) {
 			}
 			required := []string{`"--strict-mcp-config"`, `--mcp-config=`, `"--allowedTools=mcp__crew__read_file,mcp__crew__finish"`, `"--tools=Bash,Read,Edit,Write,Glob,Grep,WebFetch,WebSearch"`, `disableClaudeAiConnectors`}
 			check := "status"
-			if engine == Codex {
+			if engine == harness.Codex {
 				required = []string{`default_permissions=\"harness_sandbox\"`, `web_search=\"live\"`, `mcp_servers.crew.command=`, `mcp_servers.crew.default_tools_approval_mode=\"approve\"`}
 				check = "canary"
 			}
@@ -270,7 +272,7 @@ func TestSandboxedSessionServesItsTools(t *testing.T) {
 func TestSandboxEvidenceSurvivesANewToolChannel(t *testing.T) {
 	t.Setenv("LIB_HARNESS_SESSION_FIXTURE", "1")
 	binary, log := fakeHarness(t, fakeSandboxOK)
-	o := sandboxToolOptions(t, Codex, binary, false)
+	o := sandboxToolOptions(t, harness.Codex, binary, false)
 	ctx := probeContext(t)
 	for range 2 {
 		s, err := Start(ctx, o)
@@ -287,7 +289,7 @@ func TestSandboxEvidenceSurvivesANewToolChannel(t *testing.T) {
 // A sandbox that fails its check opens no tool channel and keeps no lease.
 func TestFailedSandboxLeavesNoToolChannel(t *testing.T) {
 	binary, log := fakeHarness(t, fakeCanaryNetwork)
-	o := sandboxToolOptions(t, Codex, binary, false)
+	o := sandboxToolOptions(t, harness.Codex, binary, false)
 	s, _, err := Open(probeContext(t), o, nil)
 	if s != nil {
 		s.Close()
@@ -308,7 +310,7 @@ func TestFailedSandboxLeavesNoToolChannel(t *testing.T) {
 
 func TestSandboxedToolsVerifyWithoutAChannel(t *testing.T) {
 	binary, _ := fakeHarness(t, fakeSandboxOK)
-	o := sandboxToolOptions(t, Claude, binary, false)
+	o := sandboxToolOptions(t, harness.Claude, binary, false)
 	if err := VerifySandbox(context.Background(), o); err != nil {
 		t.Fatal(err)
 	}

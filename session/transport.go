@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/process"
 )
 
@@ -29,7 +30,7 @@ type response struct {
 	err  error
 }
 type streamWire struct {
-	engine    Engine
+	engine    harness.Engine
 	stdin     io.WriteCloser
 	stdout    io.ReadCloser
 	stop      func()
@@ -57,7 +58,7 @@ func newProcessWire(ctx context.Context, o Options, nativeID string, resuming bo
 // and a dummy credential instead of the caller's login.
 func newProcessWireArgs(ctx context.Context, o Options, args, env []string, onStart func(int), event func(map[string]json.RawMessage), ended func(error)) (*streamWire, error) {
 	runCtx, cancel := context.WithCancel(ctx)
-	cmd, p, err := process.Command(runCtx, o.Binary, args...)
+	cmd, p, err := process.Command(runCtx, o.Provider.CLI.Binary, args...)
 	if err != nil {
 		cancel()
 		return nil, ErrTransport
@@ -84,7 +85,7 @@ func newProcessWireArgs(ctx context.Context, o Options, args, env []string, onSt
 	if onStart != nil {
 		p.Notify(onStart)
 	}
-	w := &streamWire{engine: o.Engine, stdin: stdin, stdout: reader, pending: map[string]chan response{}, done: make(chan struct{}), reaped: make(chan struct{}), writeGate: make(chan struct{}, 1), event: event, ended: ended, stderr: stderr, diagnose: o.OnDiagnostic}
+	w := &streamWire{engine: o.Provider.Engine, stdin: stdin, stdout: reader, pending: map[string]chan response{}, done: make(chan struct{}), reaped: make(chan struct{}), writeGate: make(chan struct{}, 1), event: event, ended: ended, stderr: stderr, diagnose: o.OnDiagnostic}
 	w.stop = func() { cancel(); p.Stop(); stdin.Close(); reader.Close() }
 	go w.read()
 	go func() {
@@ -102,7 +103,7 @@ func newProcessWireArgs(ctx context.Context, o Options, args, env []string, onSt
 // process died is a different fact from a stream that stopped on its own, and
 // collapsing both into one transport error is what made every failure unknown.
 func (w *streamWire) observeExit(err error) {
-	exit := &ProcessError{Engine: string(w.engine), Code: ProcessExited}
+	exit := &ProcessError{Engine: w.engine, Code: ProcessExited}
 	var status *exec.ExitError
 	switch {
 	case err == nil:
@@ -122,7 +123,7 @@ func (w *streamWire) observeExit(err error) {
 	report := w.diagnose
 	w.mu.Unlock()
 	if report != nil {
-		report(Diagnostic{Engine: string(w.engine), Stage: "process_exit", Code: exit.Code, Detail: detail, At: time.Now().UTC()})
+		report(Diagnostic{Engine: w.engine, Stage: "process_exit", Code: exit.Code, Detail: detail, At: time.Now().UTC()})
 	}
 }
 
@@ -223,7 +224,7 @@ func (w *streamWire) request(ctx context.Context, method string, params map[stri
 	w.mu.Unlock()
 	defer func() { w.mu.Lock(); delete(w.pending, id); w.mu.Unlock() }()
 	msg := map[string]any{"id": id, "method": method, "params": params}
-	if w.engine == Claude {
+	if w.engine == harness.Claude {
 		params = cloneMap(params)
 		params["subtype"] = method
 		msg = map[string]any{"type": "control_request", "request_id": id, "request": params}
@@ -272,7 +273,7 @@ func (w *streamWire) read() {
 }
 func (w *streamWire) reply(m map[string]json.RawMessage) bool {
 	parse := parseCodexReply
-	if w.engine == Claude {
+	if w.engine == harness.Claude {
 		parse = parseClaudeReply
 	}
 	id, r, isReply, err := parse(m)
@@ -365,7 +366,7 @@ func parseCodexReply(m map[string]json.RawMessage) (id string, r response, isRep
 // permission just to unblock a native harness. Payloads are not exposed as errors.
 func (w *streamWire) serverRequest(m map[string]json.RawMessage) bool {
 	var reply map[string]any
-	if w.engine == Claude {
+	if w.engine == harness.Claude {
 		if str(m, "type") != "control_request" {
 			return false
 		}

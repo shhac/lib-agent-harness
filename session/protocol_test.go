@@ -13,20 +13,22 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
-// harness stands in for an installed CLI's MCP client: it speaks the protocol
+// mcpClient stands in for an installed CLI's MCP client: it speaks the protocol
 // down a bridge's stdio exactly as the real one does. Driving the framing from
 // this side, rather than calling the host's dispatcher, is what makes these
 // tests say anything about the path a real harness takes.
-type harness struct {
+type mcpClient struct {
 	in     *io.PipeWriter
 	out    *bufio.Scanner
 	cancel context.CancelFunc
 	done   chan error
 }
 
-func startHarness(t *testing.T, h *toolHost) *harness {
+func startHarness(t *testing.T, h *toolHost) *mcpClient {
 	t.Helper()
 	for key, value := range h.environment() {
 		t.Setenv(key, value)
@@ -38,12 +40,12 @@ func startHarness(t *testing.T, h *toolHost) *harness {
 	go func() { done <- RunBridge(ctx, bridgeIn, bridgeOut) }()
 	scanner := bufio.NewScanner(harnessReads)
 	scanner.Buffer(make([]byte, 4096), MaxToolRequestBytes)
-	out := &harness{in: harnessWrites, out: scanner, cancel: cancel, done: done}
+	out := &mcpClient{in: harnessWrites, out: scanner, cancel: cancel, done: done}
 	t.Cleanup(out.stop)
 	return out
 }
 
-func (h *harness) stop() {
+func (h *mcpClient) stop() {
 	h.cancel()
 	select {
 	case <-h.done:
@@ -51,7 +53,7 @@ func (h *harness) stop() {
 	}
 }
 
-func (h *harness) request(t *testing.T, id int, method string, params any) map[string]any {
+func (h *mcpClient) request(t *testing.T, id int, method string, params any) map[string]any {
 	t.Helper()
 	raw, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
 	if err != nil {
@@ -78,7 +80,7 @@ func (h *harness) request(t *testing.T, id int, method string, params any) map[s
 	return frame
 }
 
-func (h *harness) notify(t *testing.T, method string) {
+func (h *mcpClient) notify(t *testing.T, method string) {
 	t.Helper()
 	raw, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": method})
 	if _, err := h.in.Write(append(raw, '\n')); err != nil {
@@ -219,8 +221,8 @@ func TestToolHostWorksBeneathADeepApplicationStateDirectory(t *testing.T) {
 // was before restricted sessions existed.
 func TestUnrestrictedLaunchIsUnchanged(t *testing.T) {
 	ctx := context.Background()
-	for _, engine := range []Engine{Claude, Codex} {
-		o, err := normalize(Options{Engine: engine, Binary: "/usr/bin/true", WorkDir: t.TempDir(), Home: t.TempDir(), Model: "m"})
+	for _, engine := range []harness.Engine{harness.Claude, harness.Codex} {
+		o, err := normalize(Options{Provider: harness.Provider{Engine: engine, CLI: harness.CLI{Binary: "/usr/bin/true", Home: t.TempDir()}}, WorkDir: t.TempDir(), Model: "m"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -237,15 +239,36 @@ func TestUnrestrictedLaunchIsUnchanged(t *testing.T) {
 	}
 	// And its capability reporting says the surface was never checked, rather
 	// than implying it was checked and accepted.
-	if got := CapabilitiesFor(Claude).RestrictTools.Availability; got != Unknown && got != "" {
+	if got := CapabilitiesFor(harness.Claude).RestrictTools.Availability; got != harness.Unknown && got != "" {
 		t.Errorf("an unchecked tool surface reported %q", got)
+	}
+}
+
+// A session starts from the library's static claim, so a caller asking
+// harness.Support and one asking a session hear the same thing.
+func TestSessionCapabilitiesStartFromSupport(t *testing.T) {
+	claude := CapabilitiesFor(harness.Claude)
+	if claude.Compact != harness.Support(harness.Claude, harness.Session, harness.Compact) || claude.Compact.Availability != harness.Unsupported {
+		t.Errorf("Claude compaction disagrees with the static table: %+v", claude.Compact)
+	}
+	codex := CapabilitiesFor(harness.Codex)
+	if codex.Start.Availability != harness.Unknown || codex.Compact.Availability != harness.Unknown || codex.Quota.Availability != harness.Unknown {
+		t.Errorf("unverified Codex support was claimed: %+v", codex)
+	}
+	for _, e := range []harness.Engine{harness.Grok, harness.OpenAICompatible, "other"} {
+		caps := CapabilitiesFor(e)
+		for _, c := range []harness.Capability{caps.Start, caps.Resume, caps.Steer, caps.Account, caps.Quota, caps.Context, caps.Compact, caps.RestrictTools} {
+			if c.Usable() {
+				t.Errorf("%s: a session capability was offered for an engine with no sessions: %+v", e, caps)
+			}
+		}
 	}
 }
 
 // Verification is not optional, and the only thing that skips repeating it is a
 // record of the same binary and the same arguments.
 func TestVerificationCacheIsKeyedToTheExactBinaryAndArguments(t *testing.T) {
-	o, err := normalize(restrictedOptions(t, Claude))
+	o, err := normalize(restrictedOptions(t, harness.Claude))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +276,7 @@ func TestVerificationCacheIsKeyedToTheExactBinaryAndArguments(t *testing.T) {
 	if err = os.WriteFile(binary, []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	o.Binary = binary
+	o.Provider.CLI.Binary = binary
 	host, err := newToolHost(o.Restriction.Tools, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -302,7 +325,7 @@ func TestVerificationCacheIsKeyedToTheExactBinaryAndArguments(t *testing.T) {
 	if upgraded == key {
 		t.Error("an upgraded harness reused an earlier verification")
 	}
-	if _, err = verificationKey(Options{Engine: Claude, Binary: filepath.Join(t.TempDir(), "absent"), Restriction: o.Restriction}, l); err == nil {
+	if _, err = verificationKey(Options{Provider: harness.Provider{Engine: harness.Claude, CLI: harness.CLI{Binary: filepath.Join(t.TempDir(), "absent")}}, Restriction: o.Restriction}, l); err == nil {
 		t.Error("a missing binary produced a verification key")
 	}
 }
@@ -311,7 +334,7 @@ func TestVerificationCacheIsKeyedToTheExactBinaryAndArguments(t *testing.T) {
 // verification key has to identify that same file rather than whatever the
 // working directory holds under the name.
 func TestVerificationKeyIdentifiesABareBinaryFromPath(t *testing.T) {
-	o, err := normalize(restrictedOptions(t, Claude))
+	o, err := normalize(restrictedOptions(t, harness.Claude))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -326,7 +349,7 @@ func TestVerificationKeyIdentifiesABareBinaryFromPath(t *testing.T) {
 	}
 	defer host.close()
 	l := &launch{host: host, extra: claudeRestrictedArgs(host)}
-	o.Binary = binary
+	o.Provider.CLI.Binary = binary
 	want, err := verificationKey(o, l)
 	if err != nil {
 		t.Fatal(err)
@@ -337,7 +360,7 @@ func TestVerificationKeyIdentifiesABareBinaryFromPath(t *testing.T) {
 	}
 	t.Chdir(work)
 	t.Setenv("PATH", bin)
-	o.Binary = "harness"
+	o.Provider.CLI.Binary = "harness"
 	got, err := verificationKey(o, l)
 	if err != nil {
 		t.Fatalf("a binary on PATH could not be identified: %v", err)

@@ -1,6 +1,10 @@
 package session
 
-import "time"
+import (
+	"time"
+
+	harness "github.com/shhac/lib-agent-harness"
+)
 
 // Measurement describes evidence, not capability. Empty means unavailable.
 // Estimated values must not be presented as exact provider measurements.
@@ -104,10 +108,11 @@ type Telemetry struct {
 	Context ContextSnapshot `json:"context"`
 }
 
-// Inspection does not create a conversation or invoke a model. Options select
-// the binary and native login home; session policies and prompts are not used.
+// Inspection does not create a conversation or invoke a model. Options.Provider
+// selects the engine, binary and native login home; session policies and
+// prompts are not used.
 type Inspection struct {
-	Engine       Engine          `json:"engine"`
+	Engine       harness.Engine  `json:"engine"`
 	Account      AccountSnapshot `json:"account"`
 	Quota        QuotaSnapshot   `json:"quota"`
 	Capabilities Capabilities    `json:"capabilities"`

@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 // A restricted session needs two things that pull in opposite directions: a
@@ -151,7 +153,7 @@ func shareCredential(source, runtime string) error {
 		// No file-backed login in the source home. Some builds keep their
 		// credential elsewhere, and this library will not go looking: say which
 		// home was checked and let the operator log in there.
-		return &CapabilityError{Engine: string(Codex), Code: CapabilityLoginUnavailable, Phase: BeforeLaunch}
+		return &CapabilityError{Engine: harness.Codex, Code: CapabilityLoginUnavailable, Phase: BeforeLaunch}
 	}
 	existing, err := credentialDigest(to)
 	if err != nil {

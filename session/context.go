@@ -124,7 +124,7 @@ func (s *Session) reportMarker(err error) {
 	if err == nil || s.options.OnDiagnostic == nil {
 		return
 	}
-	s.options.OnDiagnostic(Diagnostic{Engine: string(s.options.Engine), Stage: "context_marker", Code: "context_marker_unwritten", At: time.Now().UTC()})
+	s.options.OnDiagnostic(Diagnostic{Engine: s.options.Provider.Engine, Stage: "context_marker", Code: "context_marker_unwritten", At: time.Now().UTC()})
 }
 
 // contextMarkerPath is where a session hosting tools keeps its pending reason,

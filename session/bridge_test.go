@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 // These env names make the test binary re-execute itself as a stand-in for a
@@ -332,7 +334,7 @@ func standInBridge(t *testing.T, lock, launch string) int {
 func TestReleaseLeavesAnAssignmentAnotherSessionTook(t *testing.T) {
 	dir := privateDir(t)
 	o, err := normalize(Options{
-		Engine: Claude, Binary: "/usr/bin/true", WorkDir: t.TempDir(), Home: t.TempDir(), RuntimeHome: t.TempDir(),
+		Provider: harness.Provider{Engine: harness.Claude, CLI: harness.CLI{Binary: "/usr/bin/true", Home: t.TempDir()}}, WorkDir: t.TempDir(), RuntimeHome: t.TempDir(),
 		Restriction: &Restriction{Tools: ToolHost{
 			Server: "agent_workspace", Handler: echoHandler(t), Dir: dir,
 			Bridge: Bridge{Path: "/usr/bin/true"},

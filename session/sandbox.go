@@ -3,12 +3,13 @@ package session
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 // Sandbox opts an ordinary native session — its own tools intact — into the
@@ -78,7 +79,7 @@ func sandboxClaudeTools(write, web bool) []string {
 
 // sandboxReadDirs resolves each extra readable directory to the path the
 // sandbox will match, and refuses any that would reopen the home directory.
-func sandboxReadDirs(dirs []string) ([]string, error) {
+func sandboxReadDirs(dirs []string) ([]string, string) {
 	home, _ := os.UserHomeDir()
 	if resolved, err := filepath.EvalSymlinks(home); err == nil {
 		home = resolved
@@ -86,17 +87,17 @@ func sandboxReadDirs(dirs []string) ([]string, error) {
 	out := make([]string, 0, len(dirs))
 	for _, dir := range dirs {
 		if !filepath.IsAbs(dir) || filepath.Clean(dir) != dir {
-			return nil, fmt.Errorf("sandbox read path %q must be a clean absolute path", dir)
+			return nil, fmt.Sprintf("sandbox read path %q must be a clean absolute path", dir)
 		}
 		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
 			dir = resolved
 		}
 		if rel, err := filepath.Rel(dir, home); home != "" && err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return nil, fmt.Errorf("sandbox read path %q would reopen the home directory", dir)
+			return nil, fmt.Sprintf("sandbox read path %q would reopen the home directory", dir)
 		}
 		out = append(out, dir)
 	}
-	return out, nil
+	return out, ""
 }
 
 // normalizeSandbox freezes the caller's sandbox and rejects every setting a
@@ -114,7 +115,7 @@ func normalizeSandbox(o Options) (Options, error) {
 	}
 	o.Sandbox = &frozen
 	if o.Restriction != nil {
-		return o, errors.New("a session is either restricted or sandboxed; set only one of Restriction and Sandbox")
+		return o, refuse(o, "sandbox", RefusedConflict, "a session is either restricted or sandboxed; set only one of Restriction and Sandbox")
 	}
 	// Sandbox rules name the working directory by path. A path reached through
 	// a symlink would not match the one the sandbox resolves, so name the real
@@ -123,36 +124,36 @@ func normalizeSandbox(o Options) (Options, error) {
 		o.WorkDir = resolved
 	}
 	if !restrictedPlatform() {
-		return o, &CapabilityError{Engine: string(o.Engine), Code: CapabilitySandboxUnavailable, Phase: BeforeLaunch}
+		return o, &CapabilityError{Engine: o.Provider.Engine, Code: CapabilitySandboxUnavailable, Phase: BeforeLaunch}
 	}
-	read, err := sandboxReadDirs(o.Sandbox.Read)
-	if err != nil {
-		return o, err
+	read, problem := sandboxReadDirs(o.Sandbox.Read)
+	if problem != "" {
+		return o, refuse(o, "sandbox", RefusedSandboxRead, problem)
 	}
 	o.Sandbox.Read = read
-	if err = validateSandboxTools(o); err != nil {
+	if err := validateSandboxTools(o); err != nil {
 		return o, err
 	}
-	if o.Engine == Codex {
+	if o.Provider.Engine == harness.Codex {
 		if o.Policy.CodexSandbox != "" {
-			return o, errors.New("a sandboxed Codex session owns its sandbox; leave Policy.CodexSandbox unset")
+			return o, refuse(o, "policy", RefusedConflict, "a sandboxed Codex session owns its sandbox; leave Policy.CodexSandbox unset")
 		}
 		if o.Policy.CodexApproval != "" && o.Policy.CodexApproval != "never" {
-			return o, errors.New("a sandboxed Codex session never asks for approval; leave Policy.CodexApproval unset or never")
+			return o, refuse(o, "policy", RefusedConflict, "a sandboxed Codex session never asks for approval; leave Policy.CodexApproval unset or never")
 		}
 		o.Policy.CodexApproval = "never"
 		if o.RuntimeHome == "" {
-			return o, errors.New("a sandboxed Codex session requires a durable private runtime home; set Options.RuntimeHome")
+			return o, refuse(o, "runtime_home", RefusedRuntimeHome, "a sandboxed Codex session requires a durable private runtime home; set Options.RuntimeHome")
 		}
 		abs, err := filepath.Abs(o.RuntimeHome)
 		if err != nil {
-			return o, errors.New("invalid sandboxed session runtime home")
+			return o, refuse(o, "runtime_home", RefusedRuntimeHome, "invalid sandboxed session runtime home")
 		}
 		o.RuntimeHome = abs
 		return o, nil
 	}
 	if o.Policy.ClaudePermission != "" && o.Policy.ClaudePermission != "dontAsk" {
-		return o, errors.New("a sandboxed Claude session runs in dontAsk permission mode; leave Policy.ClaudePermission unset or dontAsk")
+		return o, refuse(o, "policy", RefusedConflict, "a sandboxed Claude session runs in dontAsk permission mode; leave Policy.ClaudePermission unset or dontAsk")
 	}
 	o.Policy.ClaudePermission = "dontAsk"
 	if o.Policy.ClaudeTools == nil {
@@ -162,7 +163,7 @@ func normalizeSandbox(o Options) (Options, error) {
 	allowed := sandboxClaudeTools(true, o.Sandbox.Web)
 	for _, tool := range o.Policy.ClaudeTools {
 		if !slices.Contains(allowed, tool) || (!o.Sandbox.Write && (tool == "Edit" || tool == "Write")) {
-			return o, &UnsupportedError{"tools", Capability{Unsupported, "a sandboxed session cannot enable " + tool}}
+			return o, refuse(o, "tools", RefusedSandboxTool, "a sandboxed session cannot enable "+tool)
 		}
 	}
 	return o, nil
@@ -175,10 +176,10 @@ func validateSandboxTools(o Options) error {
 		return nil
 	}
 	if err := tools.validate(); err != nil {
-		return err
+		return toolHostRefusal(o, err)
 	}
-	if o.Engine == Claude && reservedClaudeServer(tools.Server) {
-		return &CapabilityError{Engine: string(o.Engine), Code: CapabilityServerNameReserved, Phase: BeforeLaunch, Tools: []string{tools.Server}}
+	if o.Provider.Engine == harness.Claude && reservedClaudeServer(tools.Server) {
+		return &CapabilityError{Engine: o.Provider.Engine, Code: CapabilityServerNameReserved, Phase: BeforeLaunch, Tools: []string{tools.Server}}
 	}
 	// The channel's credential and lock live in Dir. Inside the workspace a
 	// writing session's own tools could replace them.
@@ -187,7 +188,7 @@ func validateSandboxTools(o Options) error {
 		dir = resolved
 	}
 	if rel, err := filepath.Rel(o.WorkDir, dir); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return errors.New("a sandboxed session's tool host directory must lie outside its working directory")
+		return refuse(o, "tools", RefusedConflict, "a sandboxed session's tool host directory must lie outside its working directory")
 	}
 	return nil
 }
@@ -301,7 +302,7 @@ func claudeSandboxSettings(o Options) string {
 // builds where that changes. A caller that wants a repository's instructions
 // followed has to point the session at them.
 func claudeInstructionExcludes(o Options) []string {
-	homes := []string{o.Home}
+	homes := []string{o.Provider.CLI.Home}
 	if home, err := os.UserHomeDir(); err == nil {
 		homes = append(homes, filepath.Join(home, ".claude"))
 	}
@@ -341,7 +342,7 @@ func claudeSandboxArgs(o Options) []string {
 // sandboxArgs are the arguments that describe a sandboxed session's sandbox,
 // and are what its check proves.
 func sandboxArgs(o Options) []string {
-	if o.Engine == Codex {
+	if o.Provider.Engine == harness.Codex {
 		return codexSandboxArgs(*o.Sandbox)
 	}
 	return claudeSandboxArgs(o)
@@ -354,8 +355,8 @@ func sandboxArgs(o Options) []string {
 func prepareSandbox(ctx context.Context, o Options, lease *os.File) (*launch, error) {
 	refuse := func(err error) (*launch, error) { _ = lease.Close(); return nil, err }
 	l := &launch{extra: sandboxArgs(o)}
-	if o.Engine == Codex {
-		if _, err := prepareRuntimeHome(o.Home, o.RuntimeHome); err != nil {
+	if o.Provider.Engine == harness.Codex {
+		if _, err := prepareRuntimeHome(o.Provider.CLI.Home, o.RuntimeHome); err != nil {
 			return refuse(err)
 		}
 	}
@@ -371,7 +372,7 @@ func prepareSandbox(ctx context.Context, o Options, lease *os.File) (*launch, er
 		return nil, err
 	}
 	l.host = host
-	if o.Engine == Claude {
+	if o.Provider.Engine == harness.Claude {
 		l.extra = append(l.extra, claudeMCPConfig(host), claudeHostedAllowed(host))
 		return l, nil
 	}
@@ -389,17 +390,17 @@ func prepareSandbox(ctx context.Context, o Options, lease *os.File) (*launch, er
 // a caller report readiness before any work is asked for.
 func VerifySandbox(ctx context.Context, o Options) error {
 	if o.Sandbox == nil {
-		return errors.New("options carry no sandbox to verify")
+		return refuse(o, "sandbox", RefusedNotConfigured, "options carry no sandbox to verify")
 	}
 	o, err := normalize(o)
 	if err != nil {
 		return err
 	}
-	if o.Engine == Codex {
-		if login, err := credentialDigest(filepath.Join(o.Home, codexCredentialFile)); err != nil || login == nil {
+	if o.Provider.Engine == harness.Codex {
+		if login, err := credentialDigest(filepath.Join(o.Provider.CLI.Home, codexCredentialFile)); err != nil || login == nil {
 			// Start would refuse to share a missing login; say so here too rather
 			// than report a session ready that cannot open.
-			return &CapabilityError{Engine: string(Codex), Code: CapabilityLoginUnavailable, Phase: BeforeLaunch}
+			return &CapabilityError{Engine: harness.Codex, Code: CapabilityLoginUnavailable, Phase: BeforeLaunch}
 		}
 	}
 	return verifySandbox(ctx, o, &launch{extra: sandboxArgs(o)})

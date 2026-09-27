@@ -4,13 +4,15 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 // startedCodexTurn opens a turn whose server-assigned id is turn-1, so the
 // routing guards below have a concrete turn to be measured against.
 func startedCodexTurn(t *testing.T) (*Session, *fakeWire, *Turn) {
 	t.Helper()
-	s, w := fakeSession(t, Codex)
+	s, w := fakeSession(t, harness.Codex)
 	w.requestFn = func(string, map[string]any) (json.RawMessage, error) {
 		return json.RawMessage(`{"turn":{"id":"turn-1"}}`), nil
 	}
@@ -52,7 +54,7 @@ func TestCodexIgnoresForeignThreadAndTurn(t *testing.T) {
 // A Claude frame naming a different session is a protocol violation, not a
 // frame to skip: the transport is talking about a conversation we did not open.
 func TestClaudeForeignSessionFailsProtocol(t *testing.T) {
-	s, _ := fakeSession(t, Claude)
+	s, _ := fakeSession(t, harness.Claude)
 	ctx := testContext(t)
 	turn, err := s.StartTurn(ctx, Input{"start"})
 	if err != nil {
@@ -67,7 +69,7 @@ func TestClaudeForeignSessionFailsProtocol(t *testing.T) {
 // Subagent events belong to a different native turn. They must neither become
 // this turn's answer nor open a tool card this turn will never close.
 func TestClaudeIgnoresSubagentEvents(t *testing.T) {
-	s, _ := fakeSession(t, Claude)
+	s, _ := fakeSession(t, harness.Claude)
 	ctx := testContext(t)
 	turn, err := s.StartTurn(ctx, Input{"start"})
 	if err != nil {
@@ -95,7 +97,7 @@ func TestClaudeIgnoresSubagentEvents(t *testing.T) {
 // An interrupted turn's totals are not the turn's totals. Numbers reported
 // alongside a failure must not be promoted to a known accounting figure.
 func TestInterruptedClaudeErrorUsageStaysUnknown(t *testing.T) {
-	s, w := fakeSession(t, Claude)
+	s, w := fakeSession(t, harness.Claude)
 	ctx := testContext(t)
 	turn, err := s.StartTurn(ctx, Input{"start"})
 	if err != nil {
@@ -123,7 +125,7 @@ func TestInterruptedClaudeErrorUsageStaysUnknown(t *testing.T) {
 // A tool result closes the card its tool_use opened, and says whether the tool
 // failed. A card left open would read as a tool still running.
 func TestClaudeToolResultsCloseTheirCards(t *testing.T) {
-	s, _ := fakeSession(t, Claude)
+	s, _ := fakeSession(t, harness.Claude)
 	ctx := testContext(t)
 	turn, err := s.StartTurn(ctx, Input{"start"})
 	if err != nil {
@@ -150,7 +152,7 @@ func TestClaudeToolResultsCloseTheirCards(t *testing.T) {
 // its own text rather than appending to the last one's, which is what lets the
 // final answer be the last message instead of every message run together.
 func TestClaudeStreamedTextFollowsTheCurrentMessage(t *testing.T) {
-	s, _ := fakeSession(t, Claude)
+	s, _ := fakeSession(t, harness.Claude)
 	ctx := testContext(t)
 	turn, err := s.StartTurn(ctx, Input{"start"})
 	if err != nil {

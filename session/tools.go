@@ -268,6 +268,6 @@ func (s *Session) toolRefused(tool, reason string) {
 	// diagnostic record instead of nowhere. Both fields are fixed vocabulary: the
 	// caller's own tool name and this library's own reason.
 	if report != nil {
-		report(Diagnostic{Engine: string(s.options.Engine), Stage: "tool_refused", Code: reason, Detail: "tool: " + tool, At: time.Now().UTC()})
+		report(Diagnostic{Engine: s.options.Provider.Engine, Stage: "tool_refused", Code: reason, Detail: "tool: " + tool, At: time.Now().UTC()})
 	}
 }

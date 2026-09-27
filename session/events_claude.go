@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/claudeproto"
 )
 
@@ -126,7 +127,9 @@ func (s *Session) claudeResult(t *Turn, m map[string]json.RawMessage) {
 		Result  string
 		Subtype string
 		IsError bool `json:"is_error"`
-		Usage   *struct {
+		// Typed so that a malformed report fails the frame as it always has;
+		// the figures themselves are read by parseClaudeUsage.
+		Usage *struct {
 			Input      int64 `json:"input_tokens"`
 			Output     int64 `json:"output_tokens"`
 			CacheRead  int64 `json:"cache_read_input_tokens"`
@@ -152,8 +155,9 @@ func (s *Session) claudeResult(t *Turn, m map[string]json.RawMessage) {
 	// turn's figures into them. They stay unknown, and what this turn actually
 	// consumed survives as the per-response observations in Result.Observed —
 	// evidence a caller can show, rather than a measurement it can trust.
-	if r.Usage != nil && !r.IsError && validClaudeUsage(m["usage"]) {
-		t.result.Usage = Usage{Known: true, Final: true, Input: r.Usage.Input, Output: r.Usage.Output, CacheRead: r.Usage.CacheRead, CacheWrite: r.Usage.CacheWrite}
+	if r.Usage != nil && !r.IsError {
+		t.result.Usage = parseClaudeUsage(m["usage"])
+		t.result.Usage.Final = t.result.Usage.Known
 	}
 	usage := t.result.Usage
 	t.mu.Unlock()
@@ -185,19 +189,47 @@ func claudeResponseUsage(raw json.RawMessage) Usage {
 	var message struct {
 		Usage json.RawMessage `json:"usage"`
 	}
-	if json.Unmarshal(raw, &message) != nil || len(message.Usage) == 0 || !validClaudeUsage(message.Usage) {
+	if json.Unmarshal(raw, &message) != nil {
+		return Usage{}
+	}
+	return parseClaudeUsage(message.Usage)
+}
+
+// parseClaudeUsage converts Claude's report, whose input_tokens excludes both
+// cache figures, into the shared shape, whose Input includes them. The split
+// is known only when Claude reported both cache figures; a total that would
+// not stay representable is unknown.
+func parseClaudeUsage(raw json.RawMessage) Usage {
+	if len(raw) == 0 || !validClaudeUsage(raw) {
 		return Usage{}
 	}
 	var counts struct {
-		Input      int64 `json:"input_tokens"`
-		Output     int64 `json:"output_tokens"`
-		CacheRead  int64 `json:"cache_read_input_tokens"`
-		CacheWrite int64 `json:"cache_creation_input_tokens"`
+		Input      int64  `json:"input_tokens"`
+		Output     int64  `json:"output_tokens"`
+		CacheRead  *int64 `json:"cache_read_input_tokens"`
+		CacheWrite *int64 `json:"cache_creation_input_tokens"`
 	}
-	if json.Unmarshal(message.Usage, &counts) != nil {
+	if json.Unmarshal(raw, &counts) != nil {
 		return Usage{}
 	}
-	return Usage{Known: true, Input: counts.Input, Output: counts.Output, CacheRead: counts.CacheRead, CacheWrite: counts.CacheWrite}
+	read, write := int64(0), int64(0)
+	if counts.CacheRead != nil {
+		read = *counts.CacheRead
+	}
+	if counts.CacheWrite != nil {
+		write = *counts.CacheWrite
+	}
+	if counts.Input > maxInt64-read || counts.Input+read > maxInt64-write {
+		return Usage{}
+	}
+	return Usage{Usage: harness.Usage{
+		Known:      true,
+		Input:      counts.Input + read + write,
+		Output:     counts.Output,
+		CacheRead:  read,
+		CacheWrite: write,
+		CacheKnown: counts.CacheRead != nil && counts.CacheWrite != nil,
+	}}
 }
 
 func validClaudeUsage(raw json.RawMessage) bool {
@@ -250,7 +282,7 @@ func claudeCompactionTrigger(m map[string]json.RawMessage) string {
 // the caller a bounded, sanitized diagnostic through the hook that exists for
 // it. Provider text never enters the error value.
 func (s *Session) claudeTerminalFailure(m map[string]json.RawMessage, subtype string) error {
-	failure := &TurnError{Engine: string(Claude), Code: claudeproto.ResultSubtype(subtype)}
+	failure := &TurnError{Engine: harness.Claude, Code: claudeproto.ResultSubtype(subtype)}
 	if failure.Code == "" {
 		failure.Code = "turn_failed"
 	}
@@ -268,7 +300,7 @@ func (s *Session) claudeTerminalFailure(m map[string]json.RawMessage, subtype st
 		}
 	}
 	if report := s.options.OnDiagnostic; report != nil {
-		report(Diagnostic{Engine: string(Claude), Stage: "turn_result", Code: failure.Code, Detail: sanitize(mustMarshal(m["errors"]), 1024), At: time.Now().UTC()})
+		report(Diagnostic{Engine: harness.Claude, Stage: "turn_result", Code: failure.Code, Detail: sanitize(mustMarshal(m["errors"]), 1024), At: time.Now().UTC()})
 	}
 	return failure
 }

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/session"
 )
 
@@ -29,7 +30,7 @@ func main() {
 	defer cancel()
 	ctx, deadline := context.WithTimeout(ctx, 5*time.Minute)
 	defer deadline()
-	if err := run(ctx, session.Options{Engine: session.Engine(*engine), Model: *model, Effort: *effort, Home: *home, WorkDir: *workdir}, strings.Join(flag.Args(), " ")); err != nil {
+	if err := run(ctx, session.Options{Provider: harness.Provider{Engine: harness.Engine(*engine), CLI: harness.CLI{Home: *home}}, Model: *model, Effort: *effort, WorkDir: *workdir}, strings.Join(flag.Args(), " ")); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

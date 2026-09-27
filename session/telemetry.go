@@ -6,6 +6,8 @@ import (
 	"errors"
 	"os"
 	"time"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 // Inspect reads account and quota metadata without creating a thread, sending
@@ -13,12 +15,12 @@ import (
 // and the selected CLI's native login. Unsupported optional methods return
 // partial data and an error; callers must inspect each snapshot independently.
 func Inspect(ctx context.Context, o Options) (Inspection, error) {
-	out := Inspection{Engine: o.Engine, Capabilities: CapabilitiesFor(o.Engine)}
+	out := Inspection{Engine: o.Provider.Engine, Capabilities: CapabilitiesFor(o.Provider.Engine)}
 	if err := ctx.Err(); err != nil {
 		return out, err
 	}
 	// Ignore conversation-only configuration, including instructions and policy.
-	o = Options{Engine: o.Engine, Binary: o.Binary, Home: o.Home}
+	o = Options{Provider: o.Provider}
 	dir, err := os.MkdirTemp("", "agent-harness-inspect-")
 	if err != nil {
 		return out, ErrTransport
@@ -31,9 +33,9 @@ func Inspect(ctx context.Context, o Options) (Inspection, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	s := &Session{options: o, caps: CapabilitiesFor(o.Engine), done: make(chan struct{}), opGate: make(chan struct{}, 1)}
+	s := &Session{options: o, caps: CapabilitiesFor(o.Provider.Engine), done: make(chan struct{}), opGate: make(chan struct{}, 1)}
 	args := []string{"app-server", "--listen", "stdio://"}
-	if o.Engine == Claude {
+	if o.Provider.Engine == harness.Claude {
 		args = []string{"--safe-mode", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"}
 	}
 	s.mu.Lock()
@@ -44,7 +46,7 @@ func Inspect(ctx context.Context, o Options) (Inspection, error) {
 		return out, err
 	}
 	defer func() { s.Close(); <-w.reaped }()
-	if o.Engine == Codex {
+	if o.Provider.Engine == harness.Codex {
 		err = codexHandshake(ctx, w, false)
 	} else {
 		var body json.RawMessage
@@ -83,7 +85,7 @@ func (s *Session) ReadAccount(ctx context.Context) (AccountSnapshot, error) {
 	if err := s.telemetryOpen(); err != nil {
 		return s.Telemetry().Account, err
 	}
-	if s.options.Engine == Claude {
+	if s.options.Provider.Engine == harness.Claude {
 		a := s.Telemetry().Account
 		return a, nil
 	}
@@ -120,14 +122,14 @@ func (s *Session) ReadQuota(ctx context.Context) (QuotaSnapshot, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	method, params := "account/rateLimits/read", map[string]any{}
-	if s.options.Engine == Claude {
+	if s.options.Provider.Engine == harness.Claude {
 		method = "get_usage"
 		params["skip_behaviors"] = true
 	}
 	raw, err := s.transport.request(ctx, method, params)
 	var q QuotaSnapshot
 	if err == nil {
-		if s.options.Engine == Codex {
+		if s.options.Provider.Engine == harness.Codex {
 			q, err = parseCodexQuota(raw)
 		} else {
 			q, err = parseClaudeQuota(raw)
@@ -161,7 +163,7 @@ func (s *Session) ReadContext(ctx context.Context) (ContextSnapshot, error) {
 	if err := s.telemetryOpen(); err != nil {
 		return s.Telemetry().Context, err
 	}
-	if s.options.Engine == Codex {
+	if s.options.Provider.Engine == harness.Codex {
 		return s.Telemetry().Context, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
@@ -195,13 +197,13 @@ func observation(source string, quality Measurement) Observation {
 	return Observation{Source: source, Quality: quality, ObservedAt: time.Now().UTC()}
 }
 func invalidate(o *Observation, reason string) { o.Invalidated = true; o.Reason = reason }
-func recordCapability(c *Capability, err error) {
+func recordCapability(c *harness.Capability, err error) {
 	if err == nil {
-		*c = Capability{Native, "observed native telemetry"}
+		*c = harness.Capability{Availability: harness.Native, Reason: "observed native telemetry"}
 	} else if errors.Is(err, ErrUnsupported) {
-		*c = Capability{Unsupported, "installed CLI does not support this telemetry method"}
-	} else if c.Availability != Native {
-		*c = Capability{Unknown, "telemetry method was not successfully observed"}
+		*c = harness.Capability{Availability: harness.Unsupported, Reason: "installed CLI does not support this telemetry method"}
+	} else if c.Availability != harness.Native {
+		*c = harness.Capability{Availability: harness.Unknown, Reason: "telemetry method was not successfully observed"}
 	}
 }
 func (s *Session) observeClaudeAccount(raw json.RawMessage) {

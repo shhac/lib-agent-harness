@@ -8,55 +8,54 @@ import (
 	"encoding/json"
 	"sync"
 	"time"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 // MaxFrameBytes bounds one native JSON-line frame, including discarded tool
 // payloads. Oversized frames stop the session with ErrOutputLimit.
 const MaxFrameBytes = 16 << 20
 
-type Engine string
-
-const (
-	Codex  Engine = "codex"
-	Claude Engine = "claude"
-)
-
-type Availability string
-
-const (
-	Native      Availability = "native"
-	Composed    Availability = "composed"
-	Unsupported Availability = "unsupported"
-	Unknown     Availability = "unknown"
-)
-
-type Capability struct {
-	Availability Availability `json:"availability"`
-	Reason       string       `json:"reason,omitempty"`
-}
+// Capabilities is what one session has established about its installed
+// harness. It starts from harness.Support's static claim for the engine and
+// records what the running harness has since shown.
 type Capabilities struct {
-	Start, Resume, Interrupt, Steer, ReplaceInstructions, AppendInstructions Capability
+	Start, Resume, Interrupt, Steer, ReplaceInstructions, AppendInstructions harness.Capability
 	// Telemetry capabilities become Native only after a successful response or
 	// event. Older CLI versions may reject optional inspection methods.
-	Account, Quota, Context, Compact Capability
+	Account, Quota, Context, Compact harness.Capability
 	// RestrictTools reports whether the installed harness was observed running
 	// with exactly the configured tool surface. Unknown means it was not checked
 	// on this path, never that it was checked and found acceptable.
-	RestrictTools Capability
+	RestrictTools harness.Capability
 }
 
-// CapabilitiesFor describes availability before contacting an installed CLI.
-// Strategy alone is not evidence that a particular installed version supports it.
-func CapabilitiesFor(e Engine) Capabilities {
-	u := Capability{Unknown, "not verified against the installed harness"}
-	if e != Codex && e != Claude {
-		u = Capability{Unsupported, "unrecognized harness"}
+// CapabilitiesFor describes availability before contacting an installed CLI,
+// as harness.Support states it for a session. Strategy alone is not evidence
+// that a particular installed version supports it. Account and Quota are the
+// account operation's Login and Quota features, which a session reads through
+// its own harness process.
+func CapabilitiesFor(e harness.Engine) Capabilities {
+	session := func(f harness.Feature) harness.Capability { return harness.Support(e, harness.Session, f) }
+	account := func(f harness.Feature) harness.Capability {
+		if start := session(harness.Available); !start.Usable() {
+			return start
+		}
+		return harness.Support(e, harness.Account, f)
 	}
-	compact := u
-	if e == Claude {
-		compact = Capability{Unsupported, "Claude exposes no verified manual compaction control protocol"}
+	return Capabilities{
+		Start:               session(harness.Available),
+		Resume:              session(harness.Resume),
+		Interrupt:           session(harness.Interrupt),
+		Steer:               session(harness.Steer),
+		ReplaceInstructions: session(harness.ReplaceInstructions),
+		AppendInstructions:  session(harness.AppendInstructions),
+		Account:             account(harness.Login),
+		Quota:               account(harness.Quota),
+		Context:             session(harness.ContextWindow),
+		Compact:             session(harness.Compact),
+		RestrictTools:       session(harness.RestrictTools),
 	}
-	return Capabilities{Compact: compact, Start: u, Resume: u, Interrupt: u, Steer: u, ReplaceInstructions: u, AppendInstructions: u, Account: u, Quota: u, Context: u}
 }
 
 type InstructionMode string
@@ -75,7 +74,8 @@ type Instructions struct {
 }
 
 // Policy uses explicit native provider settings. Empty values resolve to
-// read-only/never for Codex and dontAsk for Claude. Unhandled requests from the
+// read-only/never for Codex and dontAsk for Claude. Setting a field only the
+// other engine reads is refused rather than ignored. Unhandled requests from the
 // CLI are denied. These are execution settings, not a tools-disabled guarantee.
 type Policy struct {
 	CodexSandbox     string `json:"codex_sandbox,omitempty"`
@@ -86,18 +86,24 @@ type Policy struct {
 	ClaudeTools []string `json:"claude_tools,omitempty"`
 }
 type Options struct {
-	Engine                               Engine
-	Binary, Home, WorkDir, Model, Effort string
+	// Provider selects the engine and locates its CLI. Only a CLI provider for
+	// an engine harness.Support offers sessions is accepted. An empty
+	// Provider.CLI.Binary runs the engine's name on PATH; an empty
+	// Provider.CLI.Home resolves CODEX_HOME or CLAUDE_CONFIG_DIR, then ~/.codex
+	// or ~/.claude. Both resolved values are part of a Ref.
+	Provider               harness.Provider
+	WorkDir, Model, Effort string
 	// AccountIdentity is a caller-owned, non-secret label. Credentials are never
 	// read or copied. Change this label when deliberately changing an account.
 	AccountIdentity string
 	Instructions    Instructions
 	Policy          Policy
 	// RuntimeHome is the durable private home a restricted session runs in. The
-	// library owns its configuration and shares only the login from Home, so a
-	// worker gets the operator's account without the rest of their setup. It must
-	// be separate from Home, must persist for the assignment's life — the native
-	// conversation lives in it — and belongs in private application state.
+	// library owns its configuration and shares only the login from
+	// Provider.CLI.Home, so a worker gets the operator's account without the
+	// rest of their setup. It must be separate from that home, must persist for
+	// the assignment's life — the native conversation lives in it — and belongs
+	// in private application state.
 	RuntimeHome string
 	// Restriction opts this session into the restricted worker contract: the
 	// harness's own tools are removed and replaced by the caller's, verified
@@ -159,28 +165,28 @@ const (
 // control-stripped tail of the harness's own standard error with credential-
 // shaped runs removed; it is evidence for an operator, not a classification.
 type Diagnostic struct {
-	Engine string    `json:"engine"`
-	Stage  string    `json:"stage"`
-	Code   string    `json:"code"`
-	Detail string    `json:"detail,omitempty"`
-	At     time.Time `json:"at"`
+	Engine harness.Engine `json:"engine"`
+	Stage  string         `json:"stage"`
+	Code   string         `json:"code"`
+	Detail string         `json:"detail,omitempty"`
+	At     time.Time      `json:"at"`
 }
 
 // Ref is safe to persist as private application state. It contains local paths
 // and an opaque configuration digest, never instructions or credentials. It
 // binds the selected home/account label, not the identity of a refreshed login.
 type Ref struct {
-	Engine          Engine `json:"engine"`
-	ID              string `json:"id"`
-	Home            string `json:"home"`
-	WorkDir         string `json:"work_dir"`
-	AccountIdentity string `json:"account_identity,omitempty"`
-	ConfigHash      string `json:"config_hash"`
+	Engine          harness.Engine `json:"engine"`
+	ID              string         `json:"id"`
+	Home            string         `json:"home"`
+	WorkDir         string         `json:"work_dir"`
+	AccountIdentity string         `json:"account_identity,omitempty"`
+	ConfigHash      string         `json:"config_hash"`
 }
 type Input struct{ Text string }
 type SteerOptions struct{ RequireNative bool }
 type SteerResult struct {
-	Strategy Availability
+	Strategy harness.Availability
 	Turn     *Turn
 }
 type Event struct {
@@ -196,22 +202,22 @@ type Event struct {
 	Account *AccountSnapshot `json:"account,omitempty"`
 }
 
-// Usage is what a provider reported. Input excludes CacheRead; Reasoning is a
-// subset of Output. Known distinguishes unavailable accounting from zero usage.
+// Usage is what a provider reported, in the shared harness shape: Input counts
+// every prompt token, cached or not, and the cache figures are parts of it.
 //
 // Final separates a turn's own accounting from an observation of one model
 // response inside it. A turn makes many requests, so a caller that wants to
 // react while work is still running has to read the non-final ones — and a
 // caller that wants the turn's accounting must not sum them.
 type Usage struct {
-	Known                                           bool
-	Final                                           bool
-	Input, Output, CacheRead, CacheWrite, Reasoning int64
+	harness.Usage
+	Final bool `json:"final"`
 }
 
 // add accumulates one response's figures. Anything that would not stay
 // representable makes the accumulation unknown rather than wrapping into a
-// number that looks measured.
+// number that looks measured. The cache split stays known only while every
+// response reported it.
 func (u Usage) add(next Usage) Usage {
 	if !next.Known {
 		return u
@@ -222,7 +228,15 @@ func (u Usage) add(next Usage) Usage {
 			return Usage{}
 		}
 	}
-	return Usage{Known: true, Input: u.Input + next.Input, Output: u.Output + next.Output, CacheRead: u.CacheRead + next.CacheRead, CacheWrite: u.CacheWrite + next.CacheWrite, Reasoning: u.Reasoning + next.Reasoning}
+	return Usage{Usage: harness.Usage{
+		Known:      true,
+		Input:      u.Input + next.Input,
+		Output:     u.Output + next.Output,
+		CacheRead:  u.CacheRead + next.CacheRead,
+		CacheWrite: u.CacheWrite + next.CacheWrite,
+		Reasoning:  u.Reasoning + next.Reasoning,
+		CacheKnown: (!u.Known || u.CacheKnown) && next.CacheKnown,
+	}}
 }
 
 const maxInt64 = int64(^uint64(0) >> 1)

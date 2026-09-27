@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 const sandboxProbeTimeout = 60 * time.Second
@@ -30,7 +32,7 @@ func verifySandbox(ctx context.Context, o Options, l *launch) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, sandboxProbeTimeout)
 	defer cancel()
-	if o.Engine == Codex {
+	if o.Provider.Engine == harness.Codex {
 		err = probeCodexSandbox(ctx, o)
 	} else {
 		err = probeClaudeSandbox(ctx, o)
@@ -47,11 +49,11 @@ func verifySandbox(ctx context.Context, o Options, l *launch) error {
 func sandboxKey(o Options, l *launch) (string, error) {
 	binary, info, err := binaryIdentity(o)
 	if err != nil {
-		return "", &CapabilityError{Engine: string(o.Engine), Code: CapabilitySandboxUnavailable, Phase: BeforeLaunch}
+		return "", &CapabilityError{Engine: o.Provider.Engine, Code: CapabilitySandboxUnavailable, Phase: BeforeLaunch}
 	}
 	payload, _ := json.Marshal(struct {
 		Kind     string
-		Engine   Engine
+		Engine   harness.Engine
 		Binary   string
 		Size     int64
 		Modified time.Time
@@ -59,7 +61,7 @@ func sandboxKey(o Options, l *launch) (string, error) {
 		Read     []string
 		Args     []string
 		TempDir  string
-	}{"sandbox", o.Engine, binary, info.Size(), info.ModTime(), o.Sandbox.Write, o.Sandbox.Read, l.extra, sessionTempDir()})
+	}{"sandbox", o.Provider.Engine, binary, info.Size(), info.ModTime(), o.Sandbox.Write, o.Sandbox.Read, l.extra, sessionTempDir()})
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:]), nil
 }
@@ -77,13 +79,13 @@ func probeClaudeSandbox(ctx context.Context, o Options) error {
 	// never needed to ask the question.
 	home, err := os.MkdirTemp("", "agent-harness-sandbox-status-")
 	if err != nil {
-		return &CapabilityError{Engine: string(Claude), Code: CapabilitySandboxUnavailable, Phase: BeforeLaunch}
+		return &CapabilityError{Engine: harness.Claude, Code: CapabilitySandboxUnavailable, Phase: BeforeLaunch}
 	}
 	defer os.RemoveAll(home)
 	args := []string{"--setting-sources=", "--settings", claudeSandboxSettings(o), "sandbox", "status"}
-	out, err := runOnce(ctx, o.Binary, args, o.WorkDir, disposableEnvironment(o, home))
+	out, err := runOnce(ctx, o.Provider.CLI.Binary, args, o.WorkDir, disposableEnvironment(o, home))
 	if err != nil {
-		return &CapabilityError{Engine: string(Claude), Code: CapabilitySandboxUnavailable, Phase: BeforeLaunch}
+		return &CapabilityError{Engine: harness.Claude, Code: CapabilitySandboxUnavailable, Phase: BeforeLaunch}
 	}
 	var status struct {
 		Supported         bool    `json:"supported"`
@@ -92,13 +94,13 @@ func probeClaudeSandbox(ctx context.Context, o Options) error {
 		UnavailableReason *string `json:"unavailableReason"`
 	}
 	if json.Unmarshal(out, &status) != nil {
-		return &CapabilityError{Engine: string(Claude), Code: CapabilitySandboxUnavailable, Phase: BeforeLaunch}
+		return &CapabilityError{Engine: harness.Claude, Code: CapabilitySandboxUnavailable, Phase: BeforeLaunch}
 	}
 	if !status.Supported || status.UnavailableReason != nil {
-		return &CapabilityError{Engine: string(Claude), Code: CapabilitySandboxUnavailable, Phase: BeforeLaunch}
+		return &CapabilityError{Engine: harness.Claude, Code: CapabilitySandboxUnavailable, Phase: BeforeLaunch}
 	}
 	if !status.Enabled || !status.StrictMode {
-		return &CapabilityError{Engine: string(Claude), Code: CapabilitySandboxNotEnforced, Phase: BeforeLaunch}
+		return &CapabilityError{Engine: harness.Claude, Code: CapabilitySandboxNotEnforced, Phase: BeforeLaunch}
 	}
 	return nil
 }
@@ -138,8 +140,8 @@ exit 0
 // session uses, in a disposable home, and checks every refusal. The temporary
 // directory is the one a real session inherits, not the probe's own.
 func probeCodexSandbox(ctx context.Context, o Options) error {
-	unavailable := &CapabilityError{Engine: string(Codex), Code: CapabilitySandboxUnavailable, Phase: BeforeLaunch}
-	notEnforced := &CapabilityError{Engine: string(Codex), Code: CapabilitySandboxNotEnforced, Phase: BeforeLaunch}
+	unavailable := &CapabilityError{Engine: harness.Codex, Code: CapabilitySandboxUnavailable, Phase: BeforeLaunch}
+	notEnforced := &CapabilityError{Engine: harness.Codex, Code: CapabilitySandboxNotEnforced, Phase: BeforeLaunch}
 	root, err := os.MkdirTemp("", "agent-harness-sandbox-")
 	if err != nil {
 		return unavailable
@@ -182,10 +184,10 @@ func probeCodexSandbox(ctx context.Context, o Options) error {
 	env = append(env, "TMPDIR="+sessionTempDir(), "CANARY_SIBLING="+filepath.Join(sibling, "canary"), "CANARY_NAME="+filepath.Base(root)+".canary", "CANARY_PORT="+strconv.Itoa(port))
 	args := append([]string{"sandbox", "-P", sandboxProfile, "-C", workspace}, codexSandboxArgs(*o.Sandbox)...)
 	args = append(args, "--", "/bin/sh", "-c", canaryScript)
-	out, err := runOnce(ctx, o.Binary, args, workspace, env)
+	out, err := runOnce(ctx, o.Provider.CLI.Binary, args, workspace, env)
 	if err != nil {
 		if ctx.Err() != nil {
-			return &CapabilityError{Engine: string(Codex), Code: CapabilityProbeTimeout, Phase: BeforeLaunch}
+			return &CapabilityError{Engine: harness.Codex, Code: CapabilityProbeTimeout, Phase: BeforeLaunch}
 		}
 		return unavailable
 	}
@@ -242,7 +244,7 @@ func checkCodexSandbox(o Options, body []byte) error {
 			ID string `json:"id"`
 		} `json:"activePermissionProfile"`
 	}
-	notEnforced := &CapabilityError{Engine: string(Codex), Code: CapabilitySandboxNotEnforced, Phase: BeforeFirstPrompt}
+	notEnforced := &CapabilityError{Engine: harness.Codex, Code: CapabilitySandboxNotEnforced, Phase: BeforeFirstPrompt}
 	if json.Unmarshal(body, &response) != nil {
 		return notEnforced
 	}

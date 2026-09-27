@@ -10,6 +10,8 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 type Session struct {
@@ -95,7 +97,7 @@ func open(ctx context.Context, o Options, r *Ref, lease *os.File) (*Session, err
 	if err != nil {
 		return nil, err
 	}
-	s := &Session{options: o, ref: reference(o, ""), caps: CapabilitiesFor(o.Engine), lifetime: ctx, done: make(chan struct{}), opGate: make(chan struct{}, 1)}
+	s := &Session{options: o, ref: reference(o, ""), caps: CapabilitiesFor(o.Provider.Engine), lifetime: ctx, done: make(chan struct{}), opGate: make(chan struct{}, 1)}
 	if l != nil && l.host != nil {
 		s.tools = l.host
 		l.host.onRefusal = s.toolRefused
@@ -110,7 +112,7 @@ func open(ctx context.Context, o Options, r *Ref, lease *os.File) (*Session, err
 	}
 	if r != nil {
 		s.ref = *r
-	} else if o.Engine == Claude {
+	} else if o.Provider.Engine == harness.Claude {
 		s.ref.ID = newID()
 	}
 	// A restricted session marks the attempt before the harness exists, then
@@ -120,14 +122,14 @@ func open(ctx context.Context, o Options, r *Ref, lease *os.File) (*Session, err
 	// mean a crash at any point is either "no process" or "a process, reserved".
 	var onStart func(int)
 	if l != nil && l.host != nil {
-		if err = recordLaunch(l.host.cfg.Dir, launchRecord{Engine: string(o.Engine), Launch: l.host.socketDir, Started: time.Now().UTC()}); err != nil {
+		if err = recordLaunch(l.host.cfg.Dir, launchRecord{Engine: string(o.Provider.Engine), Launch: l.host.socketDir, Started: time.Now().UTC()}); err != nil {
 			s.releaseTools()
 			return nil, err
 		}
 		identified := make(chan error, 1)
 		s.identified = identified
 		onStart = func(pid int) {
-			record := launchRecord{Engine: string(o.Engine), PID: pid, Group: pid, Launch: l.host.socketDir, Started: time.Now().UTC()}
+			record := launchRecord{Engine: string(o.Provider.Engine), PID: pid, Group: pid, Launch: l.host.socketDir, Started: time.Now().UTC()}
 			err := recordLaunch(l.host.cfg.Dir, record)
 			identified <- err
 			if err != nil {
@@ -173,7 +175,7 @@ func open(ctx context.Context, o Options, r *Ref, lease *os.File) (*Session, err
 // init frame or a reply to the initialize request. Only a natural exit counts;
 // a harness this library had to stop is not evidence about the conversation.
 func (s *Session) resumeFailure(resuming bool, err error) error {
-	if !resuming || s.options.Engine != Claude || !errors.Is(err, ErrTransport) {
+	if !resuming || s.options.Provider.Engine != harness.Claude || !errors.Is(err, ErrTransport) {
 		return err
 	}
 	s.awaitReaped(context.Background())
@@ -307,7 +309,7 @@ func newID() string {
 func (s *Session) initialize(ctx context.Context, resume bool) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if s.options.Engine == Codex {
+	if s.options.Provider.Engine == harness.Codex {
 		if err := codexHandshake(ctx, s.transport, s.options.Sandbox != nil); err != nil {
 			return err
 		}
@@ -355,7 +357,7 @@ func (s *Session) initialize(ctx context.Context, resume bool) error {
 	if s.closed {
 		return ErrClosed
 	}
-	c := Capability{Native, "acknowledged by the installed harness"}
+	c := harness.Capability{Availability: harness.Native, Reason: "acknowledged by the installed harness"}
 	if resume {
 		s.caps.Resume = c
 	} else {
@@ -397,7 +399,7 @@ func (s *Session) Release(ctx context.Context) (Reclamation, error) {
 	if host == nil {
 		// A sandboxed Codex session has no bridge to reclaim, but it ran in a
 		// runtime home that may hold a refreshed login.
-		if s.options.Sandbox != nil && s.options.Engine == Codex && s.options.RuntimeHome != "" {
+		if s.options.Sandbox != nil && s.options.Provider.Engine == harness.Codex && s.options.RuntimeHome != "" {
 			s.awaitReaped(ctx)
 			if !s.reaped() {
 				// Still running, and possibly still refreshing its login. Copying a
@@ -405,7 +407,7 @@ func (s *Session) Release(ctx context.Context) (Reclamation, error) {
 				// leaving the refresh for the next launch to share back.
 				return Reclamation{Found: true}, ErrUnreclaimed
 			}
-			if err := writeBackCredential(s.options.Home, s.options.RuntimeHome); err != nil {
+			if err := writeBackCredential(s.options.Provider.CLI.Home, s.options.RuntimeHome); err != nil {
 				return Reclamation{Confirmed: true}, err
 			}
 		}
@@ -426,8 +428,8 @@ func (s *Session) Release(ctx context.Context) (Reclamation, error) {
 	// The harness is gone, so its home is no longer being written to. If it
 	// refreshed the login, return that to the source now rather than leaving the
 	// next worker to rediscover an expired one.
-	if s.options.Engine == Codex && s.options.RuntimeHome != "" {
-		if shareErr := writeBackCredential(s.options.Home, s.options.RuntimeHome); shareErr != nil {
+	if s.options.Provider.Engine == harness.Codex && s.options.RuntimeHome != "" {
+		if shareErr := writeBackCredential(s.options.Provider.CLI.Home, s.options.RuntimeHome); shareErr != nil {
 			return out, shareErr
 		}
 	}

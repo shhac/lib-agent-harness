@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 // Every credential in these tests is a synthetic string in a temporary
@@ -203,14 +205,14 @@ func TestRepeatedPreparationLeavesTheCredentialAlone(t *testing.T) {
 
 // A restricted session will not start without somewhere private to run.
 func TestRestrictedSessionRequiresARuntimeHome(t *testing.T) {
-	o := restrictedOptions(t, Codex)
+	o := restrictedOptions(t, harness.Codex)
 	o.RuntimeHome = ""
 	if _, err := normalize(o); err == nil {
 		t.Fatal("a restricted session was accepted with no runtime home")
 	}
 	// And the runtime home is part of its identity: resuming elsewhere is a
 	// different session.
-	first, err := normalize(restrictedOptions(t, Codex))
+	first, err := normalize(restrictedOptions(t, harness.Codex))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +224,7 @@ func TestRestrictedSessionRequiresARuntimeHome(t *testing.T) {
 }
 
 func TestVerifyRestrictionRejectsAnUnrestrictedConfiguration(t *testing.T) {
-	err := VerifyRestriction(context.Background(), Options{Engine: Claude, Binary: "/usr/bin/true"})
+	err := VerifyRestriction(context.Background(), Options{Provider: harness.Provider{Engine: harness.Claude, CLI: harness.CLI{Binary: "/usr/bin/true"}}})
 	if err == nil {
 		t.Fatal("verification accepted a session with no restriction")
 	}

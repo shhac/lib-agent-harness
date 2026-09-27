@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 // A real child process speaking only the inspection protocol. No models,
@@ -23,10 +25,10 @@ func init() {
 	os.Exit(telemetryFixture())
 }
 func telemetryFixture() int {
-	engine := Codex
+	engine := harness.Codex
 	home := os.Getenv("CODEX_HOME")
 	if slices.Contains(os.Args, "--safe-mode") {
-		engine = Claude
+		engine = harness.Claude
 		home = os.Getenv("CLAUDE_CONFIG_DIR")
 	}
 	if home == "" {
@@ -54,7 +56,7 @@ func telemetryFixture() int {
 		}
 		method, id, params := str(m, "method"), m["id"], map[string]any{}
 		_ = json.Unmarshal(m["params"], &params)
-		if engine == Claude {
+		if engine == harness.Claude {
 			if str(m, "type") != "control_request" {
 				return 15
 			}
@@ -67,12 +69,12 @@ func telemetryFixture() int {
 		result := json.RawMessage(`{}`)
 		switch method {
 		case "initialize":
-			if engine == Codex {
+			if engine == harness.Codex {
 				if os.WriteFile(filepath.Join(home, "initialize"), m["params"], 0600) != nil {
 					return 22
 				}
 			}
-			if engine == Claude {
+			if engine == harness.Claude {
 				result = json.RawMessage(`{"account":{"email":"fixture@example.test","subscriptionType":"max","apiProvider":"firstParty"}}`)
 			}
 		case "initialized":
@@ -81,15 +83,15 @@ func telemetryFixture() int {
 			}
 			continue
 		case "account/read":
-			if engine != Codex || params["refreshToken"] != false {
+			if engine != harness.Codex || params["refreshToken"] != false {
 				return 16
 			}
 			result = json.RawMessage(`{"requiresOpenaiAuth":true,"account":{"type":"chatgpt","email":"fixture@example.test","planType":"pro"}}`)
 		case "account/rateLimits/read", "get_usage":
-			if engine == Claude && (method != "get_usage" || params["skip_behaviors"] != true) {
+			if engine == harness.Claude && (method != "get_usage" || params["skip_behaviors"] != true) {
 				return 17
 			}
-			if engine == Codex && method != "account/rateLimits/read" {
+			if engine == harness.Codex && method != "account/rateLimits/read" {
 				return 18
 			}
 			if mode == "hang" {
@@ -98,7 +100,7 @@ func telemetryFixture() int {
 				return 19
 			}
 			if mode == "unsupported" {
-				if engine == Codex {
+				if engine == harness.Codex {
 					_ = out.Encode(map[string]any{"id": id, "error": map[string]any{"code": -32601, "message": "private diagnostic must-not-escape"}})
 				} else {
 					_ = out.Encode(map[string]any{"type": "control_response", "response": map[string]any{"request_id": id, "subtype": "error", "error": "Unsupported control request subtype: get_usage; private diagnostic must-not-escape"}})
@@ -106,14 +108,14 @@ func telemetryFixture() int {
 				continue
 			}
 			result = json.RawMessage(`{"rateLimits":{"primary":{"usedPercent":12.5,"windowDurationMins":300,"resetsAt":1900000000}}}`)
-			if engine == Claude {
+			if engine == harness.Claude {
 				result = json.RawMessage(`{"rate_limits_available":true,"rate_limits":{"five_hour":{"utilization":12.5,"resets_at":"2030-01-01T00:00:00Z"}}}`)
 			}
 		default:
 			return 20
 		}
 		reply := map[string]any{"id": id, "result": result}
-		if engine == Claude {
+		if engine == harness.Claude {
 			reply = map[string]any{"type": "control_response", "response": map[string]any{"request_id": id, "subtype": "success", "response": result}}
 		}
 		if out.Encode(reply) != nil {
@@ -123,7 +125,7 @@ func telemetryFixture() int {
 	return 0
 }
 
-func telemetryFixtureOptions(t *testing.T, engine Engine) Options {
+func telemetryFixtureOptions(t *testing.T, engine harness.Engine) Options {
 	t.Helper()
 	t.Setenv("LIB_HARNESS_TELEMETRY_FIXTURE", "1")
 	for _, key := range []string{"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN"} {
@@ -133,11 +135,11 @@ func telemetryFixtureOptions(t *testing.T, engine Engine) Options {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Options{Engine: engine, Binary: bin, Home: t.TempDir(), WorkDir: "must-not-use-project", Instructions: Instructions{Mode: Append, Text: "must-not-send"}}
+	return Options{Provider: harness.Provider{Engine: engine, CLI: harness.CLI{Binary: bin, Home: t.TempDir()}}, WorkDir: "must-not-use-project", Instructions: Instructions{Mode: Append, Text: "must-not-send"}}
 }
 
 func TestInspectUsesConfiguredCLIAndHomeWithoutInference(t *testing.T) {
-	for _, engine := range []Engine{Codex, Claude} {
+	for _, engine := range []harness.Engine{harness.Codex, harness.Claude} {
 		t.Run(string(engine), func(t *testing.T) {
 			o := telemetryFixtureOptions(t, engine)
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -149,18 +151,18 @@ func TestInspectUsesConfiguredCLIAndHomeWithoutInference(t *testing.T) {
 			if !got.Account.Known() || !got.Quota.Known() || len(got.Quota.Windows) != 1 || *got.Quota.Windows[0].UsedPercent != 12.5 {
 				t.Fatalf("bad inspection: %+v", got)
 			}
-			if got.Capabilities.Account.Availability != Native || got.Capabilities.Quota.Availability != Native || got.Capabilities.Start.Availability != Unknown {
+			if got.Capabilities.Account.Availability != harness.Native || got.Capabilities.Quota.Availability != harness.Native || got.Capabilities.Start.Availability != harness.Unknown {
 				t.Fatal("inspection falsely acknowledged session support")
 			}
-			cwd, err := os.ReadFile(filepath.Join(o.Home, "started"))
+			cwd, err := os.ReadFile(filepath.Join(o.Provider.CLI.Home, "started"))
 			if err != nil {
 				t.Fatal("child did not receive selected home")
 			}
 			if _, err = os.Stat(string(cwd)); !os.IsNotExist(err) {
 				t.Fatal("inspection scratch directory not cleaned")
 			}
-			if engine == Codex {
-				requireSessionHandshake(t, o.Home)
+			if engine == harness.Codex {
+				requireSessionHandshake(t, o.Provider.CLI.Home)
 			}
 		})
 	}
@@ -192,12 +194,12 @@ func requireSessionHandshake(t *testing.T, home string) {
 	}
 }
 func TestInspectOlderCLIHasPartialDataAndSanitizedError(t *testing.T) {
-	for _, engine := range []Engine{Codex, Claude} {
+	for _, engine := range []harness.Engine{harness.Codex, harness.Claude} {
 		t.Run(string(engine), func(t *testing.T) {
 			o := telemetryFixtureOptions(t, engine)
 			t.Setenv("LIB_HARNESS_TELEMETRY_MODE", "unsupported")
 			got, err := Inspect(testContext(t), o)
-			if !errors.Is(err, ErrUnsupported) || !got.Account.Known() || got.Quota.Known() || got.Capabilities.Quota.Availability != Unsupported {
+			if !errors.Is(err, ErrUnsupported) || !got.Account.Known() || got.Quota.Known() || got.Capabilities.Quota.Availability != harness.Unsupported {
 				t.Fatalf("partial response lost: %+v %v", got, err)
 			}
 			raw, _ := json.Marshal(got)
@@ -208,7 +210,7 @@ func TestInspectOlderCLIHasPartialDataAndSanitizedError(t *testing.T) {
 	}
 }
 func TestInspectCancellationTerminatesCLI(t *testing.T) {
-	for _, engine := range []Engine{Codex, Claude} {
+	for _, engine := range []harness.Engine{harness.Codex, harness.Claude} {
 		t.Run(string(engine), func(t *testing.T) {
 			o := telemetryFixtureOptions(t, engine)
 			t.Setenv("LIB_HARNESS_TELEMETRY_MODE", "hang")
@@ -221,7 +223,7 @@ func TestInspectCancellationTerminatesCLI(t *testing.T) {
 			ticker := time.NewTicker(10 * time.Millisecond)
 			defer ticker.Stop()
 			for {
-				if _, err := os.Stat(filepath.Join(o.Home, "waiting")); err == nil {
+				if _, err := os.Stat(filepath.Join(o.Provider.CLI.Home, "waiting")); err == nil {
 					break
 				}
 				select {

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 func compactStarted(s *Session) {
@@ -15,7 +17,7 @@ func compactFinished(s *Session, status string) {
 }
 func TestCompactWaitsForNativeCompletion(t *testing.T) {
 	for _, early := range []bool{false, true} {
-		s, w := fakeSession(t, Codex)
+		s, w := fakeSession(t, harness.Codex)
 		w.requestFn = func(method string, p map[string]any) (json.RawMessage, error) {
 			if method != "thread/compact/start" || p["threadId"] != "session-1" || len(p) != 1 {
 				t.Fatalf("unexpected request %s %+v", method, p)
@@ -56,7 +58,7 @@ func TestCompactWaitsForNativeCompletion(t *testing.T) {
 		if err != nil || result.Status != "completed" {
 			t.Fatalf("%+v %v", result, err)
 		}
-		if s.Capabilities().Compact.Availability != Native {
+		if s.Capabilities().Compact.Availability != harness.Native {
 			t.Fatal("not verified")
 		}
 		found := false
@@ -71,22 +73,22 @@ func TestCompactWaitsForNativeCompletion(t *testing.T) {
 	}
 }
 func TestCompactUnsupportedFailedAndCancelled(t *testing.T) {
-	s, w := fakeSession(t, Claude)
+	s, w := fakeSession(t, harness.Claude)
 	if _, err := s.Compact(testContext(t)); !errors.Is(err, ErrUnsupported) {
 		t.Fatal(err)
 	}
 	if len(w.calls) != 0 {
 		t.Fatal("Claude sent a fake compaction prompt")
 	}
-	s, w = fakeSession(t, Codex)
+	s, w = fakeSession(t, harness.Codex)
 	w.requestFn = func(string, map[string]any) (json.RawMessage, error) { return nil, ErrUnsupported }
 	if _, err := s.Compact(testContext(t)); !errors.Is(err, ErrUnsupported) {
 		t.Fatal(err)
 	}
-	if s.Capabilities().Compact.Availability != Unsupported {
+	if s.Capabilities().Compact.Availability != harness.Unsupported {
 		t.Fatal("capability not updated")
 	}
-	s, _ = fakeSession(t, Codex)
+	s, _ = fakeSession(t, harness.Codex)
 	ctx, cancel := context.WithCancel(context.Background())
 	turn, err := s.Compact(ctx)
 	if err != nil {
@@ -96,7 +98,7 @@ func TestCompactUnsupportedFailedAndCancelled(t *testing.T) {
 	if _, err = turn.Wait(testContext(t)); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
-	s, _ = fakeSession(t, Codex)
+	s, _ = fakeSession(t, harness.Codex)
 	turn, err = s.Compact(testContext(t))
 	if err != nil {
 		t.Fatal(err)
@@ -112,7 +114,7 @@ func TestCompactUnsupportedFailedAndCancelled(t *testing.T) {
 // paused nor refuse to start because a paused call has not settled: only a turn
 // that authorizes work does either.
 func TestCompactLeavesAPausedToolChannelAlone(t *testing.T) {
-	s, w := fakeSession(t, Codex)
+	s, w := fakeSession(t, harness.Codex)
 	s.tools = testHost(t, echoHandler(t))
 	s.tools.closeAdmission()
 	s.tools.mu.Lock()

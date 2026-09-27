@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"sort"
 	"strings"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 // What a restricted session is allowed to have, and how that is judged.
@@ -126,7 +128,7 @@ func identify(name, server string) wireTool {
 // judgeSurfaces decides a whole probe. proven says the tool channel served this
 // session's tools during the check, which is the only positive evidence
 // available when a harness defers them.
-func judgeSurfaces(engine string, hosted []string, surfaces []requestSurface, proven bool) *CapabilityError {
+func judgeSurfaces(engine harness.Engine, hosted []string, surfaces []requestSurface, proven bool) *CapabilityError {
 	want := map[string]bool{}
 	for _, name := range hosted {
 		want[name] = true
@@ -142,7 +144,7 @@ func judgeSurfaces(engine string, hosted []string, surfaces []requestSurface, pr
 			case tool.hosted:
 				// Arrived under this session's prefix but is not one of its tools.
 				extra["mcp__unknown__"+tool.name] = true
-			case engine == string(Codex) && mediatedTools[tool.name]:
+			case engine == harness.Codex && mediatedTools[tool.name]:
 				// An MCP-mediated helper, permitted because it can address nothing
 				// but the one configured server, which serves no resources.
 			default:

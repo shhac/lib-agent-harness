@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/restrict"
 )
 
@@ -51,7 +52,7 @@ type Restriction struct {
 // the same check in this process.
 func VerifyRestriction(ctx context.Context, o Options) error {
 	if o.Restriction == nil {
-		return errors.New("verification applies to a restricted session; set Options.Restriction")
+		return refuse(o, "restriction", RefusedNotConfigured, "verification applies to a restricted session; set Options.Restriction")
 	}
 	normalized, err := normalize(o)
 	if err != nil {
@@ -69,35 +70,35 @@ func VerifyRestriction(ctx context.Context, o Options) error {
 // honoured as asked, and freezes the restriction the session will run with.
 func normalizeRestriction(o Options) (Options, error) {
 	if !restrictedPlatform() {
-		return o, &CapabilityError{Engine: string(o.Engine), Code: CapabilityUnsupportedPlatform, Phase: BeforeLaunch}
+		return o, &CapabilityError{Engine: o.Provider.Engine, Code: CapabilityUnsupportedPlatform, Phase: BeforeLaunch}
 	}
 	// Two tool policies would silently disagree about what this session may
 	// do. The restriction owns the surface, so the other one has to be absent.
 	if o.Policy.ClaudeTools != nil {
-		return o, errors.New("a restricted session owns its tool surface; leave Policy.ClaudeTools unset")
+		return o, refuse(o, "policy", RefusedConflict, "a restricted session owns its tool surface; leave Policy.ClaudeTools unset")
 	}
 	if o.Instructions.Mode == Replace {
-		return o, errors.New("a restricted session keeps the harness's coding instructions; append scoped instructions instead of replacing them")
+		return o, refuse(o, "instructions", RefusedConflict, "a restricted session keeps the harness's coding instructions; append scoped instructions instead of replacing them")
 	}
-	if o.Engine == Codex && o.Model == "" {
-		return o, errors.New("a restricted Codex session requires an explicit model to restrict in the installed catalog")
+	if o.Provider.Engine == harness.Codex && o.Model == "" {
+		return o, refuse(o, "model", RefusedModelRequired, "a restricted Codex session requires an explicit model to restrict in the installed catalog")
 	}
 	if err := o.Restriction.Tools.validate(); err != nil {
-		return o, err
+		return o, toolHostRefusal(o, err)
 	}
-	if o.Engine == Claude && reservedClaudeServer(o.Restriction.Tools.Server) {
+	if o.Provider.Engine == harness.Claude && reservedClaudeServer(o.Restriction.Tools.Server) {
 		// Checked against the installed CLI: this name is accepted and then
 		// silently not loaded, leaving a session with no tools at all. Refusing
 		// it here says so, rather than letting the launch check discover a
 		// missing surface and report it as a build problem.
-		return o, &CapabilityError{Engine: string(o.Engine), Code: CapabilityServerNameReserved, Phase: BeforeLaunch, Tools: []string{o.Restriction.Tools.Server}}
+		return o, &CapabilityError{Engine: o.Provider.Engine, Code: CapabilityServerNameReserved, Phase: BeforeLaunch, Tools: []string{o.Restriction.Tools.Server}}
 	}
 	if o.RuntimeHome == "" {
-		return o, errors.New("a restricted session requires a durable private runtime home; set Options.RuntimeHome")
+		return o, refuse(o, "runtime_home", RefusedRuntimeHome, "a restricted session requires a durable private runtime home; set Options.RuntimeHome")
 	}
 	runtimeHome, err := filepath.Abs(o.RuntimeHome)
 	if err != nil {
-		return o, errors.New("invalid restricted session runtime home")
+		return o, refuse(o, "runtime_home", RefusedRuntimeHome, "invalid restricted session runtime home")
 	}
 	o.RuntimeHome = runtimeHome
 	// Copy the whole restriction rather than writing through the caller's
@@ -233,11 +234,11 @@ func codexOverrides(settings []string) []string {
 // than by replacing the base prompt.
 func restrictedCatalogFor(catalog []byte, model, effort string) ([]byte, error) {
 	if len(catalog) == 0 {
-		return nil, &CapabilityError{Engine: string(Codex), Code: CapabilityCatalogUnavailable, Phase: BeforeLaunch}
+		return nil, &CapabilityError{Engine: harness.Codex, Code: CapabilityCatalogUnavailable, Phase: BeforeLaunch}
 	}
 	out, err := restrict.CodexCatalog(catalog, model, effort, nil)
 	if err != nil {
-		return nil, &CapabilityError{Engine: string(Codex), Code: CapabilityCatalogRestriction, Phase: BeforeLaunch, Tools: reasonOf(err)}
+		return nil, &CapabilityError{Engine: harness.Codex, Code: CapabilityCatalogRestriction, Phase: BeforeLaunch, Tools: reasonOf(err)}
 	}
 	return out, nil
 }

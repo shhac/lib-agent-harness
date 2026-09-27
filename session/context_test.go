@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 // contextRecorder is a caller's context handler that remembers what it was
@@ -37,7 +39,7 @@ func (r *contextRecorder) asked() []ContextReason {
 	return append([]ContextReason(nil), r.reasons...)
 }
 
-func contextOptions(t *testing.T, engine Engine) (Options, string, *contextRecorder) {
+func contextOptions(t *testing.T, engine harness.Engine) (Options, string, *contextRecorder) {
 	t.Helper()
 	o, log := persistentOptions(t, engine)
 	recorder := &contextRecorder{text: "the overview"}
@@ -76,7 +78,7 @@ func equalStrings[T ~string](got, want []T) bool {
 }
 
 func TestFreshConversationDeliversStartedContextOnce(t *testing.T) {
-	for _, engine := range []Engine{Claude, Codex} {
+	for _, engine := range []harness.Engine{harness.Claude, harness.Codex} {
 		t.Run(string(engine), func(t *testing.T) {
 			o, log, recorder := contextOptions(t, engine)
 			ctx := probeContext(t)
@@ -99,7 +101,7 @@ func TestFreshConversationDeliversStartedContextOnce(t *testing.T) {
 }
 
 func TestResumedConversationAsksForNoContext(t *testing.T) {
-	for _, engine := range []Engine{Claude, Codex} {
+	for _, engine := range []harness.Engine{harness.Claude, harness.Codex} {
 		t.Run(string(engine), func(t *testing.T) {
 			o, log, recorder := contextOptions(t, engine)
 			ctx := probeContext(t)
@@ -128,7 +130,7 @@ func TestResumedConversationAsksForNoContext(t *testing.T) {
 
 // A compaction during a turn is delivered with the next turn, once.
 func TestCompactionDeliversCompactedContextOnTheNextTurn(t *testing.T) {
-	for _, engine := range []Engine{Claude, Codex} {
+	for _, engine := range []harness.Engine{harness.Claude, harness.Codex} {
 		t.Run(string(engine), func(t *testing.T) {
 			o, log, recorder := contextOptions(t, engine)
 			ctx := probeContext(t)
@@ -154,7 +156,7 @@ func TestCompactionDeliversCompactedContextOnTheNextTurn(t *testing.T) {
 
 // Codex's own compaction turn marks the conversation as compacted too.
 func TestCodexCompactTurnDeliversCompactedContext(t *testing.T) {
-	o, log, _ := contextOptions(t, Codex)
+	o, log, _ := contextOptions(t, harness.Codex)
 	ctx := probeContext(t)
 	s, _, err := Open(ctx, o, nil)
 	if err != nil {
@@ -179,7 +181,7 @@ func TestCodexCompactTurnDeliversCompactedContext(t *testing.T) {
 
 // A compaction the process never got to deliver is still due after a restart.
 func TestCompactionMarkerSurvivesARestart(t *testing.T) {
-	for _, engine := range []Engine{Claude, Codex} {
+	for _, engine := range []harness.Engine{harness.Claude, harness.Codex} {
 		t.Run(string(engine), func(t *testing.T) {
 			o, log, recorder := contextOptions(t, engine)
 			ctx := probeContext(t)
@@ -222,7 +224,7 @@ func TestCompactionMarkerSurvivesARestart(t *testing.T) {
 // A caller that cannot supply its context stops the turn, and the reason stays
 // due for the turn that follows.
 func TestFailingContextFailsTheTurnAndKeepsTheMarker(t *testing.T) {
-	for _, engine := range []Engine{Claude, Codex} {
+	for _, engine := range []harness.Engine{harness.Claude, harness.Codex} {
 		t.Run(string(engine), func(t *testing.T) {
 			o, log, recorder := contextOptions(t, engine)
 			refused := errors.New("overview unavailable")
@@ -252,7 +254,7 @@ func TestFailingContextFailsTheTurnAndKeepsTheMarker(t *testing.T) {
 
 // Empty context sends the input as it is, and still settles the reason.
 func TestEmptyContextSendsTheInputUnchanged(t *testing.T) {
-	o, log, recorder := contextOptions(t, Claude)
+	o, log, recorder := contextOptions(t, harness.Claude)
 	recorder.text = ""
 	ctx := probeContext(t)
 	s, _, err := Open(ctx, o, nil)
@@ -272,7 +274,7 @@ func TestEmptyContextSendsTheInputUnchanged(t *testing.T) {
 
 // The installed CLI nests the trigger, as compact_metadata.trigger.
 func TestClaudeCompactionReadsTheNestedTrigger(t *testing.T) {
-	s, _ := fakeSession(t, Claude)
+	s, _ := fakeSession(t, harness.Claude)
 	ctx := testContext(t)
 	turn, err := s.StartTurn(ctx, Input{"work"})
 	if err != nil {

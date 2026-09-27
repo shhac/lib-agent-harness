@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/restrict"
 )
 
@@ -38,13 +39,13 @@ func prepareLaunch(ctx context.Context, o Options, lease *os.File) (*launch, err
 	}
 	l := &launch{host: host}
 	fail := func(err error) (*launch, error) { host.close(); return nil, err }
-	if o.Engine == Claude {
+	if o.Provider.Engine == harness.Claude {
 		l.extra = claudeRestrictedArgs(host)
 	} else {
 		// The session runs in a home this library owns, with the operator's login
 		// shared into it. Their own home keeps its servers, hooks and trust
 		// settings, and none of it reaches the worker.
-		if _, err = prepareRuntimeHome(o.Home, o.RuntimeHome); err != nil {
+		if _, err = prepareRuntimeHome(o.Provider.CLI.Home, o.RuntimeHome); err != nil {
 			return fail(err)
 		}
 		catalog, readErr := readCodexCatalog(ctx, o)
@@ -94,7 +95,7 @@ type launch struct {
 }
 
 func commandArgs(o Options, nativeID string, resuming bool, l *launch) []string {
-	if o.Engine == Codex {
+	if o.Provider.Engine == harness.Codex {
 		args := []string{"app-server", "--listen", "stdio://"}
 		if l != nil {
 			args = append(args, l.extra...)
@@ -140,7 +141,7 @@ func commandArgs(o Options, nativeID string, resuming bool, l *launch) []string 
 func verificationKey(o Options, l *launch) (string, error) {
 	binary, info, err := binaryIdentity(o)
 	if err != nil {
-		return "", &CapabilityError{Engine: string(o.Engine), Code: CapabilityProbeFailed, Phase: BeforeLaunch}
+		return "", &CapabilityError{Engine: o.Provider.Engine, Code: CapabilityProbeFailed, Phase: BeforeLaunch}
 	}
 	stable := make([]string, 0, len(l.extra))
 	for _, arg := range l.extra {
@@ -150,14 +151,14 @@ func verificationKey(o Options, l *launch) (string, error) {
 		stable = append(stable, arg)
 	}
 	payload, _ := json.Marshal(struct {
-		Engine                Engine
+		Engine                harness.Engine
 		Binary, Model, Effort string
 		Size                  int64
 		Modified              time.Time
 		Args, Tools           []string
 		Instructions          Instructions
 		Policy                Policy
-	}{o.Engine, binary, o.Model, o.Effort, info.Size(), info.ModTime(), stable, o.Restriction.Tools.Qualified(), o.Instructions, o.Policy})
+	}{o.Provider.Engine, binary, o.Model, o.Effort, info.Size(), info.ModTime(), stable, o.Restriction.Tools.Qualified(), o.Instructions, o.Policy})
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:]), nil
 }
@@ -167,7 +168,7 @@ func verificationKey(o Options, l *launch) (string, error) {
 // to its target, so an upgrade in place or a different executable earlier on
 // PATH is a different binary.
 func binaryIdentity(o Options) (string, fs.FileInfo, error) {
-	binary, err := exec.LookPath(o.Binary)
+	binary, err := exec.LookPath(o.Provider.CLI.Binary)
 	if err == nil {
 		binary, err = filepath.EvalSymlinks(binary)
 	}
@@ -210,14 +211,14 @@ func (c *verificationCache) record(key string) {
 func readCodexCatalog(ctx context.Context, o Options) ([]byte, error) {
 	dir, err := os.MkdirTemp("", "agent-harness-catalog-")
 	if err != nil {
-		return nil, &CapabilityError{Engine: string(Codex), Code: CapabilityCatalogUnavailable, Phase: BeforeLaunch}
+		return nil, &CapabilityError{Engine: harness.Codex, Code: CapabilityCatalogUnavailable, Phase: BeforeLaunch}
 	}
 	defer os.RemoveAll(dir)
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	out, err := runOnce(ctx, o.Binary, []string{"debug", "models", "--bundled"}, dir, disposableEnvironment(o, dir))
+	out, err := runOnce(ctx, o.Provider.CLI.Binary, []string{"debug", "models", "--bundled"}, dir, disposableEnvironment(o, dir))
 	if err != nil {
-		return nil, &CapabilityError{Engine: string(Codex), Code: CapabilityCatalogUnavailable, Phase: BeforeLaunch}
+		return nil, &CapabilityError{Engine: harness.Codex, Code: CapabilityCatalogUnavailable, Phase: BeforeLaunch}
 	}
 	return out, nil
 }
@@ -227,7 +228,7 @@ func readCodexCatalog(ctx context.Context, o Options) ([]byte, error) {
 // provider credential and no account identity is reachable from it.
 func disposableEnvironment(o Options, dir string) []string {
 	env := []string{"PATH=" + os.Getenv("PATH"), "LANG=C.UTF-8", "HOME=" + dir, "TMPDIR=" + dir}
-	if o.Engine == Codex {
+	if o.Provider.Engine == harness.Codex {
 		return append(env, "CODEX_HOME="+dir)
 	}
 	return append(env, "CLAUDE_CONFIG_DIR="+dir)

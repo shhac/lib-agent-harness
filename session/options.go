@@ -4,18 +4,19 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 // normalize resolves a caller's options into the ones a session runs with,
 // refusing any it cannot honour. Its stages run in order.
 func normalize(o Options) (Options, error) {
-	if o.Engine != Codex && o.Engine != Claude {
-		return o, &UnsupportedError{"engine", Capability{Unsupported, "unrecognized harness"}}
+	if err := supported(o); err != nil {
+		return o, err
 	}
 	o, err := normalizePaths(o)
 	if err != nil {
@@ -25,17 +26,20 @@ func normalize(o Options) (Options, error) {
 		return o, err
 	}
 	if o.Instructions.Mode != "" && o.Instructions.Mode != Replace && o.Instructions.Mode != Append {
-		return o, &UnsupportedError{"instructions", Capability{Unsupported, "instruction mode must be replace or append"}}
+		return o, refuse(o, "instructions", RefusedInstructionMode, "instruction mode must be replace or append")
 	}
 	if o.Instructions.Text != "" && o.Instructions.Mode == "" {
-		return o, errors.New("instructions require an explicit replace or append mode")
+		return o, refuse(o, "instructions", RefusedInstructionModeMissing, "instructions require an explicit replace or append mode")
 	}
-	if err = validateEnv(o.Env); err != nil {
+	if err = validateEnv(o); err != nil {
 		return o, err
 	}
 	o.Env = append([]string(nil), o.Env...)
-	// The sandbox goes before the policy defaults: it refuses a policy the
-	// caller set, and once defaults are applied it could not tell which that was.
+	// Both of these judge the policy the caller set, so they go before the
+	// policy defaults, after which neither could tell which values those were.
+	if err = otherEnginePolicy(o); err != nil {
+		return o, err
+	}
 	if o.Sandbox != nil {
 		if o, err = normalizeSandbox(o); err != nil {
 			return o, err
@@ -52,41 +56,73 @@ func normalize(o Options) (Options, error) {
 	return o, nil
 }
 
+// supported refuses an engine the library offers no session for, and a
+// provider that is not well formed.
+func supported(o Options) error {
+	engine := o.Provider.Engine
+	if support := harness.Support(engine, harness.Session, harness.Available); !support.Usable() {
+		return &UnsupportedError{Engine: engine, Operation: "engine", Code: RefusedEngine, Capability: support}
+	}
+	if code := o.Provider.Problem(); code != "" {
+		return refuse(o, "provider", code, "the provider is not a well-formed CLI provider")
+	}
+	return nil
+}
+
+// otherEnginePolicy refuses a policy field only the other engine reads. Left
+// in place it would be ignored, and a caller reading an empty ClaudeTools as
+// "no tools" on Codex would be running with every native tool.
+func otherEnginePolicy(o Options) error {
+	p := o.Policy
+	switch o.Provider.Engine {
+	case harness.Codex:
+		if p.ClaudePermission != "" || p.ClaudeTools != nil {
+			return refuse(o, "policy", RefusedOtherEnginePolicy, "Codex does not read Policy.ClaudePermission or Policy.ClaudeTools; leave them unset")
+		}
+	case harness.Claude:
+		if p.CodexSandbox != "" || p.CodexApproval != "" {
+			return refuse(o, "policy", RefusedOtherEnginePolicy, "Claude does not read Policy.CodexSandbox or Policy.CodexApproval; leave them unset")
+		}
+	}
+	return nil
+}
+
 // normalizePaths resolves the binary, working directory and harness home,
 // defaulting each from this process's environment.
 func normalizePaths(o Options) (Options, error) {
-	if o.Binary == "" {
-		o.Binary = string(o.Engine)
+	cli := &o.Provider.CLI
+	if cli.Binary == "" {
+		cli.Binary = string(o.Provider.Engine)
 	}
 	var err error
 	if o.WorkDir == "" {
 		if o.WorkDir, err = os.Getwd(); err != nil {
-			return o, errors.New("working directory unavailable")
+			return o, refuse(o, "work_dir", RefusedWorkDir, "working directory unavailable")
 		}
 	}
 	o.WorkDir, err = filepath.Abs(o.WorkDir)
 	if err != nil {
-		return o, errors.New("invalid working directory")
+		return o, refuse(o, "work_dir", RefusedWorkDir, "invalid working directory")
 	}
-	if o.Home == "" {
+	if cli.Home == "" {
 		key := "CODEX_HOME"
 		suffix := ".codex"
-		if o.Engine == Claude {
+		if o.Provider.Engine == harness.Claude {
 			key = "CLAUDE_CONFIG_DIR"
 			suffix = ".claude"
 		}
-		o.Home = os.Getenv(key)
-		if o.Home == "" {
+		cli.Home = os.Getenv(key)
+		if cli.Home == "" {
 			home, e := os.UserHomeDir()
 			if e != nil {
-				return o, errors.New("home directory unavailable")
+				return o, refuse(o, "home", RefusedHome, "home directory unavailable")
 			}
-			o.Home = filepath.Join(home, suffix)
+			cli.Home = filepath.Join(home, suffix)
 		}
 	}
-	o.Home, err = filepath.Abs(o.Home)
+	cli.Home, err = filepath.Abs(cli.Home)
 	if err != nil {
-		return o, errors.New("invalid harness home")
+		return o, refuse(o, "home", RefusedHome, "invalid harness home")
 	}
 	return o, nil
 }
@@ -96,19 +132,20 @@ func normalizeLimits(o Options) (Options, error) {
 		o.EventBuffer = 256
 	}
 	if o.EventBuffer > 65536 {
-		return o, errors.New("event buffer exceeds limit")
+		return o, refuse(o, "event_buffer", RefusedLimit, "event buffer exceeds limit")
 	}
 	if o.MaxTextBytes <= 0 {
 		o.MaxTextBytes = 1 << 20
 	}
 	if o.MaxTextBytes > 16<<20 {
-		return o, errors.New("turn text limit exceeds limit")
+		return o, refuse(o, "max_text_bytes", RefusedLimit, "turn text limit exceeds limit")
 	}
 	return o, nil
 }
 
 // normalizePolicy applies the native policy defaults and refuses a value the
-// engine does not recognise.
+// engine does not recognise. Every default is applied whatever the engine,
+// because every one of them is part of a Ref's digest.
 func normalizePolicy(o Options) (Options, error) {
 	if o.Policy.CodexSandbox == "" {
 		o.Policy.CodexSandbox = "read-only"
@@ -119,22 +156,22 @@ func normalizePolicy(o Options) (Options, error) {
 	if o.Policy.ClaudePermission == "" {
 		o.Policy.ClaudePermission = "dontAsk"
 	}
-	if o.Engine == Codex {
+	if o.Provider.Engine == harness.Codex {
 		switch o.Policy.CodexSandbox {
 		case "read-only", "workspace-write", "danger-full-access":
 		default:
-			return o, errors.New("invalid Codex sandbox policy")
+			return o, refuse(o, "policy", RefusedPolicy, "invalid Codex sandbox policy")
 		}
 		switch o.Policy.CodexApproval {
 		case "never", "on-request", "untrusted":
 		default:
-			return o, errors.New("invalid Codex approval policy")
+			return o, refuse(o, "policy", RefusedPolicy, "invalid Codex approval policy")
 		}
 	} else {
 		switch o.Policy.ClaudePermission {
 		case "dontAsk", "default", "acceptEdits", "plan", "auto":
 		default:
-			return o, errors.New("invalid Claude permission policy")
+			return o, refuse(o, "policy", RefusedPolicy, "invalid Claude permission policy")
 		}
 	}
 	// Freeze caller-owned slices before fingerprinting or launching.
@@ -173,7 +210,7 @@ func reference(o Options, id string) Ref {
 		Instructions          Instructions
 		Policy                Policy
 		ToolsSpecified        bool
-	}{o.Binary, o.Model, o.Effort, o.Instructions, o.Policy, o.Policy.ClaudeTools != nil}
+	}{o.Provider.CLI.Binary, o.Model, o.Effort, o.Instructions, o.Policy, o.Policy.ClaudeTools != nil}
 	payload, _ := json.Marshal(legacy)
 	if o.Restriction != nil {
 		// The runtime home is part of a restricted session's identity: the native
@@ -200,7 +237,7 @@ func reference(o Options, id string) Ref {
 		}{legacy, true, o.Sandbox.Write, o.Sandbox.Read, o.Sandbox.Web, sandboxToolServer(o.Sandbox), o.RuntimeHome})
 	}
 	hash := sha256.Sum256(payload)
-	return Ref{Engine: o.Engine, ID: id, Home: o.Home, WorkDir: o.WorkDir, AccountIdentity: o.AccountIdentity, ConfigHash: hex.EncodeToString(hash[:])}
+	return Ref{Engine: o.Provider.Engine, ID: id, Home: o.Provider.CLI.Home, WorkDir: o.WorkDir, AccountIdentity: o.AccountIdentity, ConfigHash: hex.EncodeToString(hash[:])}
 }
 
 // hostedTools is the tool channel a session serves, restricted or sandboxed,
@@ -265,7 +302,7 @@ func compatible(o Options, r Ref) bool {
 // which come last so they take effect.
 func environment(o Options) []string {
 	env := baseEnvironment(o)
-	if o.Sandbox != nil && o.Engine == Claude {
+	if o.Sandbox != nil && o.Provider.Engine == harness.Claude {
 		// Auto-memory would read and write the operator's own memory folders.
 		env = append(env, "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1")
 	}
@@ -299,12 +336,12 @@ func baseEnvironment(o Options) []string {
 	// A restricted session runs in its own home: the library wrote that home's
 	// configuration and shared the login into it, so nothing the operator keeps
 	// beside their credential comes along.
-	selected := o.Home
-	if (o.Restriction != nil || o.Sandbox != nil) && o.RuntimeHome != "" && o.Engine == Codex {
+	selected := o.Provider.CLI.Home
+	if (o.Restriction != nil || o.Sandbox != nil) && o.RuntimeHome != "" && o.Provider.Engine == harness.Codex {
 		selected = o.RuntimeHome
 	}
 	key := "CODEX_HOME"
-	if o.Engine == Claude {
+	if o.Provider.Engine == harness.Claude {
 		key = "CLAUDE_CONFIG_DIR"
 		home, err := os.UserHomeDir()
 		if err == nil && filepath.Clean(selected) == filepath.Join(home, ".claude") {
@@ -317,11 +354,11 @@ func baseEnvironment(o Options) []string {
 // validateEnv refuses additions the harness manages itself: credentials and
 // provider overrides it strips, the homes it selects, and the process basics
 // an addition could use to change which binaries or login are used.
-func validateEnv(env []string) error {
-	for _, entry := range env {
+func validateEnv(o Options) error {
+	for _, entry := range o.Env {
 		key, _, ok := strings.Cut(entry, "=")
 		if !ok || !envKey.MatchString(key) {
-			return errors.New("environment additions must be KEY=VALUE")
+			return refuse(o, "env", RefusedEnvMalformed, "environment additions must be KEY=VALUE")
 		}
 		upper := strings.ToUpper(key)
 		switch {
@@ -331,7 +368,7 @@ func validateEnv(env []string) error {
 			// it runs outside the sandbox.
 			strings.HasPrefix(upper, "DYLD_"), strings.HasPrefix(upper, "LD_"), upper == "NODE_OPTIONS", upper == "NODE_PATH", strings.HasPrefix(upper, "BUN_"),
 			strings.HasSuffix(upper, "_PROXY"), strings.HasPrefix(upper, "SSL_CERT_"), upper == "NODE_EXTRA_CA_CERTS", strings.HasPrefix(upper, "GIT_"):
-			return errors.New("environment addition " + key + " is managed by the harness or would change the CLI outside its sandbox")
+			return refuse(o, "env", RefusedEnvManaged, "environment addition "+key+" is managed by the harness or would change the CLI outside its sandbox")
 		}
 	}
 	return nil

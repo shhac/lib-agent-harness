@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 // This subprocess is a native-protocol fixture, not a model invocation. Running
@@ -22,10 +24,10 @@ func init() {
 	if len(os.Args) < 2 {
 		os.Exit(2)
 	}
-	engine := Codex
+	engine := harness.Codex
 	sessionID := "fixture-thread"
 	if os.Args[1] == "-p" {
-		engine = Claude
+		engine = harness.Claude
 		for i, arg := range os.Args {
 			if (arg == "--session-id" || arg == "--resume") && i+1 < len(os.Args) {
 				sessionID = os.Args[i+1]
@@ -55,7 +57,7 @@ func init() {
 		if json.Unmarshal(scanner.Bytes(), &m) != nil {
 			os.Exit(2)
 		}
-		if engine == Codex {
+		if engine == harness.Codex {
 			method := str(m, "method")
 			id := m["id"]
 			if mode == "malformed-control" && method == "initialize" {
@@ -117,11 +119,11 @@ func init() {
 }
 func TestNativePipeStartResumeAndPermissionDenial(t *testing.T) {
 	t.Setenv("LIB_HARNESS_SESSION_FIXTURE", "1")
-	for _, engine := range []Engine{Codex, Claude} {
+	for _, engine := range []harness.Engine{harness.Codex, harness.Claude} {
 		t.Run(string(engine), func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			o := Options{Engine: engine, Binary: os.Args[0], Home: t.TempDir(), WorkDir: t.TempDir()}
+			o := Options{Provider: harness.Provider{Engine: engine, CLI: harness.CLI{Binary: os.Args[0], Home: t.TempDir()}}, WorkDir: t.TempDir()}
 			s, err := Start(ctx, o)
 			if err != nil {
 				t.Fatal(err)
@@ -164,7 +166,7 @@ func TestMalformedProcessOutputStopsStartup(t *testing.T) {
 	t.Setenv("LIB_HARNESS_SESSION_MODE", "bad-json")
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	s, err := Start(ctx, Options{Engine: Codex, Binary: os.Args[0], Home: t.TempDir(), WorkDir: t.TempDir()})
+	s, err := Start(ctx, Options{Provider: harness.Provider{Engine: harness.Codex, CLI: harness.CLI{Binary: os.Args[0], Home: t.TempDir()}}, WorkDir: t.TempDir()})
 	if s != nil {
 		s.Close()
 	}
@@ -174,7 +176,7 @@ func TestMalformedProcessOutputStopsStartup(t *testing.T) {
 }
 func TestInstructionArgumentsAreNative(t *testing.T) {
 	for _, mode := range []InstructionMode{Replace, Append} {
-		o := Options{Engine: Claude, Instructions: Instructions{mode, "system instruction"}, Policy: Policy{ClaudePermission: "dontAsk", ClaudeTools: []string{}}}
+		o := Options{Provider: harness.Provider{Engine: harness.Claude}, Instructions: Instructions{mode, "system instruction"}, Policy: Policy{ClaudePermission: "dontAsk", ClaudeTools: []string{}}}
 		args := strings.Join(commandArgs(o, "session", false, nil), "\n")
 		flag := "--system-prompt"
 		if mode == Append {
@@ -189,11 +191,11 @@ func TestInstructionArgumentsAreNative(t *testing.T) {
 func TestMalformedControlFailsPendingImmediately(t *testing.T) {
 	t.Setenv("LIB_HARNESS_SESSION_FIXTURE", "1")
 	t.Setenv("LIB_HARNESS_SESSION_MODE", "malformed-control")
-	for _, e := range []Engine{Codex, Claude} {
+	for _, e := range []harness.Engine{harness.Codex, harness.Claude} {
 		t.Run(string(e), func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			s, err := Start(ctx, Options{Engine: e, Binary: os.Args[0], Home: t.TempDir(), WorkDir: t.TempDir()})
+			s, err := Start(ctx, Options{Provider: harness.Provider{Engine: e, CLI: harness.CLI{Binary: os.Args[0], Home: t.TempDir()}}, WorkDir: t.TempDir()})
 			if s != nil {
 				s.Close()
 			}
@@ -208,7 +210,7 @@ func TestOversizedFrameReportsOutputLimit(t *testing.T) {
 	t.Setenv("LIB_HARNESS_SESSION_MODE", "oversized")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	s, err := Start(ctx, Options{Engine: Codex, Binary: os.Args[0], Home: t.TempDir(), WorkDir: t.TempDir()})
+	s, err := Start(ctx, Options{Provider: harness.Provider{Engine: harness.Codex, CLI: harness.CLI{Binary: os.Args[0], Home: t.TempDir()}}, WorkDir: t.TempDir()})
 	if s != nil {
 		s.Close()
 	}
@@ -217,13 +219,13 @@ func TestOversizedFrameReportsOutputLimit(t *testing.T) {
 	}
 }
 func TestProtocolRejectionIsNotMalformed(t *testing.T) {
-	for _, e := range []Engine{Codex, Claude} {
+	for _, e := range []harness.Engine{harness.Codex, harness.Claude} {
 		t.Run(string(e), func(t *testing.T) {
 			ch := make(chan response, 1)
 			failed := false
 			w := &streamWire{engine: e, pending: map[string]chan response{"1": ch}, done: make(chan struct{}), stop: func() {}, ended: func(error) { failed = true }}
 			raw := `{"id":"1","error":{"code":-32000,"message":"secret error"}}`
-			if e == Claude {
+			if e == harness.Claude {
 				raw = `{"type":"control_response","response":{"subtype":"error","request_id":"1","error":"secret error"}}`
 			}
 			var m map[string]json.RawMessage

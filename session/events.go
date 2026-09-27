@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 func (s *Session) notification(m map[string]json.RawMessage) {
@@ -26,7 +28,7 @@ func (s *Session) notificationLocked(m map[string]json.RawMessage) {
 	if closed {
 		return
 	}
-	if s.options.Engine == Claude && s.observeClaudeInit(m) {
+	if s.options.Provider.Engine == harness.Claude && s.observeClaudeInit(m) {
 		return
 	}
 	if t == nil {
@@ -60,7 +62,7 @@ func (s *Session) notificationLocked(m map[string]json.RawMessage) {
 	if s.accountTelemetryEvent(m, ref, t) {
 		return
 	}
-	if s.options.Engine == Codex {
+	if s.options.Provider.Engine == harness.Codex {
 		s.codexEvent(t, ref, m)
 	} else {
 		s.claudeEvent(t, ref, m)
@@ -125,7 +127,7 @@ func (s *Session) observeClaudeInit(m map[string]json.RawMessage) bool {
 		} `json:"mcp_servers"`
 	}
 	if json.Unmarshal(mustMarshal(m), &frame) != nil {
-		s.recordSurface(&CapabilityError{Engine: string(Claude), Code: CapabilityProbeUnreadable, Phase: BeforeFirstPrompt})
+		s.recordSurface(&CapabilityError{Engine: harness.Claude, Code: CapabilityProbeUnreadable, Phase: BeforeFirstPrompt})
 		return true
 	}
 	server := host.Server
@@ -136,7 +138,7 @@ func (s *Session) observeClaudeInit(m map[string]json.RawMessage) bool {
 		}
 	}
 	if !loaded {
-		s.recordSurface(&CapabilityError{Engine: string(Claude), Code: CapabilityServerNotLoaded, Phase: BeforeFirstPrompt, Tools: []string{server}})
+		s.recordSurface(&CapabilityError{Engine: harness.Claude, Code: CapabilityServerNotLoaded, Phase: BeforeFirstPrompt, Tools: []string{server}})
 		return true
 	}
 	// Judged as identity, not as text: an advertised tool that did not arrive
@@ -149,7 +151,7 @@ func (s *Session) observeClaudeInit(m map[string]json.RawMessage) bool {
 		}
 		surface.tools = append(surface.tools, identify(name, server))
 	}
-	failure := judgeSurfaces(string(Claude), toolNames(host.Tools), []requestSurface{surface}, false)
+	failure := judgeSurfaces(harness.Claude, toolNames(host.Tools), []requestSurface{surface}, false)
 	if failure != nil {
 		failure.Phase = BeforeFirstPrompt
 	}
@@ -171,12 +173,12 @@ func (s *Session) recordSurface(failure *CapabilityError) {
 	}
 	if failure != nil {
 		s.mu.Lock()
-		s.caps.RestrictTools = Capability{Unsupported, "installed harness advertised a different tool surface"}
+		s.caps.RestrictTools = harness.Capability{Availability: harness.Unsupported, Reason: "installed harness advertised a different tool surface"}
 		s.mu.Unlock()
 		s.fail(failure)
 		return
 	}
 	s.mu.Lock()
-	s.caps.RestrictTools = Capability{Native, "installed harness advertised exactly the configured tools"}
+	s.caps.RestrictTools = harness.Capability{Availability: harness.Native, Reason: "installed harness advertised exactly the configured tools"}
 	s.mu.Unlock()
 }

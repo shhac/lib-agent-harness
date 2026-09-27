@@ -3,6 +3,8 @@ package session
 import (
 	"context"
 	"encoding/json"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 // Compact requests native manual context compaction in an idle session. The
@@ -16,10 +18,10 @@ func (s *Session) Compact(ctx context.Context) (*Turn, error) {
 	}
 	defer s.unlockOp()
 	s.mu.Lock()
-	if s.options.Engine != Codex && !s.closed {
+	if s.options.Provider.Engine != harness.Codex && !s.closed {
 		c := s.caps.Compact
 		s.mu.Unlock()
-		return nil, &UnsupportedError{string(opCompact), c}
+		return nil, &UnsupportedError{Engine: s.options.Provider.Engine, Operation: string(opCompact), Code: RefusedNotOffered, Capability: c}
 	}
 	// Compaction is not a turn that authorizes tool work, so unlike StartTurn it
 	// neither waits for hosted tools to settle nor reopens their channel.
@@ -41,7 +43,7 @@ func (s *Session) Compact(ctx context.Context) (*Turn, error) {
 		return nil, ErrProtocol
 	}
 	s.invalidateContext(t, "context compaction requested; awaiting a fresh observation")
-	s.setCapability(&s.caps.Compact, Capability{Native, "thread/compact/start acknowledged by installed harness"})
+	s.setCapability(&s.caps.Compact, harness.Capability{Availability: harness.Native, Reason: "thread/compact/start acknowledged by installed harness"})
 	// The id arrives later, with turn/started.
 	s.replayStarting(t, "")
 	s.watchTurn(ctx, t)

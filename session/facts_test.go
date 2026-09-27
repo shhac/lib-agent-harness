@@ -5,6 +5,8 @@ package session
 import (
 	"errors"
 	"testing"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 // The facts a caller records come from the error itself. Reading them out of a
@@ -16,22 +18,26 @@ func TestTypedFailuresPublishTheirFacts(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		err  error
-		want Facts
+		want harness.Facts
 	}{
-		{"turn", &TurnError{Engine: "claude", Code: "authentication_failed"},
-			Facts{Engine: "claude", Kind: FailureTurn, Code: "authentication_failed"}},
-		{"process", &ProcessError{Engine: "codex", Code: ProcessExited, ExitCode: &status},
-			Facts{Engine: "codex", Kind: FailureProcess, Code: ProcessExited, ExitCode: &status}},
-		{"capability", &CapabilityError{Engine: "codex", Code: CapabilityNativeToolsPresent, Phase: BeforeLaunch},
-			Facts{Engine: "codex", Kind: FailureCapability, Code: CapabilityNativeToolsPresent, Phase: BeforeLaunch}},
+		{"turn", &TurnError{Engine: harness.Claude, Code: "authentication_failed"},
+			harness.Facts{Engine: harness.Claude, Family: harness.FailureTurn, Code: "authentication_failed"}},
+		{"process", &ProcessError{Engine: harness.Codex, Code: ProcessExited, ExitCode: &status},
+			harness.Facts{Engine: harness.Codex, Family: harness.FailureProcess, Code: ProcessExited, ExitCode: &status}},
+		{"capability", &CapabilityError{Engine: harness.Codex, Code: CapabilityNativeToolsPresent, Phase: BeforeLaunch},
+			harness.Facts{Engine: harness.Codex, Family: harness.FailureCapability, Code: CapabilityNativeToolsPresent, Phase: BeforeLaunch}},
+		{"unsupported", &UnsupportedError{Engine: harness.Claude, Operation: "steer", Code: RefusedNotNative},
+			harness.Facts{Engine: harness.Claude, Family: harness.FailureCapability, Code: RefusedNotNative}},
+		{"preflight", &UnsupportedError{Engine: harness.Codex, Operation: "env", Code: RefusedEnvMalformed},
+			harness.Facts{Engine: harness.Codex, Family: harness.FailurePreflight, Code: RefusedEnvMalformed}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// Wrapped, because that is how a caller receives it.
-			got, ok := ErrorFacts(errors.Join(errors.New("context"), tc.err))
+			got, ok := harness.ErrorFacts(errors.Join(errors.New("context"), tc.err))
 			if !ok {
 				t.Fatal("a typed failure carried no facts")
 			}
-			if got.Engine != tc.want.Engine || got.Kind != tc.want.Kind || got.Code != tc.want.Code || got.Phase != tc.want.Phase {
+			if got.Engine != tc.want.Engine || got.Family != tc.want.Family || got.Code != tc.want.Code || got.Phase != tc.want.Phase || got.Operation != harness.Session {
 				t.Fatalf("facts disagree: %+v", got)
 			}
 			if (got.ExitCode == nil) != (tc.want.ExitCode == nil) {
@@ -42,7 +48,53 @@ func TestTypedFailuresPublishTheirFacts(t *testing.T) {
 			}
 		})
 	}
-	if _, ok := ErrorFacts(errors.New("something else")); ok {
+	if _, ok := harness.ErrorFacts(errors.New("something else")); ok {
 		t.Error("an unclassified error was reported as carrying facts")
+	}
+}
+
+// Every refusal of a caller's options is typed, so a caller can classify it
+// without reading its message.
+func TestOptionRefusalsCarryFacts(t *testing.T) {
+	home := t.TempDir()
+	base := func(e harness.Engine) Options {
+		return Options{Provider: harness.Provider{Engine: e, CLI: harness.CLI{Home: home}}, WorkDir: t.TempDir()}
+	}
+	with := func(o Options, edit func(*Options)) Options { edit(&o); return o }
+	for _, tc := range []struct {
+		name   string
+		o      Options
+		code   string
+		family harness.Family
+	}{
+		{"grok", base(harness.Grok), RefusedEngine, harness.FailureCapability},
+		{"api engine", base(harness.OpenAICompatible), RefusedEngine, harness.FailureCapability},
+		{"unknown engine", base("other"), RefusedEngine, harness.FailureCapability},
+		{"api half on a cli engine", with(base(harness.Codex), func(o *Options) { o.Provider.API.BaseURL = "https://example.test" }), "api_config_for_cli_engine", harness.FailurePreflight},
+		{"instruction mode", with(base(harness.Claude), func(o *Options) { o.Instructions = Instructions{Mode: "merge"} }), RefusedInstructionMode, harness.FailurePreflight},
+		{"instructions without mode", with(base(harness.Claude), func(o *Options) { o.Instructions = Instructions{Text: "x"} }), RefusedInstructionModeMissing, harness.FailurePreflight},
+		{"event buffer", with(base(harness.Claude), func(o *Options) { o.EventBuffer = 1 << 20 }), RefusedLimit, harness.FailurePreflight},
+		{"text limit", with(base(harness.Claude), func(o *Options) { o.MaxTextBytes = 1 << 30 }), RefusedLimit, harness.FailurePreflight},
+		{"malformed env", with(base(harness.Claude), func(o *Options) { o.Env = []string{"NOVALUE"} }), RefusedEnvMalformed, harness.FailurePreflight},
+		{"managed env", with(base(harness.Claude), func(o *Options) { o.Env = []string{"PATH=/x"} }), RefusedEnvManaged, harness.FailureCapability},
+		{"codex policy value", with(base(harness.Codex), func(o *Options) { o.Policy.CodexSandbox = "everything" }), RefusedPolicy, harness.FailurePreflight},
+		{"claude tools on codex", with(base(harness.Codex), func(o *Options) { o.Policy.ClaudeTools = []string{} }), RefusedOtherEnginePolicy, harness.FailureCapability},
+		{"claude permission on codex", with(base(harness.Codex), func(o *Options) { o.Policy.ClaudePermission = "dontAsk" }), RefusedOtherEnginePolicy, harness.FailureCapability},
+		{"codex sandbox on claude", with(base(harness.Claude), func(o *Options) { o.Policy.CodexSandbox = "read-only" }), RefusedOtherEnginePolicy, harness.FailureCapability},
+		{"codex approval on claude", with(base(harness.Claude), func(o *Options) { o.Policy.CodexApproval = "never" }), RefusedOtherEnginePolicy, harness.FailureCapability},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := normalize(tc.o)
+			facts, ok := harness.ErrorFacts(err)
+			if !ok {
+				t.Fatalf("refusal carried no facts: %v", err)
+			}
+			if facts.Code != tc.code || facts.Family != tc.family || facts.Engine != tc.o.Provider.Engine || facts.Operation != harness.Session {
+				t.Fatalf("facts disagree: %+v", facts)
+			}
+			if !errors.Is(err, ErrUnsupported) {
+				t.Error("a refusal lost its ErrUnsupported identity")
+			}
+		})
 	}
 }

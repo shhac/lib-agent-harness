@@ -8,14 +8,16 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 // persistentOptions is a restricted configuration whose fake harness keeps its
 // conversations the way the installed CLI does.
-func persistentOptions(t *testing.T, engine Engine) (Options, string) {
+func persistentOptions(t *testing.T, engine harness.Engine) (Options, string) {
 	t.Helper()
 	scenario := fakeClean
-	if engine == Codex {
+	if engine == harness.Codex {
 		scenario = fakeListed
 	}
 	return probedOptions(t, engine, scenario, fakePersistEnv+"=1")
@@ -65,7 +67,7 @@ func release(t *testing.T, ctx context.Context, s *Session) {
 // harness is relaunched with the restricted arguments, and Claude's startup
 // frame is cross-checked as it was the first time.
 func TestRestrictedResumeReestablishesTheRestriction(t *testing.T) {
-	for _, engine := range []Engine{Claude, Codex} {
+	for _, engine := range []harness.Engine{harness.Claude, harness.Codex} {
 		t.Run(string(engine), func(t *testing.T) {
 			o, log := persistentOptions(t, engine)
 			ctx := probeContext(t)
@@ -95,7 +97,7 @@ func TestRestrictedResumeReestablishesTheRestriction(t *testing.T) {
 			}
 			args := launches[1]
 			required := []string{`"--tools="`, `"--allowedTools=mcp__agent_workspace__read_file,mcp__agent_workspace__finish"`, `"--strict-mcp-config"`, `"--disable-slash-commands"`, `"--resume","` + ref.ID + `"`}
-			if engine == Codex {
+			if engine == harness.Codex {
 				required = []string{`model_catalog_json=`, `features.shell_tool=false`, `mcp_servers.agent_workspace.command=`}
 				if got := logged(t, log, "resume:"); len(got) != 1 || got[0] != ref.ID {
 					t.Fatalf("thread/resume did not name the stored thread: %v", got)
@@ -106,8 +108,8 @@ func TestRestrictedResumeReestablishesTheRestriction(t *testing.T) {
 					t.Errorf("resumed launch is missing %s in %s", want, args)
 				}
 			}
-			if engine == Claude {
-				if got := resumed.Capabilities().RestrictTools.Availability; got != Native {
+			if engine == harness.Claude {
+				if got := resumed.Capabilities().RestrictTools.Availability; got != harness.Native {
 					t.Errorf("the resumed harness's surface was not cross-checked: %q", got)
 				}
 			}
@@ -119,12 +121,12 @@ func TestRestrictedResumeReestablishesTheRestriction(t *testing.T) {
 // A conversation the harness no longer has is a failed resume, and a settled
 // one: the harness is gone and nothing is left reserving the assignment.
 func TestResumingAMissingRestrictedConversationFails(t *testing.T) {
-	for _, engine := range []Engine{Claude, Codex} {
+	for _, engine := range []harness.Engine{harness.Claude, harness.Codex} {
 		t.Run(string(engine), func(t *testing.T) {
 			o, _ := persistentOptions(t, engine)
 			ctx := probeContext(t)
 			id := "fake-thread"
-			if engine == Claude {
+			if engine == harness.Claude {
 				id = newID()
 			}
 			s, err := Resume(ctx, o, reference(mustNormalize(t, o), id))
@@ -132,11 +134,11 @@ func TestResumingAMissingRestrictedConversationFails(t *testing.T) {
 				s.Close()
 				t.Fatal("a missing conversation resumed")
 			}
-			if engine == Codex && !errors.Is(err, ErrRejected) {
+			if engine == harness.Codex && !errors.Is(err, ErrRejected) {
 				t.Fatalf("want a rejected thread/resume, got %v", err)
 			}
 			var exit *ProcessError
-			if engine == Claude && (!errors.As(err, &exit) || exit.Code != ProcessExited) {
+			if engine == harness.Claude && (!errors.As(err, &exit) || exit.Code != ProcessExited) {
 				t.Fatalf("want the harness to have exited, got %v", err)
 			}
 			if out, err := Reclaim(ctx, o.Restriction.Tools.Dir); err != nil || !out.Confirmed || out.Found {
@@ -149,7 +151,7 @@ func TestResumingAMissingRestrictedConversationFails(t *testing.T) {
 // A release that edits its tools still resumes its stored conversations, and
 // the resumed harness is restricted to the new surface, not the stored one.
 func TestRestrictedResumeSurvivesAChangedToolSurface(t *testing.T) {
-	for _, engine := range []Engine{Claude, Codex} {
+	for _, engine := range []harness.Engine{harness.Claude, harness.Codex} {
 		t.Run(string(engine), func(t *testing.T) {
 			o, log := persistentOptions(t, engine)
 			ctx := probeContext(t)
@@ -172,11 +174,11 @@ func TestRestrictedResumeSurvivesAChangedToolSurface(t *testing.T) {
 			}
 			defer release(t, ctx, resumed)
 			launches := logged(t, log, "args:")
-			if engine == Claude {
+			if engine == harness.Claude {
 				if !strings.Contains(launches[len(launches)-1], "mcp__agent_workspace__list_files") {
 					t.Fatalf("the resumed harness was not given the new surface: %s", launches[len(launches)-1])
 				}
-				if got := resumed.Capabilities().RestrictTools.Availability; got != Native {
+				if got := resumed.Capabilities().RestrictTools.Availability; got != harness.Native {
 					t.Errorf("the new surface was not cross-checked: %q", got)
 				}
 			}

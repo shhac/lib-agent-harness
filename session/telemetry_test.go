@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 func TestQuotaMappings(t *testing.T) {
@@ -105,7 +107,7 @@ func TestAccountMetadataAndUnknownLogin(t *testing.T) {
 }
 
 func TestQuotaRefreshRetainsStaleValuesAndRecovers(t *testing.T) {
-	s, w := fakeSession(t, Codex)
+	s, w := fakeSession(t, harness.Codex)
 	w.requestFn = func(method string, _ map[string]any) (json.RawMessage, error) {
 		if method != "account/rateLimits/read" {
 			t.Fatalf("unexpected %s", method)
@@ -128,7 +130,7 @@ func TestQuotaRefreshRetainsStaleValuesAndRecovers(t *testing.T) {
 	if err != nil || after.IsStale(time.Now(), time.Hour) || *after.Windows[0].UsedPercent != 0 {
 		t.Fatal("refresh did not recover")
 	}
-	if s.Capabilities().Quota.Availability != Native {
+	if s.Capabilities().Quota.Availability != harness.Native {
 		t.Fatal("successful capability not acknowledged")
 	}
 	*after.Windows[0].UsedPercent = 99
@@ -138,10 +140,10 @@ func TestQuotaRefreshRetainsStaleValuesAndRecovers(t *testing.T) {
 }
 
 func TestUnsupportedTelemetryDoesNotCloseSession(t *testing.T) {
-	s, w := fakeSession(t, Claude)
+	s, w := fakeSession(t, harness.Claude)
 	w.requestFn = func(string, map[string]any) (json.RawMessage, error) { return nil, ErrUnsupported }
 	q, err := s.ReadQuota(testContext(t))
-	if !errors.Is(err, ErrUnsupported) || q.Known() || s.Capabilities().Quota.Availability != Unsupported {
+	if !errors.Is(err, ErrUnsupported) || q.Known() || s.Capabilities().Quota.Availability != harness.Unsupported {
 		t.Fatal("unsupported method not reported")
 	}
 	if _, err = s.StartTurn(testContext(t), Input{"still usable"}); err != nil {
@@ -151,7 +153,7 @@ func TestUnsupportedTelemetryDoesNotCloseSession(t *testing.T) {
 }
 
 func TestIdleQuotaEventsAndAccountChange(t *testing.T) {
-	s, _ := fakeSession(t, Codex)
+	s, _ := fakeSession(t, harness.Codex)
 	notify(s, `{"method":"account/rateLimits/updated","params":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":12}}}}`)
 	notify(s, `{"method":"account/rateLimits/updated","params":{"rateLimits":{"limitId":"review","primary":{"usedPercent":20}}}}`)
 	if q := s.Telemetry().Quota; len(q.Windows) != 2 || q.Complete {
@@ -162,7 +164,7 @@ func TestIdleQuotaEventsAndAccountChange(t *testing.T) {
 	if a.Account.LoggedIn == nil || *a.Account.LoggedIn || a.Quota.Known() || len(a.Quota.Windows) != 0 {
 		t.Fatal("account change retained prior allowance")
 	}
-	c, _ := fakeSession(t, Claude)
+	c, _ := fakeSession(t, harness.Claude)
 	notify(c, `{"type":"rate_limit_event","session_id":"other","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour","utilization":0.5}}`)
 	if c.Telemetry().Quota.Known() {
 		t.Fatal("foreign quota accepted")
@@ -218,7 +220,7 @@ func TestCodexContextUsesActiveSizeAndSurvivesCompaction(t *testing.T) {
 }
 
 func TestClaudeContextLatestPromptNotCumulativeOrSubagent(t *testing.T) {
-	s, _ := fakeSession(t, Claude)
+	s, _ := fakeSession(t, harness.Claude)
 	turn, err := s.StartTurn(testContext(t), Input{"start"})
 	if err != nil {
 		t.Fatal(err)
@@ -245,7 +247,7 @@ func TestClaudeContextLatestPromptNotCumulativeOrSubagent(t *testing.T) {
 }
 
 func TestClaudeContextQueryIsSummaryAndCompactionInvalidates(t *testing.T) {
-	s, w := fakeSession(t, Claude)
+	s, w := fakeSession(t, harness.Claude)
 	w.requestFn = func(method string, p map[string]any) (json.RawMessage, error) {
 		if method != "get_context_usage" || !reflect.DeepEqual(p, map[string]any{"detail": "summary"}) {
 			t.Fatalf("unexpected context query %s %+v", method, p)
@@ -277,13 +279,13 @@ func TestFreshnessAndCancelledInspection(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := Inspect(ctx, Options{Engine: Codex, Binary: "must-not-launch"}); !errors.Is(err, context.Canceled) {
+	if _, err := Inspect(ctx, Options{Provider: harness.Provider{Engine: harness.Codex, CLI: harness.CLI{Binary: "must-not-launch"}}}); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
 }
 
 func TestCodexIdleContextAfterCompletionAndBeforeFirstTurn(t *testing.T) {
-	s, w := fakeSession(t, Codex)
+	s, w := fakeSession(t, harness.Codex)
 	event := `{"method":"thread/tokenUsage/updated","params":{"threadId":"session-1","turnId":"old-turn","tokenUsage":{"last":{"totalTokens":500},"modelContextWindow":1000}}}`
 	notify(s, event)
 	if c := s.Telemetry().Context; c.UsedTokens == nil || *c.UsedTokens != 500 {
@@ -312,7 +314,7 @@ func TestCodexIdleContextAfterCompletionAndBeforeFirstTurn(t *testing.T) {
 }
 
 func TestTelemetryBuffersBeforeCodexTurnIDIsKnown(t *testing.T) {
-	s, w := fakeSession(t, Codex)
+	s, w := fakeSession(t, harness.Codex)
 	w.requestFn = func(string, map[string]any) (json.RawMessage, error) {
 		notify(s, `{"method":"account/rateLimits/updated","params":{"rateLimits":{"primary":{"usedPercent":10}}}}`)
 		return json.RawMessage(`{"turn":{"id":"server-turn"}}`), nil
