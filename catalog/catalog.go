@@ -17,7 +17,14 @@ import (
 
 // Model is public model metadata, never account details.
 type Model struct {
-	ID          string `json:"id"`
+	// ID is what the engine accepts as its model setting. It may be an alias
+	// that follows the engine's newest model of a family, such as Claude's
+	// "opus" or "opus[1m]"; Resolved says what it selects today.
+	ID string `json:"id"`
+	// Resolved is the concrete model ID selects at discovery time, when the
+	// engine states it; empty when it did not. Pin Resolved to keep a model
+	// fixed, or keep ID to follow the engine's upgrades.
+	Resolved    string `json:"resolved,omitempty"`
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	// DefaultEffort is the effort the engine applies when none is chosen; empty

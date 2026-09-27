@@ -166,7 +166,9 @@ skills := harness.Skills{Provided: []harness.Skill{
 ```go
 models, err := catalog.Discover(ctx, provider)
 for _, m := range models {
-    // m.ID, m.Name, m.IsDefault, m.ContextWindow (0 = not stated)
+    // m.ID is what the engine accepts, possibly an alias such as Claude's "opus";
+    // m.Resolved is the concrete model it selects today, where stated.
+    // m.Name, m.IsDefault, m.ContextWindow (0 = not stated)
     if m.EffortsKnown {
         offer(m.ID, m.Efforts, m.DefaultEffort)
     }

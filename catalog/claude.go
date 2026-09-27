@@ -24,6 +24,7 @@ func readClaudeCatalog(reader io.Reader, writer io.Writer) ([]Model, error) {
 				Response  struct {
 					Models []struct {
 						Value          string   `json:"value"`
+						Resolved       string   `json:"resolvedModel"`
 						DisplayName    string   `json:"displayName"`
 						Description    string   `json:"description"`
 						SupportsEffort *bool    `json:"supportsEffort"`
@@ -48,7 +49,7 @@ func readClaudeCatalog(reader io.Reader, writer io.Writer) ([]Model, error) {
 		catalog := newCatalogBuilder()
 		for _, m := range event.Response.Response.Models {
 			// "default" is Claude's own entry for whichever model it defaults to.
-			model := Model{ID: m.Value, Name: m.DisplayName, Description: m.Description, DefaultEffort: m.DefaultEffort, IsDefault: m.Value == "default"}
+			model := Model{ID: m.Value, Resolved: m.Resolved, Name: m.DisplayName, Description: m.Description, DefaultEffort: m.DefaultEffort, IsDefault: m.Value == "default"}
 			switch {
 			case m.Efforts != nil:
 				model.EffortsKnown, model.Efforts = true, make([]Effort, 0, len(m.Efforts))

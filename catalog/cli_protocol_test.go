@@ -96,14 +96,14 @@ func TestClaudeCatalogReadsOnlyInitializationMetadata(t *testing.T) {
 	}
 	want := []Model{
 		{ID: "default", Name: "Default", IsDefault: true},
-		{ID: "opus", Name: "Opus", Description: "Careful reasoning", DefaultEffort: "high", EffortsKnown: true, Efforts: []Effort{{ID: "low"}, {ID: "high", Default: true}}},
+		{ID: "opus", Resolved: "version-is-cli-owned", Name: "Opus", Description: "Careful reasoning", DefaultEffort: "high", EffortsKnown: true, Efforts: []Effort{{ID: "low"}, {ID: "high", Default: true}}},
 		{ID: "haiku", Name: "Haiku", EffortsKnown: true, Efforts: []Effort{}},
 	}
 	if !reflect.DeepEqual(models, want) {
 		t.Fatalf("%+v", models)
 	}
 	encoded, _ := json.Marshal(models)
-	if strings.Contains(string(encoded), "not-for-ui") || strings.Contains(string(encoded), "unrelated") || strings.Contains(string(encoded), "version-is-cli-owned") {
+	if strings.Contains(string(encoded), "not-for-ui") || strings.Contains(string(encoded), "unrelated") {
 		t.Fatal("non-model metadata leaked")
 	}
 	if strings.Contains(requests.String(), `"type":"user"`) || !strings.Contains(requests.String(), `"subtype":"initialize"`) {
