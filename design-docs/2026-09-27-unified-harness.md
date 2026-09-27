@@ -255,8 +255,39 @@ releasable.
 5. **Grok everywhere.** Constrained completion, with a restriction proof, and a
    session adapter over Grok's agent mode. Each lands only once it is verified
    against the installed CLI, as `AGENTS.md` requires.
-6. **Remote sessions.** Follows the API-transports design doc: a separate
-   adapter that can never satisfy a restricted or sandboxed requirement.
+6. **Sessions for OpenAI-compatible endpoints, composed by the library.** An
+   endpoint is only a model, so the library is the agent. `session.Start`,
+   `Open` and `Resume` accept an API provider with the same Session, Turn,
+   Event and Result shapes as the CLIs:
+   - **Required configuration:** a `RuntimeHome`, the private durable
+     directory that holds the session's state, and a `Restriction` whose
+     `ToolHost` names the caller's tools and handler. No bridge is involved:
+     the library calls the handler directly, so `Bridge` must be empty.
+   - **The loop:** each turn calls the model through completion's
+     OpenAI-compatible transport. The library runs each proposed call through
+     the caller's handler, one at a time, keeping the tool host's closing-tool
+     rule. It answers composed skill calls, appends the results, and repeats
+     until the model answers without calls. A bounded number of model calls
+     per turn keeps a looping model from running unattended.
+   - **Tools:** only the caller's hosted tools and composed skills exist. The
+     library writes every request itself, so the restricted tool surface holds
+     by construction rather than by probe. `Support` says `RestrictTools` is
+     composed and `Sandbox` unsupported: there are no native tools to
+     sandbox.
+   - **State:** each session keeps an append-only transcript under
+     `RuntimeHome`, locked while a process has it open. The transcript holds
+     messages, each tool call before it runs, each result after it returns, and
+     per-response usage. A `Ref` names the engine, session ID, endpoint and a
+     digest of model, effort, instructions and tool server, never a credential.
+   - **Crash safety:** resuming after a crash never re-runs a tool. A call
+     recorded without a result is answered in the history as having an
+     unknown outcome, because its side effects may have happened, and the
+     interrupted turn is reported as interrupted.
+   - **Turn control:** interrupting cancels the request and any running
+     handler. Steering is composed (interrupt, then a new prompt).
+   - **Not yet:** compaction and streamed text deltas wait for their own
+     increments. Chat Completions resends the whole history on every call,
+     and usage reflects that.
 
 7. **Skills the caller controls.** Tools an application relies on often come
    with skills (a `SKILL.md` plus the files it references). An engine's globally

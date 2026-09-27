@@ -232,6 +232,12 @@ a gateway may already have routed or retried.
 
 ## Sessions are a later, separate decision
 
+Superseded by increment 6 of
+[the unified-harness design](2026-09-27-unified-harness.md). The library runs
+the agent loop itself over only the caller's hosted tools. That makes the
+restricted tool surface hold by construction, and sandboxing is never claimed.
+The reasoning below is kept for history.
+
 Do not add a remote endpoint to `session.Options`. A remote API has no evidence
 of a CLI-owned working directory, a native tool surface or an OS sandbox. It may
 support a provider conversation ID, but its transcript and resume semantics are
