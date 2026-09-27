@@ -34,6 +34,8 @@ type ErrorPhase string
 const (
 	PhasePreflight ErrorPhase = "preflight"
 	PhaseProcess   ErrorPhase = "process"
+	// PhaseTransport is an API request that failed before any response status.
+	PhaseTransport ErrorPhase = "transport"
 	PhaseResponse  ErrorPhase = "response"
 )
 
@@ -68,6 +70,9 @@ func (e *RequestError) Error() string {
 	case ErrorContextLimit:
 		return "model context limit reached"
 	case ErrorModelUnavailable:
+		if e.Engine == EngineOpenAICompatible {
+			return "selected model is unavailable at the configured endpoint; check the model name and account access"
+		}
 		return "selected model is unavailable; check the installed CLI model catalog and account access"
 	case ErrorStructuredOutputLimit:
 		return "model exhausted structured output attempts"

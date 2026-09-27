@@ -1,14 +1,16 @@
 # lib-agent-harness
 
-Go interfaces for installed Codex and Claude CLI harnesses, plus native Grok
-agent runs: constrained model completion, native agent runs, model discovery,
-streaming, session control, and account/quota/context telemetry.
+Go interfaces for installed Codex and Claude CLI harnesses, OpenAI-compatible
+completion endpoints, and native Grok agent runs: constrained model completion,
+native agent runs, model discovery, streaming, session control, and
+account/quota/context telemetry.
 Where an execution mode supports an engine, selecting it changes configuration,
 not the calling interface.
 
-The library launches local CLI binaries and uses their native login. It does
-not require a hosted execution service or a direct model API key. The CLI's own
-account and billing rules still apply.
+The library launches local CLI binaries with their native login, or calls an
+explicitly configured API endpoint with a caller-supplied credential source.
+It does not require a hosted execution service. The selected provider's account
+and billing rules still apply.
 
 ```sh
 go get github.com/shhac/lib-agent-harness
@@ -45,10 +47,27 @@ reply, usage, err := completion.Complete(ctx, completion.Config{
 }, nil)
 ```
 
+An OpenAI-compatible Chat Completions endpoint uses the same call and result
+shapes. Its bearer token comes from a per-request function rather than a
+configuration string, so it is never retained by the harness:
+
+```go
+reply, usage, err := completion.Complete(ctx, completion.Config{
+    Engine: completion.EngineOpenAICompatible,
+    Model:  "provider/model",
+    API: completion.APIConfig{
+        BaseURL:     "https://gateway.example/v1",
+        Dialect:     completion.OpenAIChatCompletions,
+        Credentials: tokenSource,
+    },
+}, messages, tools)
+```
+
 The message roles above are part of the application conversation presented to
 the constrained model, not a promise that every provider accepts identical
 native system-message operations. See [completion](completion/README.md) for
-the stronger execution boundary, CLI compatibility probes, and scratch storage.
+the transport boundary, API restrictions, CLI compatibility probes, and scratch
+storage.
 
 Use `completion.DiscoverModels(ctx, cfg)` to retrieve model IDs and advertised
 efforts without inference. Unsupported or failed discovery never invents a

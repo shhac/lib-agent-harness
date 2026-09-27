@@ -179,14 +179,25 @@ func restrictedCatalog(data []byte, model, effort string) ([]byte, error) {
 	return nil, preflightFailure("codex", reason.Code)
 }
 
-func actionSchema(tools []Tool) ([]byte, error) {
-	names := []string{}
+// toolCatalog is the single rule for an application tool catalog, whichever
+// transport presents it: uniquely named function tools.
+func toolCatalog(tools []Tool) (map[string]bool, error) {
 	seen := map[string]bool{}
 	for _, tool := range tools {
 		if tool.Type != "function" || tool.Function.Name == "" || seen[tool.Function.Name] {
 			return nil, errors.New("invalid application tool catalog")
 		}
 		seen[tool.Function.Name] = true
+	}
+	return seen, nil
+}
+
+func actionSchema(tools []Tool) ([]byte, error) {
+	if _, err := toolCatalog(tools); err != nil {
+		return nil, err
+	}
+	names := []string{}
+	for _, tool := range tools {
 		names = append(names, tool.Function.Name)
 	}
 	item := map[string]any{"type": "object", "additionalProperties": false, "required": []string{"name", "arguments"}, "properties": map[string]any{"name": map[string]any{"type": "string", "enum": names}, "arguments": map[string]any{"type": "string"}}}

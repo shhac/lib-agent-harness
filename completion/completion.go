@@ -1,14 +1,18 @@
-// Package completion runs CLI harnesses as constrained reasoning transports.
-// Native tools are disabled and verified before inference. Returned tool calls
-// are proposals only: authorization and execution remain with the caller.
+// Package completion runs CLI harnesses and remote API endpoints as constrained
+// reasoning transports. CLI native tools are disabled and verified before
+// inference. Returned tool calls are proposals only: authorization and
+// execution remain with the caller.
 package completion
 
 import (
 	"context"
+	"net/http"
 	"time"
 )
 
-// Config selects a local CLI and its native login. No API credentials are copied.
+// Config selects a local CLI and its native login, or, with
+// EngineOpenAICompatible, an API endpoint and the caller's credential source.
+// No credentials are copied, and ambient API keys are never read.
 type Config struct {
 	Engine     string
 	Model      string
@@ -25,8 +29,12 @@ type Config struct {
 	Timeout         time.Duration
 	// BeforeRequest runs after non-billable probes and before inference.
 	BeforeRequest func(context.Context) error
+	// API is used only by EngineOpenAICompatible, as CLI paths are only by CLIs.
+	API APIConfig
 	// run replaces CLI execution for synthetic tests, for either engine.
 	run func(context.Context, string, []string, string, []string, string) ([]byte, error)
+	// transport replaces the API round trip for synthetic tests.
+	transport http.RoundTripper
 }
 type Message struct {
 	Role       string     `json:"role"`
@@ -70,7 +78,7 @@ type Function struct {
 
 // Complete performs one invocation and never executes proposed application tools.
 func Complete(ctx context.Context, cfg Config, messages []Message, tools []Tool) (Message, Usage, error) {
-	if cfg.Engine != "codex" && cfg.Engine != "claude" {
+	if cfg.Engine != "codex" && cfg.Engine != "claude" && cfg.Engine != EngineOpenAICompatible {
 		return Message{}, Usage{}, preflightFailure(cfg.Engine, "unsupported_engine")
 	}
 	if cfg.Model == "" {
@@ -88,8 +96,11 @@ func Complete(ctx context.Context, cfg Config, messages []Message, tools []Tool)
 	if err := ctx.Err(); err != nil {
 		return Message{}, Usage{}, err
 	}
-	if cfg.Engine == "claude" {
+	switch cfg.Engine {
+	case "claude":
 		return claudeComplete(ctx, cfg, messages, tools)
+	case EngineOpenAICompatible:
+		return openAIComplete(ctx, cfg, messages, tools)
 	}
 	return codexComplete(ctx, cfg, messages, tools)
 }

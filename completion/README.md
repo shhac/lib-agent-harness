@@ -1,15 +1,28 @@
 # Constrained completions
 
-`completion.Complete` invokes a local Codex or Claude CLI once and returns a
-message, optional proposed application tool calls, and known-or-unknown usage.
-It never executes proposed tools. The caller owns authorization, execution,
-conversation history, retries, and budgets.
+`completion.Complete` invokes a local Codex or Claude CLI, or a configured
+OpenAI-compatible Chat Completions endpoint, once and returns a message,
+optional proposed application tool calls, and known-or-unknown usage. It never
+executes proposed tools. The caller owns authorization, execution, conversation
+history, retries, and budgets.
+
+For `EngineOpenAICompatible`, set an explicit `API.Dialect`, an absolute HTTPS
+`API.BaseURL` (HTTP is allowed only to loopback), and an `API.Credentials`
+function. The function yields one bearer token after local validation and
+`BeforeRequest`; it is not stored in `Config`, wrapped in errors, or read from
+an ambient API-key environment variable. The initial dialect is
+`OpenAIChatCompletions`: a single non-streaming request containing the model,
+conversation and optional function catalog. It rejects redirects, arbitrary
+headers and vendor fields, and does not retry. Responses must have one complete
+terminal choice; usage is known only when the response supplies consistent token
+counts. Streaming, effort, structured output, API model discovery and remote
+sessions are currently refused rather than silently approximated.
 
 Select `Config.Engine`, `Model`, and optional `Effort`; choose binary and native
 login home paths when needed. The library does not copy credentials or fall back
-to API billing. Claude retains native login/keychain resolution, including the
-`USER` environment variable. Ambient API keys and integration credentials are not
-forwarded. Native login access remains available to the CLI.
+to API billing. For CLI engines, Claude retains native login/keychain resolution,
+including the `USER` environment variable. Ambient API keys and integration
+credentials are not forwarded. Native login access remains available to the CLI.
 
 Both adapters disable native tools, hooks, custom instructions, external MCP
 servers, and session persistence. Before inference they make a synthetic request
@@ -65,7 +78,9 @@ owner-only access.
 `DiscoverModels` reads the selected CLI's own catalog: Codex's app-server
 `model/list` and Claude's stream-json initialization metadata. It never starts an
 inference turn and does not return account information. Missing or unavailable
-catalogs return an error rather than invented model options.
+catalogs return an error rather than invented model options. API discovery is a
+later addition, so the API transport is refused here rather than issuing an
+unbounded or ambiguous request.
 
 The unit suite uses synthetic CLI responses and local rejecting servers. Optional
 installed-Codex protocol tests are explicitly gated; they also use a local dummy
@@ -84,7 +99,7 @@ dummy local key. The bundled model catalog uses a disposable Codex home too.
 
 Use `errors.As(err, &requestError)` with `*completion.RequestError` to inspect
 `Kind`, `RetryAfter` and `Retryable()`. `Engine`, `Phase` (preflight, process,
-response), `Code` and optional `ExitCode` provide safe diagnostics without
+transport, response), `Code` and optional `ExitCode` provide safe diagnostics without
 retaining raw provider or subprocess text. `Code` is an allowlisted native enum
 or library code; an unknown native value is omitted. Exit status is only present
 when observed from the subprocess. These fields do not establish whether quota

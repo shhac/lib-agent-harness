@@ -9,7 +9,7 @@ import (
 
 // preflightFailure retains only library-owned codes, never a raw error cause.
 func preflightFailure(engine, code string) *RequestError {
-	if engine != "claude" && engine != "codex" {
+	if engine != "claude" && engine != "codex" && engine != EngineOpenAICompatible {
 		engine = ""
 	}
 	kind := ErrorUnknown
@@ -109,6 +109,29 @@ func (e *RequestError) diagnosticDetail() string {
 		return "CLI capability check rejected changed model; constrained completion remains disabled (not an account login check)"
 	case "probe_mismatch":
 		return "CLI capability check failed to prove tool-free inference; check installed CLI compatibility (no account inference was attempted)"
+
+	case "api_dialect_required":
+		return "API dialect is required; select completion.OpenAIChatCompletions explicitly"
+	case "api_dialect_unsupported":
+		return "unsupported API dialect; completion.OpenAIChatCompletions is the only supported dialect"
+	case "api_base_url_invalid":
+		return "API base URL must be an absolute https URL without user information, query or fragment"
+	case "api_base_url_insecure":
+		return "API base URL must use https unless it names a loopback host"
+	case "api_credentials_required":
+		return "API credential source is required; ambient API keys are never read"
+	case "api_effort_unsupported":
+		return "reasoning effort is not supported for API transports yet; leave Effort empty"
+	case "invalid_messages":
+		return "invalid conversation; use system, user, assistant and tool roles, with tool call IDs only where the role allows them"
+	case "credential_unavailable":
+		return "API credential source failed; check the application's credential provider (no request was sent)"
+	case "invalid_credential":
+		return "API credential source returned an empty or malformed bearer token (no request was sent)"
+	case "redirect_refused":
+		return "API endpoint redirected the request, which is never followed; configure the final endpoint URL"
+	case "credential_echoed":
+		return "API endpoint echoed the request credential; the response was discarded"
 	}
 	return ""
 }
