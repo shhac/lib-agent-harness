@@ -74,9 +74,10 @@ type Instructions struct {
 }
 
 // Policy uses explicit native provider settings. Empty values resolve to
-// read-only/never for Codex and dontAsk for Claude. Setting a field only the
-// other engine reads is refused rather than ignored. Unhandled requests from the
-// CLI are denied. These are execution settings, not a tools-disabled guarantee.
+// read-only/never for Codex, dontAsk for Claude and deny for Grok. Setting a
+// field only another engine reads is refused rather than ignored. Unhandled
+// requests from the CLI are denied. These are execution settings, not a
+// tools-disabled guarantee.
 type Policy struct {
 	CodexSandbox     string `json:"codex_sandbox,omitempty"`
 	CodexApproval    string `json:"codex_approval,omitempty"`
@@ -84,13 +85,38 @@ type Policy struct {
 	// ClaudeTools nil preserves native tools; a non-nil empty slice disables
 	// native tools. This does not disable installed hooks or MCP configuration.
 	ClaudeTools []string `json:"claude_tools,omitempty"`
+	// GrokPermission answers the permission requests Grok sends, and a Grok
+	// session requires it to be set: GrokDenyWhenAsked rejects each request,
+	// GrokAllowWhenAsked approves each one once, and neither grants an
+	// "always" option. It governs only the requests Grok actually makes: Grok
+	// 1.0.41's agent mode asks only where a permission rule or its configured
+	// mode says to, and otherwise runs edits and shell commands without
+	// asking. Neither value makes a read-only session, which is why there is
+	// no default: a Grok session is more permissive than Codex's read-only or
+	// Claude's dontAsk defaults, and the caller must choose it knowingly.
+	GrokPermission string `json:"grok_permission,omitempty"`
+	// GrokTelemetry "" preserves the installed CLI's behaviour;
+	// GrokTelemetryReduced turns off Grok's documented client telemetry,
+	// trace upload, feedback, auto-update and memory controls, and its imports
+	// of other harnesses' skills, rules, agents, MCP servers, hooks and
+	// sessions, for this session's process. It is not a no-egress guarantee.
+	GrokTelemetry string `json:"grok_telemetry,omitempty"`
 }
+
+// Grok permission answers and telemetry policy.
+const (
+	GrokDenyWhenAsked    = "deny-when-asked"
+	GrokAllowWhenAsked   = "allow-when-asked"
+	GrokTelemetryReduced = "reduced"
+)
+
 type Options struct {
 	// Provider selects the engine and locates its CLI. Only a CLI provider for
 	// an engine harness.Support offers sessions is accepted. An empty
 	// Provider.CLI.Binary runs the engine's name on PATH; an empty
-	// Provider.CLI.Home resolves CODEX_HOME or CLAUDE_CONFIG_DIR, then ~/.codex
-	// or ~/.claude. Both resolved values are part of a Ref.
+	// Provider.CLI.Home resolves CODEX_HOME, CLAUDE_CONFIG_DIR or GROK_HOME,
+	// then ~/.codex, ~/.claude or ~/.grok. Both resolved values are part of a
+	// Ref.
 	Provider               harness.Provider
 	WorkDir, Model, Effort string
 	// AccountIdentity is a caller-owned, non-secret label. Credentials are never
@@ -273,6 +299,9 @@ type Turn struct {
 	awaitingCompactID  bool
 	pending            []map[string]json.RawMessage
 	pendingBytes       int
+	// grokResponse counts Grok's completed model responses in this turn; it
+	// names the response the next streamed text belongs to.
+	grokResponse int
 	// closeTools shuts the caller's tool channel when this turn ends.
 	closeTools func()
 }

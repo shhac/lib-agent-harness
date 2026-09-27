@@ -71,9 +71,12 @@ func (s *Session) startTurnScoped(lifetime, request context.Context, in Input) (
 	t.result.Context = cloneContext(s.telemetry.Context)
 	ref := s.ref
 	s.mu.Unlock()
-	if s.options.Provider.Engine == harness.Codex {
+	switch s.options.Provider.Engine {
+	case harness.Codex:
 		err = s.startCodexTurn(request, t, ref, in)
-	} else {
+	case harness.Grok:
+		err = s.startGrokTurn(request, lifetime, t, ref, in)
+	default:
 		err = s.transport.send(request, claudeUserFrame(ref.ID, in.Text))
 	}
 	if err != nil {
@@ -181,8 +184,10 @@ func (s *Session) activeTurn(expected string) (*Turn, error) {
 // Continue draining Turn.Events concurrently while Interrupt or Steer waits.
 // Claude has no unique cancelled result code: a requested interrupt correlated
 // with error_during_execution normalizes to interrupted, while NativeError stays
-// true. Other error subtypes remain failures. This does not establish that the
-// interruption was the sole cause, or that external tool effects stopped.
+// true. Other error subtypes remain failures. Grok's cancellation is a
+// notification with no acknowledgement; the prompt's cancelled response is the
+// terminal event. This does not establish that the interruption was the sole
+// cause, or that external tool effects stopped.
 func (s *Session) Interrupt(ctx context.Context, expectedTurnID string) error {
 	if err := s.lockOp(ctx); err != nil {
 		return err
@@ -196,17 +201,10 @@ func (s *Session) interrupt(ctx context.Context, expected string) error {
 	if err != nil {
 		return err
 	}
-	method := "interrupt"
-	p := map[string]any{}
-	if s.options.Provider.Engine == harness.Codex {
-		method = "turn/interrupt"
-		p["threadId"] = s.Ref().ID
-		p["turnId"] = expected
-	}
 	t.mu.Lock()
 	t.interruptRequested = true
 	t.mu.Unlock()
-	if _, err = s.transport.request(ctx, method, p); err != nil {
+	if err = s.requestInterrupt(ctx, expected); err != nil {
 		t.mu.Lock()
 		t.interruptRequested = false
 		t.mu.Unlock()
@@ -223,9 +221,24 @@ func (s *Session) interrupt(ctx context.Context, expected string) error {
 	return nil
 }
 
-// Steer uses native Codex turn/steer or, on Claude, interrupt-and-continue. The
-// composed path returns a NEW Turn after the old turn's terminal result. There
-// is no silent retry/restart; transport loss returns an error for caller policy.
+// requestInterrupt asks the harness to cancel the expected turn.
+func (s *Session) requestInterrupt(ctx context.Context, expected string) error {
+	var err error
+	switch s.options.Provider.Engine {
+	case harness.Codex:
+		_, err = s.transport.request(ctx, "turn/interrupt", map[string]any{"threadId": s.Ref().ID, "turnId": expected})
+	case harness.Grok:
+		err = s.transport.send(ctx, grokNotification("session/cancel", map[string]any{"sessionId": s.Ref().ID}))
+	default:
+		_, err = s.transport.request(ctx, "interrupt", map[string]any{})
+	}
+	return err
+}
+
+// Steer uses native Codex turn/steer or, on Claude and Grok,
+// interrupt-and-continue. The composed path returns a NEW Turn after the old
+// turn's terminal result. There is no silent retry/restart; transport loss
+// returns an error for caller policy.
 func (s *Session) Steer(ctx context.Context, expected string, in Input, o SteerOptions) (SteerResult, error) {
 	if err := s.lockOp(ctx); err != nil {
 		return SteerResult{}, err
@@ -238,9 +251,9 @@ func (s *Session) Steer(ctx context.Context, expected string, in Input, o SteerO
 	if in.Text == "" {
 		return SteerResult{}, errors.New("steering input is empty")
 	}
-	if s.options.Provider.Engine == harness.Claude {
+	if engine := s.options.Provider.Engine; engine != harness.Codex {
 		if o.RequireNative {
-			return SteerResult{}, &UnsupportedError{Engine: harness.Claude, Operation: "steer", Code: RefusedNotNative, Capability: harness.Capability{Availability: harness.Composed, Reason: "Claude steering interrupts and starts another turn"}}
+			return SteerResult{}, &UnsupportedError{Engine: engine, Operation: "steer", Code: RefusedNotNative, Capability: harness.Capability{Availability: harness.Composed, Reason: composedSteerReason(engine)}}
 		}
 		if err = s.interrupt(ctx, expected); err != nil {
 			return SteerResult{}, err
@@ -280,6 +293,13 @@ func (s *Session) Steer(ctx context.Context, expected string, in Input, o SteerO
 	}
 	s.setCapability(&s.caps.Steer, harness.Capability{Availability: harness.Native, Reason: "turn/steer acknowledged by installed harness"})
 	return SteerResult{harness.Native, t}, nil
+}
+
+func composedSteerReason(e harness.Engine) string {
+	if e == harness.Grok {
+		return "Grok steering cancels the running prompt and sends another"
+	}
+	return "Claude steering interrupts and starts another turn"
 }
 
 // controlOp names a control request whose native method an installed harness

@@ -47,6 +47,14 @@ type streamWire struct {
 	stderr    *boundedBuffer
 	exit      *ProcessError
 	diagnose  func(Diagnostic)
+	// grokPermission is how this Grok session answers permission requests.
+	grokPermission string
+}
+
+// asyncWire sends a request now and delivers its reply later, for a request
+// whose reply is the end of a long operation, such as a Grok prompt.
+type asyncWire interface {
+	call(context.Context, string, map[string]any) (<-chan response, func(), error)
 }
 
 func newProcessWire(ctx context.Context, o Options, nativeID string, resuming bool, l *launch, onStart func(int), event func(map[string]json.RawMessage), ended func(error)) (*streamWire, error) {
@@ -85,7 +93,7 @@ func newProcessWireArgs(ctx context.Context, o Options, args, env []string, onSt
 	if onStart != nil {
 		p.Notify(onStart)
 	}
-	w := &streamWire{engine: o.Provider.Engine, stdin: stdin, stdout: reader, pending: map[string]chan response{}, done: make(chan struct{}), reaped: make(chan struct{}), writeGate: make(chan struct{}, 1), event: event, ended: ended, stderr: stderr, diagnose: o.OnDiagnostic}
+	w := &streamWire{engine: o.Provider.Engine, stdin: stdin, stdout: reader, pending: map[string]chan response{}, done: make(chan struct{}), reaped: make(chan struct{}), writeGate: make(chan struct{}, 1), event: event, ended: ended, stderr: stderr, diagnose: o.OnDiagnostic, grokPermission: o.Policy.GrokPermission}
 	w.stop = func() { cancel(); p.Stop(); stdin.Close(); reader.Close() }
 	go w.read()
 	go func() {
@@ -217,21 +225,11 @@ func (w *streamWire) send(ctx context.Context, msg map[string]any) error {
 	return nil
 }
 func (w *streamWire) request(ctx context.Context, method string, params map[string]any) (json.RawMessage, error) {
-	id := strconv.FormatUint(w.next.Add(1), 10)
-	ch := make(chan response, 1)
-	w.mu.Lock()
-	w.pending[id] = ch
-	w.mu.Unlock()
-	defer func() { w.mu.Lock(); delete(w.pending, id); w.mu.Unlock() }()
-	msg := map[string]any{"id": id, "method": method, "params": params}
-	if w.engine == harness.Claude {
-		params = cloneMap(params)
-		params["subtype"] = method
-		msg = map[string]any{"type": "control_request", "request_id": id, "request": params}
-	}
-	if err := w.send(ctx, msg); err != nil {
+	ch, forget, err := w.call(ctx, method, params)
+	if err != nil {
 		return nil, err
 	}
+	defer forget()
 	select {
 	case r := <-ch:
 		return r.body, r.err
@@ -241,6 +239,36 @@ func (w *streamWire) request(ctx context.Context, method string, params map[stri
 		return nil, w.terminalError()
 	}
 }
+
+// call sends a request and returns where its reply will arrive. forget stops
+// listening for it.
+func (w *streamWire) call(ctx context.Context, method string, params map[string]any) (<-chan response, func(), error) {
+	id := strconv.FormatUint(w.next.Add(1), 10)
+	ch := make(chan response, 1)
+	w.mu.Lock()
+	w.pending[id] = ch
+	w.mu.Unlock()
+	forget := func() { w.mu.Lock(); delete(w.pending, id); w.mu.Unlock() }
+	if err := w.send(ctx, w.envelope(id, method, params)); err != nil {
+		forget()
+		return nil, nil, err
+	}
+	return ch, forget, nil
+}
+
+// envelope frames a request in the engine's dialect.
+func (w *streamWire) envelope(id, method string, params map[string]any) map[string]any {
+	switch w.engine {
+	case harness.Claude:
+		params = cloneMap(params)
+		params["subtype"] = method
+		return map[string]any{"type": "control_request", "request_id": id, "request": params}
+	case harness.Grok:
+		return map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}
+	}
+	return map[string]any{"id": id, "method": method, "params": params}
+}
+
 func cloneMap(m map[string]any) map[string]any {
 	n := make(map[string]any, len(m)+1)
 	for k, v := range m {
@@ -273,8 +301,11 @@ func (w *streamWire) read() {
 }
 func (w *streamWire) reply(m map[string]json.RawMessage) bool {
 	parse := parseCodexReply
-	if w.engine == harness.Claude {
+	switch w.engine {
+	case harness.Claude:
 		parse = parseClaudeReply
+	case harness.Grok:
+		parse = parseGrokReply
 	}
 	id, r, isReply, err := parse(m)
 	if !isReply {
@@ -366,12 +397,18 @@ func parseCodexReply(m map[string]json.RawMessage) (id string, r response, isRep
 // permission just to unblock a native harness. Payloads are not exposed as errors.
 func (w *streamWire) serverRequest(m map[string]json.RawMessage) bool {
 	var reply map[string]any
-	if w.engine == harness.Claude {
+	switch w.engine {
+	case harness.Claude:
 		if str(m, "type") != "control_request" {
 			return false
 		}
 		reply = map[string]any{"type": "control_response", "response": map[string]any{"subtype": "error", "request_id": str(m, "request_id"), "error": "Client does not authorize this operation"}}
-	} else {
+	case harness.Grok:
+		if len(m["id"]) == 0 || len(m["method"]) == 0 {
+			return false
+		}
+		reply = grokServerReply(m, w.grokPermission)
+	default:
 		if len(m["id"]) == 0 || len(m["method"]) == 0 {
 			return false
 		}

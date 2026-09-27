@@ -122,6 +122,28 @@ func TestSupportIsTheOnlyEngineQuestion(t *testing.T) {
 	}
 }
 
+func TestGrokSessionClaims(t *testing.T) {
+	for _, f := range []Feature{Available, Resume, Interrupt, AppendInstructions, ReplaceInstructions} {
+		if c := Support(Grok, Session, f); c.Availability != Unknown || c.Reason == "" {
+			t.Errorf("Grok session %s: %+v", f, c)
+		}
+	}
+	if c := Support(Grok, Session, Steer); c.Availability != Composed || c.Reason == "" {
+		t.Fatalf("Grok steering: %+v", c)
+	}
+	for _, f := range []Feature{Compact, RestrictTools, Sandbox, Tools} {
+		if c := Support(Grok, Session, f); c.Usable() || c.Reason == "" {
+			t.Errorf("Grok session %s: %+v", f, c)
+		}
+	}
+	if Support(Grok, Session, CacheSplit).Availability != Native || Support(Grok, Session, ContextWindow).Availability != Unknown {
+		t.Fatal("Grok session accounting claims changed")
+	}
+	if Support(Grok, Session, CostReport).Usable() {
+		t.Fatal("a Grok session claims a cost report")
+	}
+}
+
 type carrier struct{ facts Facts }
 
 func (c carrier) Error() string       { return "failed" }

@@ -2,8 +2,8 @@ package session
 
 // The engine-agnostic dispatch layer: deciding which turn a frame belongs to,
 // buffering it while a turn is still starting, and the shared text/emit
-// accumulation. The per-engine dialects are in events_codex.go and
-// events_claude.go.
+// accumulation. The per-engine dialects are in events_codex.go,
+// events_claude.go and events_grok.go.
 
 import (
 	"encoding/json"
@@ -62,9 +62,12 @@ func (s *Session) notificationLocked(m map[string]json.RawMessage) {
 	if s.accountTelemetryEvent(m, ref, t) {
 		return
 	}
-	if s.options.Provider.Engine == harness.Codex {
+	switch s.options.Provider.Engine {
+	case harness.Codex:
 		s.codexEvent(t, ref, m)
-	} else {
+	case harness.Grok:
+		s.grokEvent(t, ref, m)
+	default:
 		s.claudeEvent(t, ref, m)
 	}
 }

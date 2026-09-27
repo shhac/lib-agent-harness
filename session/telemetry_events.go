@@ -53,7 +53,7 @@ func (s *Session) accountTelemetryEvent(m map[string]json.RawMessage, ref Ref, t
 			}
 			return true
 		}
-	} else if str(m, "type") == "rate_limit_event" {
+	} else if s.options.Provider.Engine == harness.Claude && str(m, "type") == "rate_limit_event" {
 		if id := str(m, "session_id"); id != "" && ref.ID != "" && id != ref.ID {
 			return true
 		}

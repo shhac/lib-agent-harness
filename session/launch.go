@@ -102,6 +102,9 @@ func commandArgs(o Options, nativeID string, resuming bool, l *launch) []string 
 		}
 		return args
 	}
+	if o.Provider.Engine == harness.Grok {
+		return grokArgs(o)
+	}
 	args := []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--permission-mode", o.Policy.ClaudePermission}
 	if l != nil {
 		args = append(args, l.extra...)
@@ -128,6 +131,21 @@ func commandArgs(o Options, nativeID string, resuming bool, l *launch) []string 
 		args = append(args, flag, o.Instructions.Text)
 	}
 	return args
+}
+
+// grokArgs starts Grok's agent protocol on stdio, always as its own process:
+// a shared leader would carry another client's sessions and configuration.
+// Values are bound with "=", because Grok reads a separate value beginning
+// with "-" as a missing one.
+func grokArgs(o Options) []string {
+	args := []string{"agent", "--no-leader"}
+	if o.Model != "" {
+		args = append(args, "--model="+o.Model)
+	}
+	if o.Effort != "" {
+		args = append(args, "--reasoning-effort="+o.Effort)
+	}
+	return append(args, "stdio")
 }
 
 // verificationKey identifies exactly what a probe established: this binary, as

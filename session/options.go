@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/nativecli"
 )
 
 // normalize resolves a caller's options into the ones a session runs with,
@@ -66,6 +67,27 @@ func supported(o Options) error {
 	if code := o.Provider.Problem(); code != "" {
 		return refuse(o, "provider", code, "the provider is not a well-formed CLI provider")
 	}
+	return unsupportedMode(o)
+}
+
+// unsupportedMode refuses a restricted or sandboxed Grok session, with the
+// capability's own reason. Codex and Claude refuse these on their own terms,
+// including on a platform without containment.
+func unsupportedMode(o Options) error {
+	engine := o.Provider.Engine
+	if engine != harness.Grok {
+		return nil
+	}
+	if o.Restriction != nil {
+		if c := harness.Support(engine, harness.Session, harness.RestrictTools); c.Availability == harness.Unsupported {
+			return &UnsupportedError{Engine: engine, Operation: "restriction", Code: RefusedNotOffered, Capability: c}
+		}
+	}
+	if o.Sandbox != nil {
+		if c := harness.Support(engine, harness.Session, harness.Sandbox); c.Availability == harness.Unsupported {
+			return &UnsupportedError{Engine: engine, Operation: "sandbox", Code: RefusedNotOffered, Capability: c}
+		}
+	}
 	return nil
 }
 
@@ -74,14 +96,25 @@ func supported(o Options) error {
 // "no tools" on Codex would be running with every native tool.
 func otherEnginePolicy(o Options) error {
 	p := o.Policy
+	grok := p.GrokPermission != "" || p.GrokTelemetry != ""
 	switch o.Provider.Engine {
 	case harness.Codex:
 		if p.ClaudePermission != "" || p.ClaudeTools != nil {
 			return refuse(o, "policy", RefusedOtherEnginePolicy, "Codex does not read Policy.ClaudePermission or Policy.ClaudeTools; leave them unset")
 		}
+		if grok {
+			return refuse(o, "policy", RefusedOtherEnginePolicy, "Codex does not read Policy.GrokPermission or Policy.GrokTelemetry; leave them unset")
+		}
 	case harness.Claude:
 		if p.CodexSandbox != "" || p.CodexApproval != "" {
 			return refuse(o, "policy", RefusedOtherEnginePolicy, "Claude does not read Policy.CodexSandbox or Policy.CodexApproval; leave them unset")
+		}
+		if grok {
+			return refuse(o, "policy", RefusedOtherEnginePolicy, "Claude does not read Policy.GrokPermission or Policy.GrokTelemetry; leave them unset")
+		}
+	case harness.Grok:
+		if p.CodexSandbox != "" || p.CodexApproval != "" || p.ClaudePermission != "" || p.ClaudeTools != nil {
+			return refuse(o, "policy", RefusedOtherEnginePolicy, "Grok does not read the Codex or Claude policy fields; leave them unset")
 		}
 	}
 	return nil
@@ -105,11 +138,12 @@ func normalizePaths(o Options) (Options, error) {
 		return o, refuse(o, "work_dir", RefusedWorkDir, "invalid working directory")
 	}
 	if cli.Home == "" {
-		key := "CODEX_HOME"
-		suffix := ".codex"
-		if o.Provider.Engine == harness.Claude {
-			key = "CLAUDE_CONFIG_DIR"
+		key, suffix := homeVariable(o.Provider.Engine), ".codex"
+		switch o.Provider.Engine {
+		case harness.Claude:
 			suffix = ".claude"
+		case harness.Grok:
+			suffix = ".grok"
 		}
 		cli.Home = os.Getenv(key)
 		if cli.Home == "" {
@@ -144,9 +178,14 @@ func normalizeLimits(o Options) (Options, error) {
 }
 
 // normalizePolicy applies the native policy defaults and refuses a value the
-// engine does not recognise. Every default is applied whatever the engine,
-// because every one of them is part of a Ref's digest.
+// engine does not recognise. Every Codex and Claude default is applied to
+// either of those engines, because every one of them is part of a Ref's digest.
+// Grok's references never existed without its own defaults, so it carries only
+// those.
 func normalizePolicy(o Options) (Options, error) {
+	if o.Provider.Engine == harness.Grok {
+		return normalizeGrokPolicy(o)
+	}
 	if o.Policy.CodexSandbox == "" {
 		o.Policy.CodexSandbox = "read-only"
 	}
@@ -177,6 +216,22 @@ func normalizePolicy(o Options) (Options, error) {
 	// Freeze caller-owned slices before fingerprinting or launching.
 	if o.Policy.ClaudeTools != nil {
 		o.Policy.ClaudeTools = append([]string{}, o.Policy.ClaudeTools...)
+	}
+	return o, nil
+}
+
+func normalizeGrokPolicy(o Options) (Options, error) {
+	switch o.Policy.GrokPermission {
+	case "":
+		return o, refuse(o, "policy", RefusedPolicy, "Grok's agent mode runs edits and commands without asking; set Policy.GrokPermission to GrokDenyWhenAsked or GrokAllowWhenAsked knowingly")
+	case GrokDenyWhenAsked, GrokAllowWhenAsked:
+	default:
+		return o, refuse(o, "policy", RefusedPolicy, "invalid Grok permission policy")
+	}
+	switch o.Policy.GrokTelemetry {
+	case "", GrokTelemetryReduced:
+	default:
+		return o, refuse(o, "policy", RefusedPolicy, "invalid Grok telemetry policy")
 	}
 	return o, nil
 }
@@ -306,7 +361,35 @@ func environment(o Options) []string {
 		// Auto-memory would read and write the operator's own memory folders.
 		env = append(env, "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1")
 	}
+	if o.Provider.Engine == harness.Grok && o.Policy.GrokTelemetry == GrokTelemetryReduced {
+		env = nativecli.Override(env, nativecli.GrokReducedTelemetry...)
+	}
 	return append(env, o.Env...)
+}
+
+// homeVariable names the environment variable that selects an engine's home.
+func homeVariable(e harness.Engine) string {
+	switch e {
+	case harness.Claude:
+		return "CLAUDE_CONFIG_DIR"
+	case harness.Grok:
+		return "GROK_HOME"
+	}
+	return "CODEX_HOME"
+}
+
+// grokManaged is what a Grok session never inherits: its home, which the
+// session selects, and the credentials and endpoint overrides that would move
+// it off the selected login.
+func grokManaged(key string) bool {
+	upper := strings.ToUpper(key)
+	if strings.HasPrefix(upper, "XAI_") || strings.HasPrefix(upper, "GROK_AUTH") {
+		return true
+	}
+	if !strings.HasPrefix(upper, "GROK_") {
+		return false
+	}
+	return upper == "GROK_HOME" || upper == "GROK_DEPLOYMENT_KEY" || upper == "GROK_AGENT_SECRET" || strings.HasSuffix(upper, "_API_KEY") || strings.HasSuffix(upper, "_URL")
 }
 
 // sandboxInherited is all a sandboxed session inherits from this process:
@@ -328,6 +411,9 @@ func baseEnvironment(o Options) []string {
 		key, _, _ := strings.Cut(entry, "=")
 		// Retain USER and other OS identity variables: native keychain lookup uses
 		// them. Strip provider credentials/overrides to preserve subscription login.
+		if o.Provider.Engine == harness.Grok && grokManaged(key) {
+			continue
+		}
 		if key == "CODEX_HOME" || key == "CLAUDE_CONFIG_DIR" || key == "CLAUDECODE" || key == "OPENAI_API_KEY" || key == "OPENAI_BASE_URL" || key == "ANTHROPIC_API_KEY" || key == "ANTHROPIC_AUTH_TOKEN" || key == "ANTHROPIC_BASE_URL" || key == "CLAUDE_CODE_OAUTH_TOKEN" || strings.HasPrefix(key, "CLAUDE_CODE_USE_") || strings.HasPrefix(key, "ANTHROPIC_DEFAULT_") || key == "ANTHROPIC_MODEL" {
 			continue
 		}
@@ -340,9 +426,8 @@ func baseEnvironment(o Options) []string {
 	if (o.Restriction != nil || o.Sandbox != nil) && o.RuntimeHome != "" && o.Provider.Engine == harness.Codex {
 		selected = o.RuntimeHome
 	}
-	key := "CODEX_HOME"
+	key := homeVariable(o.Provider.Engine)
 	if o.Provider.Engine == harness.Claude {
-		key = "CLAUDE_CONFIG_DIR"
 		home, err := os.UserHomeDir()
 		if err == nil && filepath.Clean(selected) == filepath.Join(home, ".claude") {
 			return env
@@ -369,6 +454,9 @@ func validateEnv(o Options) error {
 			strings.HasPrefix(upper, "DYLD_"), strings.HasPrefix(upper, "LD_"), upper == "NODE_OPTIONS", upper == "NODE_PATH", strings.HasPrefix(upper, "BUN_"),
 			strings.HasSuffix(upper, "_PROXY"), strings.HasPrefix(upper, "SSL_CERT_"), upper == "NODE_EXTRA_CA_CERTS", strings.HasPrefix(upper, "GIT_"):
 			return refuse(o, "env", RefusedEnvManaged, "environment addition "+key+" is managed by the harness or would change the CLI outside its sandbox")
+		}
+		if o.Provider.Engine == harness.Grok && (strings.HasPrefix(upper, "GROK_") || strings.HasPrefix(upper, "XAI_")) {
+			return refuse(o, "env", RefusedEnvManaged, "environment addition "+key+" is managed by the harness; set Policy.GrokTelemetry for Grok's telemetry controls")
 		}
 	}
 	return nil

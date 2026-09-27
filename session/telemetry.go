@@ -31,6 +31,9 @@ func Inspect(ctx context.Context, o Options) (Inspection, error) {
 	if err != nil {
 		return out, err
 	}
+	if o.Provider.Engine == harness.Grok {
+		return out, &UnsupportedError{Engine: harness.Grok, Operation: "inspect", Code: RefusedNotOffered, Capability: harness.Capability{Availability: harness.Unsupported, Reason: "inspect a Grok login with account.Inspect"}}
+	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	s := &Session{options: o, caps: CapabilitiesFor(o.Provider.Engine), done: make(chan struct{}), opGate: make(chan struct{}, 1)}
@@ -74,10 +77,11 @@ func (s *Session) Telemetry() Telemetry {
 	return Telemetry{Account: cloneAccount(s.telemetry.Account), Quota: cloneQuota(s.telemetry.Quota), Credits: cloneCredits(s.telemetry.Credits), Context: cloneContext(s.telemetry.Context)}
 }
 
-// ReadAccount reads Codex's native account endpoint. Claude reports its account
-// in the initialize handshake; this method returns that observation. To inspect
-// a changed Claude login, use Inspect (or reopen the session), not a second
-// initialize on a running conversation.
+// ReadAccount reads Codex's native account endpoint, or Grok's
+// _x.ai/auth/check_subscription on the session's own agent process. Claude
+// reports its account in the initialize handshake; this method returns that
+// observation. To inspect a changed Claude login, use Inspect (or reopen the
+// session), not a second initialize on a running conversation.
 func (s *Session) ReadAccount(ctx context.Context) (harness.AccountSnapshot, error) {
 	if err := s.lockOp(ctx); err != nil {
 		return s.Telemetry().Account, err
@@ -92,10 +96,14 @@ func (s *Session) ReadAccount(ctx context.Context) (harness.AccountSnapshot, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	raw, err := s.transport.request(ctx, "account/read", map[string]any{"refreshToken": false})
+	method, params, parse := "account/read", map[string]any{"refreshToken": false}, parseCodexAccount
+	if s.options.Provider.Engine == harness.Grok {
+		method, params, parse = grokAccountMethod, map[string]any{}, parseGrokAccount
+	}
+	raw, err := s.transport.request(ctx, method, params)
 	var a harness.AccountSnapshot
 	if err == nil {
-		a, err = parseCodexAccount(raw)
+		a, err = parse(raw)
 	}
 	s.mu.Lock()
 	if err == nil {
@@ -123,6 +131,12 @@ func (s *Session) ReadQuota(ctx context.Context) (harness.QuotaSnapshot, error) 
 	defer s.unlockOp()
 	if err := s.telemetryOpen(); err != nil {
 		return s.Telemetry().Quota, err
+	}
+	if s.options.Provider.Engine == harness.Grok {
+		s.mu.Lock()
+		c := s.caps.Quota
+		s.mu.Unlock()
+		return s.Telemetry().Quota, &UnsupportedError{Engine: harness.Grok, Operation: "quota", Code: RefusedNotOffered, Capability: c}
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
@@ -166,8 +180,9 @@ func (s *Session) ReadQuota(ctx context.Context) (harness.QuotaSnapshot, error) 
 	return q, creditErr
 }
 
-// ReadContext returns Codex's latest streamed context observation; its timestamp
-// is not refreshed by this read. Claude is queried with detail=summary, avoiding
+// ReadContext returns Codex's or Grok's latest streamed context observation;
+// its timestamp is not refreshed by this read. Grok's is an estimate from the
+// latest response's input against its model state's stated window. Claude is queried with detail=summary, avoiding
 // per-category token-count API calls. That summary includes local estimates and
 // is labelled Estimated. A newly opened Codex session is unknown until it emits
 // a tokenUsage notification. No compaction or model request is performed.
@@ -179,7 +194,7 @@ func (s *Session) ReadContext(ctx context.Context) (ContextSnapshot, error) {
 	if err := s.telemetryOpen(); err != nil {
 		return s.Telemetry().Context, err
 	}
-	if s.options.Provider.Engine == harness.Codex {
+	if s.options.Provider.Engine != harness.Claude {
 		return s.Telemetry().Context, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)

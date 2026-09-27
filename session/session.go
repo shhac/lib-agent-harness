@@ -41,6 +41,10 @@ type Session struct {
 	// actually carried and never one a compaction set while it was starting.
 	contextPending    ContextReason
 	contextGeneration uint64
+	// grokModel and grokCapacity are the model a Grok session reported opening
+	// with and the context window its model state states for it, 0 if none.
+	grokModel    string
+	grokCapacity int64
 }
 
 func (s *Session) lockOp(ctx context.Context) error {
@@ -345,6 +349,10 @@ func (s *Session) initialize(ctx context.Context, resume bool) error {
 		s.mu.Lock()
 		s.ref.ID = response.Thread.ID
 		s.mu.Unlock()
+	} else if s.options.Provider.Engine == harness.Grok {
+		if err := s.initializeGrok(ctx, resume); err != nil {
+			return err
+		}
 	} else {
 		body, err := s.transport.request(ctx, "initialize", map[string]any{})
 		if err != nil {

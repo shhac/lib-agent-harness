@@ -67,7 +67,13 @@ func TestOptionRefusalsCarryFacts(t *testing.T) {
 		code   string
 		family harness.Family
 	}{
-		{"grok", base(harness.Grok), RefusedEngine, harness.FailureCapability},
+		{"restricted grok", with(base(harness.Grok), func(o *Options) { o.Restriction = &Restriction{} }), RefusedNotOffered, harness.FailureCapability},
+		{"sandboxed grok", with(base(harness.Grok), func(o *Options) { o.Sandbox = &Sandbox{} }), RefusedNotOffered, harness.FailureCapability},
+		{"claude permission on grok", with(base(harness.Grok), func(o *Options) { o.Policy.ClaudePermission = "dontAsk" }), RefusedOtherEnginePolicy, harness.FailureCapability},
+		{"grok permission on codex", with(base(harness.Codex), func(o *Options) { o.Policy.GrokPermission = GrokAllowWhenAsked }), RefusedOtherEnginePolicy, harness.FailureCapability},
+		{"grok telemetry on claude", with(base(harness.Claude), func(o *Options) { o.Policy.GrokTelemetry = GrokTelemetryReduced }), RefusedOtherEnginePolicy, harness.FailureCapability},
+		{"grok permission value", with(base(harness.Grok), func(o *Options) { o.Policy.GrokPermission = "always" }), RefusedPolicy, harness.FailurePreflight},
+		{"grok managed env", with(base(harness.Grok), func(o *Options) { o.Env = []string{"GROK_MEMORY=1"} }), RefusedEnvManaged, harness.FailureCapability},
 		{"api engine", base(harness.OpenAICompatible), RefusedEngine, harness.FailureCapability},
 		{"unknown engine", base("other"), RefusedEngine, harness.FailureCapability},
 		{"api half on a cli engine", with(base(harness.Codex), func(o *Options) { o.Provider.API.BaseURL = "https://example.test" }), "api_config_for_cli_engine", harness.FailurePreflight},
