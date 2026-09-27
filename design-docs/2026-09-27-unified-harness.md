@@ -307,7 +307,25 @@ releasable.
      channel.
 
    `Support` reports `Skills` as `native` where the harness loads skills itself
-   and `composed` where the library does.
+   and `composed` where the library does. `Skills.Delivery` defaults to
+   automatic (native where verified, composed otherwise), and
+   `SkillDeliveryComposed` forces the library's tools, for skills that should
+   behave the same on every engine.
+
+   **Scripts.** A skill may run its scripts only if `Skill.Scripts` is set.
+   - **Native delivery:** the agent runs them with its own execution tools, and
+     inside the proven sandbox when the session is sandboxed.
+   - **Composed delivery:** a second reserved tool, `run_skill_script`, names a
+     script inside the skill directory and an argument array. Nothing runs
+     until the caller passes the call to the answering helper, which is the
+     caller's authorization, as for every proposal. The helper runs the script
+     with no shell, under process-tree containment, with a timeout, bounded
+     output and a minimal environment, in a working directory the caller
+     names.
+   - **Caller-controlled execution:** an `Exec` hook lets an application run
+     skill scripts in its own container or sandbox instead. Restricted
+     sessions get the same behaviour through a ready-made handler for their
+     tool host.
 
 A portable permission vocabulary for native runs is deliberately left out. It
 would need a mapping for each engine, with a proof that no mapping widens
