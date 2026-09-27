@@ -153,6 +153,7 @@ var supportTable = map[supportKey]Capability{
 	{OpenAICompatible, Complete, Tools}:      native,
 	{OpenAICompatible, Complete, CacheSplit}: cacheVaries,
 
+	{OpenAICompatible, Session, MaxOutputTokens}:  {Native, "Loop.MaxOutputTokens, sent as max_completion_tokens"},
 	{Claude, Complete, MaxOutputTokens}:           {Native, "CLAUDE_CODE_MAX_OUTPUT_TOKENS, proven by the capability probe"},
 	{OpenAICompatible, Complete, MaxOutputTokens}: {Native, "sent as max_completion_tokens"},
 	{Codex, Complete, MaxOutputTokens}:            {Unsupported, "codex exec sends no output limit"},

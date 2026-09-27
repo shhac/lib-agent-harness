@@ -51,6 +51,10 @@ type Loop struct {
 	MaxRequestBytes int
 	// RequestTimeout bounds one model request. Zero means five minutes.
 	RequestTimeout time.Duration
+	// MaxOutputTokens caps the tokens each model response may produce, sent as
+	// max_completion_tokens. Zero means no cap. A response the cap cuts short
+	// fails its turn with cause output_truncated rather than passing as done.
+	MaxOutputTokens int
 }
 
 const (
@@ -271,7 +275,7 @@ func normalizeLoop(o Options) (Options, error) {
 	if l.RequestTimeout == 0 {
 		l.RequestTimeout = 5 * time.Minute
 	}
-	if l.MaxSteps < 1 || l.MaxSteps > maxLoopSteps || l.MaxRequestBytes < 1024 || l.MaxRequestBytes > maxLoopRequestBytes || l.RequestTimeout < 0 {
+	if l.MaxSteps < 1 || l.MaxSteps > maxLoopSteps || l.MaxRequestBytes < 1024 || l.MaxRequestBytes > maxLoopRequestBytes || l.RequestTimeout < 0 || l.MaxOutputTokens < 0 {
 		return o, refuse(o, "loop", RefusedLimit, "a loop bound is out of range")
 	}
 	return o, nil
@@ -468,7 +472,7 @@ func apiTools(o Options) []completion.Tool {
 // apiConfig is one request's completion configuration.
 func (s *Session) apiConfig() completion.Config {
 	o := s.options
-	return completion.Config{Provider: o.Provider, Model: o.Model, Effort: o.Effort, MaxContextBytes: o.Loop.MaxRequestBytes, Timeout: o.Loop.RequestTimeout, Skills: o.Skills}
+	return completion.Config{Provider: o.Provider, Model: o.Model, Effort: o.Effort, MaxContextBytes: o.Loop.MaxRequestBytes, Timeout: o.Loop.RequestTimeout, MaxOutputTokens: o.Loop.MaxOutputTokens, Skills: o.Skills}
 }
 
 // append makes a record durable, then adds it to the history. A record that

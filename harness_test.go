@@ -152,7 +152,10 @@ func TestOpenAICompatibleSessionClaims(t *testing.T) {
 			t.Errorf("API session %s: %+v", f, c)
 		}
 	}
-	for _, f := range []Feature{Sandbox, Compact, IncludeGlobalSkills, CostReport, MaxOutputTokens} {
+	if c := Support(OpenAICompatible, Session, MaxOutputTokens); c.Availability != Native {
+		t.Errorf("API session reply cap: %+v", c)
+	}
+	for _, f := range []Feature{Sandbox, Compact, IncludeGlobalSkills, CostReport} {
 		if c := Support(OpenAICompatible, Session, f); c.Usable() || c.Reason == "" {
 			t.Errorf("API session %s: %+v", f, c)
 		}

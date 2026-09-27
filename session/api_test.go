@@ -35,8 +35,9 @@ type seenRequest struct {
 			Name string `json:"name"`
 		} `json:"function"`
 	} `json:"tools"`
-	ReasoningEffort string `json:"reasoning_effort"`
-	auth            string
+	ReasoningEffort     string `json:"reasoning_effort"`
+	MaxCompletionTokens int    `json:"max_completion_tokens"`
+	auth                string
 }
 
 func (r seenRequest) content(i int) string {
@@ -1027,5 +1028,28 @@ func TestAPISessionTelemetryAndControlsItDoesNotOffer(t *testing.T) {
 	caps := s.Capabilities()
 	if caps.Start.Availability != harness.Composed || caps.Resume.Availability != harness.Composed || caps.RestrictTools.Availability != harness.Composed || caps.Compact.Usable() || caps.Quota.Usable() || caps.Account.Usable() || caps.Context.Availability != harness.Unknown {
 		t.Fatalf("capabilities %+v", caps)
+	}
+}
+
+// A reply cap reaches every model request of the turn, and a negative one is
+// refused before anything starts.
+func TestAPISessionCapsEveryResponse(t *testing.T) {
+	e := newEndpoint(t, answer("", scriptedCall{"call_1", "read_file", `{"path":"a"}`}), answer("Done."))
+	var mu sync.Mutex
+	var calls []ToolCall
+	o := apiOptions(t, e.url, echo(&calls, &mu))
+	o.Loop.MaxOutputTokens = 256
+	s := startAPI(t, o)
+	if done := runAPITurnToEnd(t, s, "Read it."); done.err != nil {
+		t.Fatal(done.err)
+	}
+	seen := e.seen()
+	if len(seen) != 2 || seen[0].MaxCompletionTokens != 256 || seen[1].MaxCompletionTokens != 256 {
+		t.Fatalf("requests %+v", seen)
+	}
+	bad := apiOptions(t, e.url, echo(&calls, &mu))
+	bad.Loop.MaxOutputTokens = -1
+	if _, err := Start(context.Background(), bad); err == nil {
+		t.Fatal("a negative reply cap was accepted")
 	}
 }
