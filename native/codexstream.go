@@ -23,6 +23,8 @@ import (
 	"io"
 	"strings"
 	"time"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 // codexEvent is the subset of codex's --json protocol this driver reads.
@@ -64,28 +66,29 @@ func (i codexItem) kind() string {
 //
 // InputTokens INCLUDES CachedInputTokens (measured: a run reporting
 // input 18,389 / cached 10,496 printed a prose trailer of 7,928, which is
-// input - cached + output, not input + output). So the fresh input is the
-// difference, and treating input_tokens as fresh would double-count every
-// cached read.
+// input - cached + output, not input + output). That is already the shared
+// Usage.Input, so it is taken as it is; treating it as fresh input would
+// double-count every cached read.
 //
 // ReasoningOutputTokens is a SUBSET of OutputTokens, recorded for analysis
 // and never added into a total.
 type codexUsage struct {
-	InputTokens           int `json:"input_tokens"`
-	CachedInputTokens     int `json:"cached_input_tokens"`
-	OutputTokens          int `json:"output_tokens"`
-	ReasoningOutputTokens int `json:"reasoning_output_tokens"`
+	InputTokens           int64  `json:"input_tokens"`
+	CachedInputTokens     *int64 `json:"cached_input_tokens"`
+	OutputTokens          int64  `json:"output_tokens"`
+	ReasoningOutputTokens int64  `json:"reasoning_output_tokens"`
 }
 
-// tokenUsage maps codex's report onto the engine-agnostic split. codex has no
-// explicit cache write (its caching is implicit), so CacheWrite stays 0.
-func (u codexUsage) tokenUsage() TokenUsage {
-	return TokenUsage{
-		Input:     u.InputTokens - u.CachedInputTokens,
-		Output:    u.OutputTokens,
-		CacheRead: u.CachedInputTokens,
-		Reasoning: u.ReasoningOutputTokens,
+// usage maps codex's report onto the shared shape. codex has no explicit cache
+// write (its caching is implicit), so CacheWrite stays 0; a report without a
+// cached figure leaves the split unknown rather than claiming nothing was cached.
+func (u codexUsage) usage() harness.Usage {
+	out := harness.Usage{Input: u.InputTokens, Output: u.OutputTokens, Reasoning: u.ReasoningOutputTokens}
+	if u.CachedInputTokens != nil {
+		out.CacheRead = *u.CachedInputTokens
+		out.CacheKnown = true
 	}
+	return out
 }
 
 // codexTranscoder consumes `codex exec --json` stdout and writes the marker
@@ -100,7 +103,7 @@ type codexTranscoder struct {
 	completed  bool
 	structured bool
 	threadID   string
-	usage      TokenUsage
+	usage      harness.Usage
 	rawUsage   []json.RawMessage // every turn.completed usage, verbatim
 	running    map[string]time.Time
 	sawUsage   bool
@@ -130,9 +133,11 @@ func (t *codexTranscoder) reachedTerminal() bool { return t.completed }
 
 // snapshot assembles codex's Result. Usage is known as soon as any
 // turn.completed carried it, because that figure is already the session total;
-// codex reports no cost, so CostKnown stays false.
+// codex reports no cost, so Cost stays unknown.
 func (t *codexTranscoder) snapshot() Result {
-	return Result{SessionID: t.threadID, Report: append(json.RawMessage(nil), t.report...), Usage: t.usage, RawUsage: joinRawUsage(t.rawUsage), UsageKnown: t.sawUsage, Failure: t.failure}
+	usage := t.usage
+	usage.Known = t.sawUsage
+	return Result{SessionID: t.threadID, Report: append(json.RawMessage(nil), t.report...), Usage: usage, RawUsage: joinRawUsage(t.rawUsage), Failure: t.failure}
 }
 
 // Close renders any trailing line the stream ended without a newline on, plus
@@ -141,7 +146,7 @@ func (t *codexTranscoder) snapshot() Result {
 func (t *codexTranscoder) Close() {
 	t.flushPartial(t.consume)
 	if t.sawUsage {
-		_, _ = fmt.Fprintf(t.out, "tokens used\n%s\n", withThousands(t.usage.Fresh()))
+		_, _ = fmt.Fprintf(t.out, "tokens used\n%s\n", withThousands(codexTrailerTokens(t.usage)))
 	}
 }
 
@@ -201,13 +206,19 @@ func (t *codexTranscoder) recordUsage(ev codexEvent, line []byte) {
 	if ev.Usage == nil {
 		return
 	}
-	t.usage = ev.Usage.tokenUsage()
+	t.usage = ev.Usage.usage()
 	t.sawUsage = true
-	t.event(Event{Kind: "usage", Usage: t.usage, UsageKnown: true})
+	usage := t.usage
+	usage.Known = true
+	t.event(Event{Kind: "usage", Usage: usage})
 	if raw := extractUsage(line); raw != nil {
 		t.rawUsage = append(t.rawUsage, raw)
 	}
 }
+
+// codexTrailerTokens is the figure codex's own prose trailer printed, which
+// excludes cached reads, so the transcript reads as it always has.
+func codexTrailerTokens(u harness.Usage) int64 { return u.Input - u.CacheRead + u.Output }
 
 func (t *codexTranscoder) renderItem(eventType string, item codexItem) {
 	switch item.kind() {

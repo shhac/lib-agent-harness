@@ -14,6 +14,8 @@ import (
 	"io"
 	"strings"
 	"time"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 // streamEvent is the subset of claude's stream-json protocol this driver
@@ -42,11 +44,24 @@ type streamEvent struct {
 // calls, per-message iterations); that detail is preserved verbatim in
 // rawUsage rather than modelled here, so a pricing question about a tier we
 // never mapped stays a query instead of a migration.
+//
+// Its input_tokens excludes both cache figures, so the shared Input, which
+// counts every prompt token, is the sum of all three.
 type streamUsage struct {
-	InputTokens              int `json:"input_tokens"`
-	OutputTokens             int `json:"output_tokens"`
-	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
-	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	InputTokens              int64 `json:"input_tokens"`
+	OutputTokens             int64 `json:"output_tokens"`
+	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+}
+
+func (u streamUsage) usage() harness.Usage {
+	return harness.Usage{
+		Input:      u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens,
+		Output:     u.OutputTokens,
+		CacheRead:  u.CacheReadInputTokens,
+		CacheWrite: u.CacheCreationInputTokens,
+		CacheKnown: true,
+	}
 }
 
 // addUsage folds one invocation's usage into the run's running total.
@@ -59,11 +74,13 @@ type streamUsage struct {
 // Summing is correct for claude specifically and wrong for codex, whose
 // turn.completed reports the session total every time; see
 // codexTranscoder.recordUsage.
-func addUsage(acc TokenUsage, u streamUsage) TokenUsage {
-	acc.Input += u.InputTokens
-	acc.Output += u.OutputTokens
-	acc.CacheWrite += u.CacheCreationInputTokens
-	acc.CacheRead += u.CacheReadInputTokens
+func addUsage(acc, u harness.Usage) harness.Usage {
+	acc.Input += u.Input
+	acc.Output += u.Output
+	acc.CacheRead += u.CacheRead
+	acc.CacheWrite += u.CacheWrite
+	acc.Reasoning += u.Reasoning
+	acc.CacheKnown = u.CacheKnown
 	return acc
 }
 
@@ -100,7 +117,7 @@ type streamTranscoder struct {
 	usageIncomplete bool
 	costIncomplete  bool
 	sessionID       string
-	usage           TokenUsage        // summed across every invocation
+	usage           harness.Usage     // summed across every invocation
 	rawUsage        []json.RawMessage // every result event's usage, verbatim
 	costUSD         float64           // ditto; see renderResult for what this figure means
 	report          json.RawMessage   // structured_output of the most recent result message
@@ -144,7 +161,10 @@ func (t *streamTranscoder) reachedTerminal() bool { return t.completed }
 // turn that reached its result event and recorded a figure no interruption
 // left partial; the numbers survive either way, as recorded partial totals.
 func (t *streamTranscoder) snapshot() Result {
-	return Result{SessionID: t.sessionID, Report: append(json.RawMessage(nil), t.report...), Usage: t.usage, RawUsage: joinRawUsage(t.rawUsage), CostUSD: t.costUSD, Failure: t.failure, UsageKnown: t.completed && t.sawUsage && !t.usageIncomplete, CostKnown: t.completed && t.sawCost && !t.costIncomplete}
+	usage := t.usage
+	usage.Known = t.completed && t.sawUsage && !t.usageIncomplete
+	cost := harness.Cost{USD: t.costUSD, Known: t.completed && t.sawCost && !t.costIncomplete}
+	return Result{SessionID: t.sessionID, Report: append(json.RawMessage(nil), t.report...), Usage: usage, Cost: cost, RawUsage: joinRawUsage(t.rawUsage), Failure: t.failure}
 }
 
 // Close renders any trailing line the stream ended without a newline on, plus
@@ -269,7 +289,7 @@ func (t *streamTranscoder) recordResult(ev streamEvent, rawLine []byte) (bool, s
 	// Claude can emit a terminal error with all-zero counters despite having
 	// streamed output. Such placeholders are not evidence of a free invocation.
 	failed := ev.IsError || strings.HasPrefix(ev.Subtype, "error")
-	usageUsable := ev.Usage != nil && (!failed || addUsage(TokenUsage{}, *ev.Usage).Total() > 0)
+	usageUsable := ev.Usage != nil && (!failed || ev.Usage.usage().Total() > 0)
 	if ev.Usage != nil {
 		if raw := extractUsage(rawLine); raw != nil {
 			t.rawUsage = append(t.rawUsage, raw)
@@ -277,7 +297,7 @@ func (t *streamTranscoder) recordResult(ev streamEvent, rawLine []byte) (bool, s
 	}
 	if usageUsable {
 		t.sawUsage = true
-		t.usage = addUsage(t.usage, *ev.Usage)
+		t.usage = addUsage(t.usage, ev.Usage.usage())
 	} else {
 		t.usageIncomplete = true
 	}
@@ -325,10 +345,11 @@ func (t *streamTranscoder) writeResultTrailer(structured bool, failure string) {
 		t.event(Event{Kind: "error", Text: failure})
 		t.emit("error", failure)
 	}
-	usageKnown := t.sawUsage && !t.usageIncomplete
-	costKnown := t.sawCost && !t.costIncomplete
-	t.event(Event{Kind: "usage", Usage: t.usage, CostUSD: t.costUSD, UsageKnown: usageKnown, CostKnown: costKnown})
-	t.spendTrailer(t.usage, t.sawUsage, usageKnown, t.costUSD, costKnown)
+	usage := t.usage
+	usage.Known = t.sawUsage && !t.usageIncomplete
+	cost := harness.Cost{USD: t.costUSD, Known: t.sawCost && !t.costIncomplete}
+	t.event(Event{Kind: "usage", Usage: usage, Cost: cost})
+	t.spendTrailer(usage, t.sawUsage, cost)
 }
 
 // resultFailure describes a result event that carries no usable report: the

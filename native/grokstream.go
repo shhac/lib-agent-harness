@@ -14,6 +14,8 @@ import (
 	"math"
 	"strings"
 	"time"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 type grokWireEvent struct {
@@ -45,26 +47,26 @@ type grokWireEvent struct {
 }
 
 // grokUsage is the headless spend projection. Its input_tokens is uncached
-// input only, as TokenUsage.Input requires; ACP's camel-case inputTokens is the
-// full prompt and is deliberately not read.
+// input only, so the shared Input, which counts every prompt token, adds both
+// cache figures back. ACP's camel-case inputTokens is not read: the headless
+// fields are the ones that split the cache out.
 type grokUsage struct {
-	Input      int `json:"input_tokens"`
-	Output     int `json:"output_tokens"`
-	CacheRead  int `json:"cache_read_input_tokens"`
-	CacheWrite int `json:"cache_creation_input_tokens"`
-	Reasoning  int `json:"reasoning_tokens"`
+	Input      int64 `json:"input_tokens"`
+	Output     int64 `json:"output_tokens"`
+	CacheRead  int64 `json:"cache_read_input_tokens"`
+	CacheWrite int64 `json:"cache_creation_input_tokens"`
+	Reasoning  int64 `json:"reasoning_tokens"`
 }
 
-// addGrokUsage folds one invocation into the session total. Grok's headless
-// usage covers the prompt just run, not the session, so a resumed run adds to
-// it exactly as Claude's does.
-func addGrokUsage(acc TokenUsage, u grokUsage) TokenUsage {
-	acc.Input += u.Input
-	acc.Output += u.Output
-	acc.CacheRead += u.CacheRead
-	acc.CacheWrite += u.CacheWrite
-	acc.Reasoning += u.Reasoning
-	return acc
+func (u grokUsage) usage() harness.Usage {
+	return harness.Usage{
+		Input:      u.Input + u.CacheRead + u.CacheWrite,
+		Output:     u.Output,
+		CacheRead:  u.CacheRead,
+		CacheWrite: u.CacheWrite,
+		Reasoning:  u.Reasoning,
+		CacheKnown: true,
+	}
 }
 
 type grokTranscoder struct {
@@ -77,8 +79,8 @@ type grokTranscoder struct {
 	usageIncomplete bool
 	costIncomplete  bool
 	sessionID       string
-	usage           TokenUsage // summed across every invocation
-	costTicks       int64      // exact integer cost, 1 USD = 10^10 ticks
+	usage           harness.Usage // summed across every invocation
+	costTicks       int64         // exact integer cost, 1 USD = 10^10 ticks
 	rawUsage        []json.RawMessage
 	report          json.RawMessage
 	failure         string
@@ -122,15 +124,15 @@ func (t *grokTranscoder) beginTurn(prompt string) {
 func (t *grokTranscoder) reachedTerminal() bool { return t.completed }
 
 func (t *grokTranscoder) snapshot() Result {
+	usage := t.usage
+	usage.Known = t.completed && t.sawUsage && !t.usageIncomplete
 	return Result{
-		SessionID:  t.sessionID,
-		Report:     append(json.RawMessage(nil), t.report...),
-		Usage:      t.usage,
-		CostUSD:    float64(t.costTicks) / grokCostTicksPerUSD,
-		RawUsage:   joinRawUsage(t.rawUsage),
-		UsageKnown: t.completed && t.sawUsage && !t.usageIncomplete,
-		CostKnown:  t.completed && t.sawCost && !t.costIncomplete,
-		Failure:    t.failure,
+		SessionID: t.sessionID,
+		Report:    append(json.RawMessage(nil), t.report...),
+		Usage:     usage,
+		Cost:      harness.Cost{USD: float64(t.costTicks) / grokCostTicksPerUSD, Known: t.completed && t.sawCost && !t.costIncomplete},
+		RawUsage:  joinRawUsage(t.rawUsage),
+		Failure:   t.failure,
 	}
 }
 
@@ -363,7 +365,7 @@ func (t *grokTranscoder) recordSpend(spend grokSpend) {
 			raw, _ = json.Marshal(ev.Usage)
 		}
 		t.rawUsage = append(t.rawUsage, raw)
-		t.usage = addGrokUsage(t.usage, *ev.Usage)
+		t.usage = addUsage(t.usage, ev.Usage.usage())
 		t.sawUsage = true
 	}
 	if ev.Usage == nil || ev.UsageIncomplete {
@@ -387,11 +389,11 @@ func (ev grokWireEvent) hasSpend() bool {
 }
 
 func (t *grokTranscoder) writeSpendTrailer() {
-	usageKnown := t.sawUsage && !t.usageIncomplete
-	costKnown := t.sawCost && !t.costIncomplete
-	costUSD := float64(t.costTicks) / grokCostTicksPerUSD
-	t.event(Event{Kind: "usage", Usage: t.usage, CostUSD: costUSD, UsageKnown: usageKnown, CostKnown: costKnown})
-	t.spendTrailer(t.usage, t.sawUsage, usageKnown, costUSD, costKnown)
+	usage := t.usage
+	usage.Known = t.sawUsage && !t.usageIncomplete
+	cost := harness.Cost{USD: float64(t.costTicks) / grokCostTicksPerUSD, Known: t.sawCost && !t.costIncomplete}
+	t.event(Event{Kind: "usage", Usage: usage, Cost: cost})
+	t.spendTrailer(usage, t.sawUsage, cost)
 }
 
 // grokEndFailure reads the turn's stop reason. Only end_turn is a finished

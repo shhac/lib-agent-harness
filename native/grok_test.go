@@ -9,23 +9,23 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 func TestGrokArgsBindEveryValue(t *testing.T) {
 	c := Config{
-		Engine:         "grok",
-		Model:          "grok-build",
-		Effort:         "high",
-		Sandbox:        "strict",
-		PermissionMode: "dontAsk",
-		AllowedTools:   []string{"read", "grep"},
-		Args:           []string{"--no-subagents"},
+		Provider: harness.Provider{Engine: harness.Grok},
+		Model:    "grok-build",
+		Effort:   "high",
+		Grok:     GrokOptions{Sandbox: "strict", PermissionMode: "dontAsk", Tools: []string{"read", "grep"}},
+		Args:     []string{"--no-subagents"},
 	}
 	r := Request{Prompt: "-review this", ResumeSession: "session", WorkDir: "/work", AppendInstructions: "-be brief", Schema: "{ \"type\": \"object\" }"}
-	got, err := Args(c, r)
-	if err != nil {
+	if err := validate(c, r); err != nil {
 		t.Fatal(err)
 	}
+	got := buildArgs(c, r, nil)
 	// grok 1.0.41 refuses `-p -review` ("a value is required for --single")
 	// and accepts `--single=-review`.
 	want := []string{
@@ -35,18 +35,6 @@ func TestGrokArgsBindEveryValue(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("args=%q want %q", got, want)
-	}
-	for _, refused := range []struct {
-		c Config
-		r Request
-	}{
-		{c, Request{SchemaPath: "schema.json"}},
-		{c, Request{OutputPath: "report.json"}},
-		{Config{Engine: "grok", MaxBudgetUSD: 1}, Request{Prompt: "x"}},
-	} {
-		if _, err := Args(refused.c, refused.r); err == nil {
-			t.Fatalf("accepted an option Grok cannot honour: %+v %+v", refused.c, refused.r)
-		}
 	}
 }
 
@@ -58,10 +46,12 @@ func TestGrokReducedTelemetryEnvironmentIsOptIn(t *testing.T) {
 		"GROK_CURSOR_MCPS_ENABLED=1",
 		"UNRELATED=kept",
 	}
-	if got := nativeEnvironment(Config{Engine: "grok", Env: base}); !reflect.DeepEqual(got, base) {
+	grok := harness.Provider{Engine: harness.Grok}
+	if got := nativeEnvironment(Config{Provider: grok, Env: base}); !reflect.DeepEqual(got, base) {
 		t.Fatalf("default Grok environment changed: %q", got)
 	}
-	reduced := nativeEnvironment(Config{Engine: "grok", Env: base, Home: "/runtime/grok", GrokTelemetry: GrokTelemetryReduced})
+	grok.CLI.Home = "/runtime/grok"
+	reduced := nativeEnvironment(Config{Provider: grok, Env: base, Grok: GrokOptions{Telemetry: GrokTelemetryReduced}})
 	for _, want := range append([]string{"GROK_HOME=/runtime/grok", "UNRELATED=kept"}, grokReducedTelemetryEnvironment...) {
 		key, _, _ := strings.Cut(want, "=")
 		found := 0
@@ -77,7 +67,7 @@ func TestGrokReducedTelemetryEnvironmentIsOptIn(t *testing.T) {
 			t.Fatalf("%s appears %d times in %q", want, found, reduced)
 		}
 	}
-	if got := nativeEnvironment(Config{Engine: "claude", Env: base, GrokTelemetry: GrokTelemetryReduced}); !reflect.DeepEqual(got, base) {
+	if got := nativeEnvironment(Config{Provider: harness.Provider{Engine: harness.Claude}, Env: base, Grok: GrokOptions{Telemetry: GrokTelemetryReduced}}); !reflect.DeepEqual(got, base) {
 		t.Fatalf("Grok policy changed Claude environment: %q", got)
 	}
 }
@@ -97,7 +87,7 @@ func runGrokLines(t *testing.T, s *Stream, prompt string, lines ...string) {
 func TestGrokStreamReadsTheLiveWireFormat(t *testing.T) {
 	var transcript bytes.Buffer
 	var events []Event
-	s, err := NewStream("grok", &transcript, StreamOptions{Clock: fixedClock(500 * time.Millisecond), OnEvent: func(e Event) { events = append(events, e) }})
+	s, err := NewStream(harness.Grok, &transcript, StreamOptions{Clock: fixedClock(500 * time.Millisecond), OnEvent: func(e Event) { events = append(events, e) }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,10 +107,14 @@ func TestGrokStreamReadsTheLiveWireFormat(t *testing.T) {
 	if r.SessionID != "grok-session" || string(r.Report) != `"I found one issue."` {
 		t.Fatalf("report must be the final response only: %+v", r)
 	}
-	if r.Usage != (TokenUsage{Input: 12, Output: 3, CacheRead: 2, Reasoning: 1}) || !r.UsageKnown {
+	// Grok's input_tokens is uncached; the shared Input adds the cache back.
+	if r.Usage != (harness.Usage{Known: true, Input: 14, Output: 3, CacheRead: 2, Reasoning: 1, CacheKnown: true}) {
 		t.Fatalf("per-response usage lines must not be summed with end: %+v", r)
 	}
-	if r.CostUSD != 0.027894 || !r.CostKnown {
+	if fresh, ok := r.Usage.Fresh(); !ok || fresh != 12 {
+		t.Fatalf("fresh input %d %v", fresh, ok)
+	}
+	if r.Cost != (harness.Cost{USD: 0.027894, Known: true}) {
 		t.Fatalf("cost is taken from exact ticks: %+v", r)
 	}
 	var kinds []string
@@ -139,7 +133,7 @@ func TestGrokStreamReadsTheLiveWireFormat(t *testing.T) {
 }
 
 func TestGrokStreamUnwrapsACPSessionUpdates(t *testing.T) {
-	s, _ := NewStream("grok", nil, StreamOptions{})
+	s, _ := NewStream(harness.Grok, nil, StreamOptions{})
 	runGrokLines(t, s, "hi",
 		`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"acp-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hello"}}}}`,
 		`{"type":"end","stopReason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`,
@@ -150,7 +144,7 @@ func TestGrokStreamUnwrapsACPSessionUpdates(t *testing.T) {
 }
 
 func TestGrokStructuredReportComesFromEnd(t *testing.T) {
-	s, _ := NewStream("grok", nil, StreamOptions{Structured: true})
+	s, _ := NewStream(harness.Grok, nil, StreamOptions{Structured: true})
 	runGrokLines(t, s, "greet",
 		`{"type":"text","data":"{\"greeting\":\"Hi\"}"}`,
 		`{"type":"end","stopReason":"end_turn","sessionId":"s","usage":{"input_tokens":1,"output_tokens":1},"structuredOutput":{"greeting":"Hi"}}`,
@@ -159,7 +153,7 @@ func TestGrokStructuredReportComesFromEnd(t *testing.T) {
 		t.Fatalf("result: %+v", r)
 	}
 
-	s, _ = NewStream("grok", nil, StreamOptions{Structured: true})
+	s, _ = NewStream(harness.Grok, nil, StreamOptions{Structured: true})
 	runGrokLines(t, s, "greet",
 		`{"type":"text","data":"{\"greeting\":\"Hi\"}"}`,
 		`{"type":"end","stopReason":"end_turn","sessionId":"s","usage":{"input_tokens":1,"output_tokens":1}}`,
@@ -171,7 +165,7 @@ func TestGrokStructuredReportComesFromEnd(t *testing.T) {
 
 func TestGrokUnfinishedStopReasonsFail(t *testing.T) {
 	for _, reason := range []string{"max_tokens", "max_turn_requests", "refusal", "cancelled", "something_new"} {
-		s, _ := NewStream("grok", nil, StreamOptions{})
+		s, _ := NewStream(harness.Grok, nil, StreamOptions{})
 		runGrokLines(t, s, "hi",
 			`{"type":"text","data":"partial"}`,
 			`{"type":"end","stopReason":"`+reason+`","sessionId":"s","usage":{"input_tokens":1,"output_tokens":1}}`,
@@ -186,37 +180,37 @@ func TestGrokResumedUsageIsSummedAndGapsStayUnknown(t *testing.T) {
 	end := func(input, output int, extra string) string {
 		return `{"type":"end","stopReason":"end_turn","sessionId":"s","usage":{"input_tokens":` + strconv.Itoa(input) + `,"output_tokens":` + strconv.Itoa(output) + `}` + extra + `}`
 	}
-	s, _ := NewStream("grok", nil, StreamOptions{})
+	s, _ := NewStream(harness.Grok, nil, StreamOptions{})
 	runGrokLines(t, s, "first", `{"type":"text","data":"a"}`, end(10, 2, `,"total_cost_usd_ticks":100`))
 	runGrokLines(t, s, "second", `{"type":"text","data":"b"}`, end(5, 1, `,"total_cost_usd_ticks":50`))
 	r := s.Snapshot()
-	if r.Usage != (TokenUsage{Input: 15, Output: 3}) || !r.UsageKnown || !r.CostKnown || r.CostUSD != 150/grokCostTicksPerUSD {
+	if r.Usage != (harness.Usage{Known: true, Input: 15, Output: 3, CacheKnown: true}) || r.Cost != (harness.Cost{USD: 150 / grokCostTicksPerUSD, Known: true}) {
 		t.Fatalf("resumed invocations must sum: %+v", r)
 	}
 
 	// Cost Grok could not fully account is omitted; absence is not free.
 	runGrokLines(t, s, "third", `{"type":"text","data":"c"}`, end(1, 1, `,"cost_is_partial":true`))
-	if r := s.Snapshot(); !r.UsageKnown || r.CostKnown {
+	if r := s.Snapshot(); !r.Usage.Known || r.Cost.Known {
 		t.Fatalf("partial cost must leave cost unknown: %+v", r)
 	}
 
 	// An invocation that dies before `end` keeps the session total partial.
 	runGrokLines(t, s, "fourth", `{"type":"text","data":"d"}`)
 	runGrokLines(t, s, "fifth", `{"type":"text","data":"e"}`, end(1, 1, ""))
-	if r := s.Snapshot(); r.UsageKnown || r.Usage.Input != 17 {
+	if r := s.Snapshot(); r.Usage.Known || r.Usage.Input != 17 {
 		t.Fatalf("an unaccounted invocation must stay visible: %+v", r)
 	}
 }
 
 func TestGrokErrorSpendCountsOnceAndOnlyAsPartial(t *testing.T) {
-	s, _ := NewStream("grok", nil, StreamOptions{})
+	s, _ := NewStream(harness.Grok, nil, StreamOptions{})
 	runGrokLines(t, s, "hi", `{"type":"error","message":"provider failed","usage":{"input_tokens":7,"output_tokens":1}}`)
 	r := s.Snapshot()
-	if r.Failure != "provider failed" || r.Usage.Input != 7 || r.UsageKnown {
+	if r.Failure != "provider failed" || r.Usage.Input != 7 || r.Usage.Known {
 		t.Fatalf("error spend must be recorded as partial: %+v", r)
 	}
 
-	s, _ = NewStream("grok", nil, StreamOptions{})
+	s, _ = NewStream(harness.Grok, nil, StreamOptions{})
 	runGrokLines(t, s, "hi",
 		`{"type":"error","message":"tool failed","usage":{"input_tokens":7,"output_tokens":1}}`,
 		`{"type":"end","stopReason":"end_turn","sessionId":"s","usage":{"input_tokens":7,"output_tokens":1}}`,
@@ -227,7 +221,7 @@ func TestGrokErrorSpendCountsOnceAndOnlyAsPartial(t *testing.T) {
 }
 
 func TestGrokJSONRPCResponseIsNotATerminal(t *testing.T) {
-	s, _ := NewStream("grok", nil, StreamOptions{})
+	s, _ := NewStream(harness.Grok, nil, StreamOptions{})
 	runGrokLines(t, s, "hi", `{"type":"text","data":"unfinished"}`, `{"jsonrpc":"2.0","id":1,"result":{}}`)
 	if s.t.reachedTerminal() {
 		t.Fatal("a JSON-RPC response was read as the end of the turn")
@@ -236,7 +230,7 @@ func TestGrokJSONRPCResponseIsNotATerminal(t *testing.T) {
 
 func TestGrokRunRequiresEndAndRejectsInvalidPolicyBeforeExecution(t *testing.T) {
 	for _, wire := range []string{"", `{"type":"text","data":"unfinished"}`, `{"type":"error","message":"provider failed"}`} {
-		c := Config{Engine: "grok", RunCommand: func(_ context.Context, _ []string, _ string, out, _ io.Writer) error {
+		c := Config{Provider: harness.Provider{Engine: harness.Grok}, RunCommand: func(_ context.Context, _ []string, _ string, out, _ io.Writer) error {
 			_, _ = io.WriteString(out, wire)
 			return nil
 		}}
@@ -245,18 +239,19 @@ func TestGrokRunRequiresEndAndRejectsInvalidPolicyBeforeExecution(t *testing.T) 
 		}
 	}
 	called := false
-	c := Config{Engine: "grok", GrokTelemetry: 99, RunCommand: func(context.Context, []string, string, io.Writer, io.Writer) error {
+	c := Config{Provider: harness.Provider{Engine: harness.Grok}, Grok: GrokOptions{Telemetry: 99}, RunCommand: func(context.Context, []string, string, io.Writer, io.Writer) error {
 		called = true
 		return nil
 	}}
-	if _, err := Run(context.Background(), c, Request{Prompt: "hello"}, nil); err == nil || called {
+	_, err := Run(context.Background(), c, Request{Prompt: "hello"}, nil)
+	if facts, _ := harness.ErrorFacts(err); facts.Code != CodeUnsupportedOption || called {
 		t.Fatalf("invalid policy reached execution: called=%v err=%v", called, err)
 	}
 }
 
 func TestGrokRunReturnsStructuredReport(t *testing.T) {
 	var args []string
-	c := Config{Engine: "grok", RunCommand: func(_ context.Context, a []string, _ string, out, _ io.Writer) error {
+	c := Config{Provider: harness.Provider{Engine: harness.Grok}, RunCommand: func(_ context.Context, a []string, _ string, out, _ io.Writer) error {
 		args = a
 		_, _ = io.WriteString(out, `{"type":"end","stopReason":"end_turn","sessionId":"s","usage":{"input_tokens":1,"output_tokens":1},"structuredOutput":{"ok":true}}`+"\n")
 		return nil
@@ -271,7 +266,7 @@ func TestGrokRunReturnsStructuredReport(t *testing.T) {
 }
 
 func TestGrokReportIsTheFinalResponseOnly(t *testing.T) {
-	s, _ := NewStream("grok", nil, StreamOptions{})
+	s, _ := NewStream(harness.Grok, nil, StreamOptions{})
 	runGrokLines(t, s, "hi",
 		`{"type":"text","data":"Let me look."}`,
 		`{"type":"tool_call","toolCallId":"c","toolName":"read_file"}`,
@@ -293,7 +288,7 @@ func TestGrokFailedTurnKeepsNoReport(t *testing.T) {
 		"end status":  {`{"type":"text","data":"partial"}`, `{"type":"end","status":"failed","error":{"message":"upstream"},"usage":{"input_tokens":1,"output_tokens":1}}`},
 		"end error":   {`{"type":"text","data":"partial"}`, `{"type":"end","stopReason":"error","usage":{"input_tokens":1,"output_tokens":1}}`},
 	} {
-		s, _ := NewStream("grok", nil, StreamOptions{})
+		s, _ := NewStream(harness.Grok, nil, StreamOptions{})
 		runGrokLines(t, s, "hi", lines...)
 		r := s.Snapshot()
 		if r.Failure == "" || len(r.Report) != 0 {
@@ -318,10 +313,10 @@ func TestGrokSpendFlagsAndCostSources(t *testing.T) {
 		{"error spend with an end that has none", []string{`{"type":"error","message":"x","usage":{"input_tokens":7,"output_tokens":1},"total_cost_usd_ticks":5}`, `{"type":"end","stopReason":"end_turn"}`}, true, true, 5e-10},
 		{"error spend with an incomplete end", []string{`{"type":"error","message":"x","usage":{"input_tokens":7,"output_tokens":1},"total_cost_usd_ticks":5}`, `{"type":"end","stopReason":"end_turn","usage_is_incomplete":true}`}, false, false, 5e-10},
 	} {
-		s, _ := NewStream("grok", nil, StreamOptions{})
+		s, _ := NewStream(harness.Grok, nil, StreamOptions{})
 		runGrokLines(t, s, "hi", append([]string{`{"type":"text","data":"a"}`}, tc.lines...)...)
 		r := s.Snapshot()
-		if r.UsageKnown != tc.usageKnown || r.CostKnown != tc.costKnown || r.CostUSD != tc.costUSD {
+		if r.Usage.Known != tc.usageKnown || r.Cost.Known != tc.costKnown || r.Cost.USD != tc.costUSD {
 			t.Fatalf("%s: %+v", tc.name, r)
 		}
 	}
@@ -329,7 +324,7 @@ func TestGrokSpendFlagsAndCostSources(t *testing.T) {
 
 func TestGrokToolOutputShapes(t *testing.T) {
 	var events []Event
-	s, _ := NewStream("grok", nil, StreamOptions{OnEvent: func(e Event) { events = append(events, e) }})
+	s, _ := NewStream(harness.Grok, nil, StreamOptions{OnEvent: func(e Event) { events = append(events, e) }})
 	runGrokLines(t, s, "hi",
 		`{"type":"tool_call","toolCallId":"c","title":"Shell"}`,
 		`{"type":"tool_call_update","toolCallId":"c","status":"in_progress","content":{"text":"halfway"}}`,

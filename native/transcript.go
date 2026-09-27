@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 // markerSink owns everything about turning a byte stream into marker blocks:
@@ -93,8 +95,8 @@ func (m *markerSink) emit(marker, body string) {
 // withThousands formats a token count the way codex prints its trailer, so
 // the UI renders both engines' counts identically. Shared, not codex's: the
 // claude transcoder prints the same trailer.
-func withThousands(n int) string {
-	s := strconv.Itoa(n)
+func withThousands(n int64) string {
+	s := strconv.FormatInt(n, 10)
 	if len(s) <= 3 {
 		return s
 	}
@@ -150,9 +152,10 @@ func (m *markerSink) toolEnded(failed bool, elapsed time.Duration, timed bool, o
 // count; a resumed run appends another. The cost line rides along so a live
 // log shows spend without waiting for the run to land in history; an engine
 // that reports no cost passes zero, so no misleading zero is printed.
-func (m *markerSink) spendTrailer(usage TokenUsage, sawUsage, usageKnown bool, costUSD float64, costKnown bool) {
+// Total counts every prompt token, cached reads included.
+func (m *markerSink) spendTrailer(usage harness.Usage, sawUsage bool, cost harness.Cost) {
 	switch {
-	case usageKnown:
+	case usage.Known:
 		_, _ = fmt.Fprintf(m.out, "tokens used\n%s\n", withThousands(usage.Total()))
 	case sawUsage:
 		_, _ = fmt.Fprintf(m.out, "usage incomplete; recorded tokens: %s\n", withThousands(usage.Total()))
@@ -160,11 +163,11 @@ func (m *markerSink) spendTrailer(usage TokenUsage, sawUsage, usageKnown bool, c
 		_, _ = fmt.Fprintln(m.out, "usage unavailable")
 	}
 	switch {
-	case costUSD <= 0:
-	case costKnown:
-		_, _ = fmt.Fprintf(m.out, "~ $%.4f at API rates\n", costUSD)
+	case cost.USD <= 0:
+	case cost.Known:
+		_, _ = fmt.Fprintf(m.out, "~ $%.4f at API rates\n", cost.USD)
 	default:
-		_, _ = fmt.Fprintf(m.out, "~ $%.4f recorded at API rates; total unavailable\n", costUSD)
+		_, _ = fmt.Fprintf(m.out, "~ $%.4f recorded at API rates; total unavailable\n", cost.USD)
 	}
 }
 

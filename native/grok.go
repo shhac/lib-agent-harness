@@ -1,13 +1,12 @@
 package native
 
 import (
-	"fmt"
 	"os"
 	"strings"
 )
 
-// GrokTelemetryPolicy selects Grok's client-side telemetry policy. It applies
-// only when Config.Engine is "grok". Default leaves Grok's environment and
+// GrokTelemetryPolicy selects Grok's client-side telemetry policy, as
+// GrokOptions.Telemetry. Default leaves Grok's environment and
 // behaviour unchanged. Reduced opts out of Grok product telemetry and related
 // background discovery that can read local provider configuration; it does not
 // prevent the model request, configured tools, or other required provider
@@ -20,13 +19,8 @@ const (
 	GrokTelemetryReduced
 )
 
-func validateGrokTelemetry(policy GrokTelemetryPolicy) error {
-	switch policy {
-	case GrokTelemetryDefault, GrokTelemetryReduced:
-		return nil
-	default:
-		return fmt.Errorf("unsupported Grok telemetry policy %d", policy)
-	}
+func (p GrokTelemetryPolicy) valid() bool {
+	return p == GrokTelemetryDefault || p == GrokTelemetryReduced
 }
 
 // These documented process overrides opt out of client telemetry and prevent
@@ -68,13 +62,7 @@ func withGrokReducedTelemetry(env []string) []string {
 
 // grokArgs binds every value with --flag=value: Grok's parser reads a separate
 // value beginning with "-" as a missing value, so `-p -x` fails to start.
-func grokArgs(c Config, r Request) ([]string, error) {
-	if r.SchemaPath != "" || r.OutputPath != "" {
-		return nil, fmt.Errorf("grok takes an inline Schema; SchemaPath and OutputPath are Codex-only")
-	}
-	if c.MaxBudgetUSD > 0 {
-		return nil, fmt.Errorf("grok has no spending limit option; leave MaxBudgetUSD unset")
-	}
+func grokArgs(c Config, r Request) []string {
 	args := []string{"--single=" + r.Prompt, "--output-format=streaming-json"}
 	option := func(name, value string) {
 		if value != "" {
@@ -89,8 +77,8 @@ func grokArgs(c Config, r Request) ([]string, error) {
 	}
 	option("model", c.Model)
 	option("reasoning-effort", c.Effort)
-	option("sandbox", c.Sandbox)
-	option("permission-mode", c.PermissionMode)
-	option("tools", strings.Join(c.AllowedTools, ","))
-	return append(args, c.Args...), nil
+	option("sandbox", c.Grok.Sandbox)
+	option("permission-mode", c.Grok.PermissionMode)
+	option("tools", strings.Join(c.Grok.Tools, ","))
+	return append(args, c.Args...)
 }

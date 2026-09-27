@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 const goldenTranscript = "testdata/claude-transcript.golden"
@@ -21,7 +23,7 @@ func fixedClock(step time.Duration) func() time.Time {
 }
 func TestTranscodeGoldenTranscript(t *testing.T) {
 	var out bytes.Buffer
-	tr, _ := NewStream("claude", &out, StreamOptions{Structured: true, Clock: fixedClock(500 * time.Millisecond)})
+	tr, _ := NewStream(harness.Claude, &out, StreamOptions{Structured: true, Clock: fixedClock(500 * time.Millisecond)})
 	tr.UserPrompt("Review pull request owner/repo#42.")
 	for _, line := range []string{
 		`{"type":"system","subtype":"init","session_id":"9f1c2d3e-0000-4444-8888-abcdefabcdef"}`,
@@ -59,7 +61,7 @@ func TestTranscodeGoldenTranscript(t *testing.T) {
 
 func TestCodexTranscodeGoldenTranscript(t *testing.T) {
 	var out strings.Builder
-	tr, _ := NewStream("codex", &out, StreamOptions{Clock: fixedClock(500 * time.Millisecond)})
+	tr, _ := NewStream(harness.Codex, &out, StreamOptions{Clock: fixedClock(500 * time.Millisecond)})
 	tr.UserPrompt("Review pull request owner/repo#42.")
 	for _, line := range []string{
 		`{"type":"thread.started","thread_id":"019f6f77-3c3d-7ce3-966d-d4b2083f4459"}`,
