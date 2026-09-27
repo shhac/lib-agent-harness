@@ -139,7 +139,7 @@ func TestRunEnvironmentIsAnAllowlist(t *testing.T) {
 func TestRunTimeoutEndsTheProcessTree(t *testing.T) {
 	skill := scriptSkill(t, map[string]string{"hang.sh": "#!/bin/sh\nsleep 30 &\necho $! > child.pid\necho started\nwait\n"})
 	started := time.Now()
-	output, work := run(t, skill, "hang.sh", nil, nil, 300*time.Millisecond)
+	output, work := run(t, skill, "hang.sh", nil, nil, 2*time.Second)
 	if !output.TimedOut || output.ExitCode != -1 || time.Since(started) > 10*time.Second {
 		t.Fatalf("%+v after %s", output, time.Since(started))
 	}
