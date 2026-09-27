@@ -25,7 +25,7 @@ versions, and handle unsupported capabilities at runtime.
 | Package | Contract |
 | --- | --- |
 | `completion` | Model returns text and proposed application tool calls. Native tools are disabled and verified before inference; the application authorizes and executes proposals. |
-| `native` | One native agent invocation, optionally resuming a session. Generic structured output, tool activity, readable transcript, and usage parsing. Grok currently supports streaming text/tool runs; its schema output mode is rejected until its separate final-JSON protocol is pinned. |
+| `native` | One native agent invocation, optionally resuming a session. Generic structured output, tool activity, readable transcript, and usage parsing. |
 | `session` | Persistent bidirectional sessions with turns, streaming events, interruption, resumption, and capability-aware steering. |
 | `process` | Shared subprocess-tree containment, including Windows suspended-start job assignment. |
 
@@ -62,6 +62,13 @@ reply, usage, err := completion.Complete(ctx, completion.Config{
     },
 }, messages, tools)
 ```
+
+`Effort` is sent only when `API.EffortParameter` says where the endpoint reads
+it: `completion.EffortReasoningEffort` (top-level `reasoning_effort`; OpenAI,
+xAI) or `completion.EffortReasoningObject` (`reasoning.effort`; Vercel AI
+Gateway, OpenRouter). A local model server that takes no credential sets
+`API.Unauthenticated` instead of `Credentials`; that is refused for any
+non-loopback URL.
 
 The message roles above are part of the application conversation presented to
 the constrained model, not a promise that every provider accepts identical
@@ -602,12 +609,25 @@ transcript. Reuse a stream only for sequential resumes of the same session.
 The application supplies its output schema and decides whether an incomplete
 report warrants another turn; the library does not retry autonomously.
 
+Grok runs use `grok --single … --output-format=streaming-json`. An inline
+`Request.Schema` is passed as `--json-schema` and the report is Grok's
+`structuredOutput`; `SchemaPath`, `OutputPath` and `MaxBudgetUSD` are refused.
+A turn that ends with any stop reason other than `end_turn` (for example
+`max_turn_requests`, `max_tokens`, `refusal` or `cancelled`) is a failure.
+Usage and cost are summed per invocation, as for Claude, and stay unknown when
+Grok marks them partial or omits them. `AllowedTools` maps to `--tools`, which
+removes built-in tools only: MCP meta-tools remain, as do MCP servers Grok
+imports from Claude and Cursor configuration unless `GrokTelemetryReduced` is set.
+
 Grok's zero-value `GrokTelemetry` policy preserves the installed CLI's normal
 behaviour. Opt in to `native.GrokTelemetryReduced` to set Grok's documented
-client-telemetry, trace-upload, auto-update, memory, and Cursor/Claude
-compatibility-discovery environment controls to off for that invocation. It is
-not a no-egress guarantee: inference and any enabled tool/provider traffic can
-still leave the machine.
+client-telemetry, trace-upload, feedback, auto-update, memory, and
+Cursor/Claude compatibility-discovery environment controls to off for that
+invocation. It is not a no-egress guarantee: inference and any enabled
+tool/provider traffic can still leave the machine. It does not change the xAI
+account's coding-data sharing or retention settings (`/privacy`, Zero Data
+Retention), and leaves external OpenTelemetry to the operator's own collector
+(`GROK_EXTERNAL_OTEL`) as configured.
 
 ```go
 result, err := native.Run(ctx, native.Config{

@@ -8,15 +8,18 @@ history, retries, and budgets.
 
 For `EngineOpenAICompatible`, set an explicit `API.Dialect`, an absolute HTTPS
 `API.BaseURL` (HTTP is allowed only to loopback), and an `API.Credentials`
-function. The function yields one bearer token after local validation and
+function, or `API.Unauthenticated` for a loopback server that takes none. The function yields one bearer token after local validation and
 `BeforeRequest`; it is not stored in `Config`, wrapped in errors, or read from
 an ambient API-key environment variable. The initial dialect is
 `OpenAIChatCompletions`: a single non-streaming request containing the model,
-conversation and optional function catalog. It rejects redirects, arbitrary
-headers and vendor fields, and does not retry. Responses must have one complete
-terminal choice; usage is known only when the response supplies consistent token
-counts. Streaming, effort, structured output, API model discovery and remote
-sessions are currently refused rather than silently approximated.
+conversation, optional function catalog and optional reasoning effort. Effort
+requires `API.EffortParameter` (`EffortReasoningEffort` or
+`EffortReasoningObject`), because compatible endpoints read it from different
+fields. It rejects redirects, arbitrary headers and vendor fields, and does not
+retry. Responses must have one complete terminal choice; usage is known only
+when the response supplies consistent token counts. Streaming, structured
+output, API model discovery and remote sessions are currently refused rather
+than silently approximated.
 
 Select `Config.Engine`, `Model`, and optional `Effort`; choose binary and native
 login home paths when needed. The library does not copy credentials or fall back

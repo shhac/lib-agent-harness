@@ -1,7 +1,9 @@
 # API transports and gateway adapters
 
 Proposed 2026-09-27. Revised 2026-09-27 after review against the `completion`
-package and `AGENTS.md`; increment 1 is implemented in `completion/openai.go`.
+package and `AGENTS.md`; increment 1 is implemented in `completion/openai*.go`.
+Revised again 2026-09-27: effort became a typed mapping, loopback servers may
+be explicitly unauthenticated, and `stop` with tool calls is a proposal.
 
 ## Decision
 
@@ -41,9 +43,10 @@ completion.Config{
     Engine: completion.EngineOpenAICompatible, // "openai-compatible"
     Model:  "provider/model",
     API: completion.APIConfig{
-        BaseURL:     "https://gateway.example/v1",
-        Dialect:     completion.OpenAIChatCompletions,
-        Credentials: source, // completion.CredentialSource
+        BaseURL:         "https://gateway.example/v1",
+        Dialect:         completion.OpenAIChatCompletions,
+        Credentials:     source, // completion.CredentialSource
+        EffortParameter: completion.EffortReasoningObject, // only with Effort
     },
 }
 ```
@@ -68,9 +71,17 @@ completion.Config{
 - **No arbitrary headers or request fields.** A gateway option is added as a
   typed field with a test and a documented semantic, never as a pass-through
   map.
-- **`Effort` is refused** for the API engine in increment 1 rather than dropped:
-  `reasoning_effort` semantics differ across compatible providers. It is added
-  as a typed, tested mapping when a caller needs it.
+- **`Effort` needs a typed `EffortParameter`.** Compatible endpoints read it
+  from different fields: OpenAI and xAI take a top-level `reasoning_effort`
+  (`EffortReasoningEffort`); Vercel AI Gateway and OpenRouter take
+  `reasoning: {"effort": …}` (`EffortReasoningObject`). An effort with no
+  parameter is refused (`api_effort_parameter_required`) rather than guessed.
+  The effort must be a short lowercase token; which levels a model accepts is
+  the endpoint's to say.
+- **`Unauthenticated`** sends no credential, for local model servers that take
+  none. It is an explicit field, refused beside `Credentials` and for any
+  non-loopback URL, so a forgotten credential source still fails with
+  `api_credentials_required`.
 - **No ambient proxy.** The library's HTTP transport does not read
   `HTTPS_PROXY`/`HTTP_PROXY`, for the same reason CLI subprocesses get an
   allowlisted environment: process-wide settings must not route a caller's
@@ -113,7 +124,8 @@ response. It must contain exactly one choice whose message role, if present, is
 | --- | --- |
 | `stop` with no tool calls | text reply |
 | `tool_calls` with at least one call | tool proposals, with any text |
-| `stop` with tool calls, `tool_calls` with none, missing or unknown | `ambiguous_terminal_state` |
+| `stop` with tool calls | tool proposals (Gemini's OpenAI endpoint and older Ollama finish this way; neither is truncation) |
+| `tool_calls` with none, missing or unknown | `ambiguous_terminal_state` |
 | `length` | `output_truncated`, no reply |
 | `content_filter` | `content_filtered`, no reply |
 
@@ -165,7 +177,7 @@ The library never retries.
 
 Deferred from increment 1, each refused rather than approximated: streaming,
 model discovery (`DiscoverModels` keeps refusing non-CLI engines),
-`Effort`, structured output, the Responses dialect, gateway/vendor options,
+structured output, the Responses dialect, gateway/vendor options,
 serving-model metadata, and remote sessions.
 
 ## Capabilities by increment
@@ -181,7 +193,7 @@ local-CLI semantics.
 | Streaming | unsupported | increment 3 |
 | Model discovery | unsupported (refused before any request) | increment 2 |
 | Structured output | unsupported | increment 4 |
-| Reasoning effort | unsupported (refused) | typed option on demand |
+| Reasoning effort | native, via a typed `EffortParameter`; refused without one | |
 | Native tools / OS sandbox | unsupported, permanently for this transport | |
 | Session resume, interrupt, steer | unsupported | separate decision |
 
