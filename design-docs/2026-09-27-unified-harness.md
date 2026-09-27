@@ -258,6 +258,39 @@ releasable.
 6. **Remote sessions.** Follows the API-transports design doc: a separate
    adapter that can never satisfy a restricted or sandboxed requirement.
 
+7. **Skills the caller controls.** Tools an application relies on often come
+   with skills (a `SKILL.md` plus the files it references). An engine's globally
+   installed skills may stay detected and used, but wherever the library does
+   not load them (restricted or sandboxed sessions, a Grok runtime home,
+   reduced policies), the caller must be able to say exactly which skills are
+   available:
+
+   ```go
+   type Skill struct {
+       Name string // as the skill's SKILL.md front matter names it
+       Dir  string // a directory holding SKILL.md and the files it references
+   }
+   type Skills struct {
+       Global   GlobalSkills // Default (the mode's own rule), Include or Exclude
+       Provided []Skill      // made available for this invocation only
+   }
+   ```
+
+   `Support` gains `Skills` (caller-provided) and `GlobalSkills` features per
+   engine and operation, and asking for either where it cannot be honoured is
+   refused. Delivery follows each harness's own mechanism, verified against the
+   installed CLI, and never writes into the operator's own homes:
+   - **Claude:** `--plugin-dir` pointing at a library-written plugin that
+     links the provided skills.
+   - **Codex:** `$CODEX_HOME/skills` in a private runtime home. With the
+     operator's own home, the request is refused, because
+     `skills/list`'s per-cwd extra roots were not honoured (codex-cli 0.156.1).
+   - **Grok:** `[skills] paths` in the config the library writes, or
+     `--plugin-dir` for agent mode.
+
+   Constrained completion has no native tools to use skills with, so it
+   refuses them.
+
 A portable permission vocabulary for native runs is deliberately left out. It
 would need a mapping for each engine, with a proof that no mapping widens
 access, which is increment-5-sized work. Until then, engine option structs are
