@@ -23,7 +23,8 @@ function, or `API.Unauthenticated` for a loopback server that takes none. The fu
 `BeforeRequest`; it is not stored in `Config`, wrapped in errors, or read from
 an ambient API-key environment variable. The initial dialect is
 `harness.OpenAIChatCompletions`: a single non-streaming request containing the
-model, conversation, optional function catalog and optional reasoning effort.
+model, conversation, optional function catalog, optional reasoning effort and
+optional output cap (`max_completion_tokens`, see below).
 Effort requires `API.EffortParameter` (`harness.EffortReasoningEffort` or
 `harness.EffortReasoningObject`), because compatible endpoints read it from
 different fields. It rejects redirects, arbitrary headers and vendor fields, and does not
@@ -161,6 +162,35 @@ The Codex capability probe retains only its explicitly selected `CODEX_HOME` to
 verify that home's instruction boundary; its provider authentication remains a
 dummy local key. The bundled model catalog uses a disposable Codex home too.
 
+## Output token cap
+
+`Config.MaxOutputTokens` caps what the model may generate for each model
+request, reasoning included. Zero leaves the provider's default; a negative
+value is refused (`invalid_limits`). An engine accepts a cap only through a
+mechanism verified to reach the request; otherwise a non-zero cap is refused
+before any process or request with `max_output_tokens_unsupported`, a
+capability failure, and never silently dropped:
+
+- OpenAI-compatible: sent as `max_completion_tokens`, OpenAI's current Chat
+  Completions field. The deprecated `max_tokens` is not sent (OpenAI's
+  reasoning models do not accept it), so a gateway that reads only
+  `max_tokens` will not apply the cap. A reply cut off at it finishes
+  `length` and fails with `output_truncated`.
+- Claude: passed as `CLAUDE_CODE_MAX_OUTPUT_TOKENS`, which Claude Code turns
+  into each request's `max_tokens`, lowering a cap above the model's own
+  limit. The capability probe requires every request it receives to carry
+  `max_tokens` between 1 and the cap (`probe_changed_max_output_tokens`
+  otherwise). An ambient value is never forwarded. A cap below the model's
+  extended-thinking budget can be refused by the provider.
+- Codex: refused. `codex exec` 0.156.1 sends no output limit for any
+  configuration key tried (`model_max_output_tokens`, `max_output_tokens`,
+  `model_max_completion_tokens`), and its model catalog has no such field.
+- Grok: refused. Grok's `max_completion_tokens` (under `[models]` or
+  `[model.<id>]`) reaches the probe model's request as `max_output_tokens`,
+  but a real run uses Grok's catalog model, whose own catalog value
+  overrides the `[models]` default and is not visible to a local probe, and
+  neither the stream nor the transcript records the cap.
+
 ## Skills
 
 `Config.Skills` makes caller-provided skills available to the model, for every
@@ -247,7 +277,7 @@ repeat (`unsupported_engine`; native tools advertised or attempted,
 `probe_unexpected_tools` or `probe_mismatch`; `missing_effort_catalog`,
 `unsupported_effort`, `api_dialect_unsupported`,
 `api_effort_parameter_unsupported`, `global_skills_unsupported`,
-`skills_unsupported`), `harness.FailurePreflight` for other
+`skills_unsupported`, `max_output_tokens_unsupported`), `harness.FailurePreflight` for other
 preflight codes, `harness.FailureProcess` for the process phase, and
 `harness.FailureRequest` for the transport and response phases. `Code` is an allowlisted native enum
 or library code; an unknown native value is omitted. Exit status is only present

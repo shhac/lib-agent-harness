@@ -129,7 +129,9 @@ func (e *RequestError) diagnosticDetail() string {
 	case "model_required":
 		return "model is required"
 	case "invalid_limits":
-		return "invalid context or timeout limit"
+		return "invalid context, timeout or output token limit; MaxOutputTokens must not be negative"
+	case "max_output_tokens_unsupported":
+		return "MaxOutputTokens has no verified mechanism for this engine; leave it zero or use Claude or an OpenAI-compatible endpoint"
 	case "executable_unresolved":
 		return "cannot resolve CLI executable; check the configured executable path"
 	case "scratch_directory":
@@ -198,6 +200,8 @@ func (e *RequestError) diagnosticDetail() string {
 		return "CLI capability check rejected missing application instructions; constrained completion remains disabled (not an account login check)"
 	case "probe_changed_model":
 		return "CLI capability check rejected changed model; constrained completion remains disabled (not an account login check)"
+	case "probe_changed_max_output_tokens":
+		return "CLI capability check found the output token cap missing or exceeded; constrained completion remains disabled (not an account login check)"
 	case "probe_mismatch":
 		return "CLI capability check failed to prove tool-free inference; check installed CLI compatibility (no account inference was attempted)"
 

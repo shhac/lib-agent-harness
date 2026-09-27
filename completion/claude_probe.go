@@ -48,7 +48,7 @@ func probeClaude(ctx context.Context, cfg Config, bin string, args []string, dir
 			if readErr != nil || len(data) > 2*1024*1024 {
 				mismatch = "invalid or oversized request"
 			} else {
-				mismatch = claudeProbeMismatch(data, schema, cfg.Effort)
+				mismatch = claudeProbeMismatch(data, schema, cfg.Effort, cfg.MaxOutputTokens)
 			}
 		}
 		mu.Unlock()
@@ -91,11 +91,14 @@ func probeClaude(ctx context.Context, cfg Config, bin string, args []string, dir
 	return nil
 }
 
-func validClaudeProbe(data, schema []byte, effort string) bool {
-	return claudeProbeMismatch(data, schema, effort) == ""
+func validClaudeProbe(data, schema []byte, effort string, maxOutput int) bool {
+	return claudeProbeMismatch(data, schema, effort, maxOutput) == ""
 }
 
-func claudeProbeMismatch(data, schema []byte, effort string) string {
+// claudeProbeMismatch judges one request. With an output cap, max_tokens must
+// be present and within it: Claude lowers a cap above the model's own limit,
+// which still honours it.
+func claudeProbeMismatch(data, schema []byte, effort string, maxOutput int) string {
 	var request struct {
 		Tools []struct {
 			Name   string          `json:"name"`
@@ -108,6 +111,7 @@ func claudeProbeMismatch(data, schema []byte, effort string) string {
 		Output struct {
 			Effort string `json:"effort"`
 		} `json:"output_config"`
+		MaxTokens *int64 `json:"max_tokens"`
 	}
 	if json.Unmarshal(data, &request) != nil || len(request.Tools) != 1 || request.Tools[0].Name != "StructuredOutput" {
 		return "unexpected tools"
@@ -123,6 +127,9 @@ func claudeProbeMismatch(data, schema []byte, effort string) string {
 	}
 	if effort != "" && request.Output.Effort != effort {
 		return "changed reasoning effort"
+	}
+	if maxOutput > 0 && (request.MaxTokens == nil || *request.MaxTokens < 1 || *request.MaxTokens > int64(maxOutput)) {
+		return "changed output token cap"
 	}
 	found := false
 	for _, part := range request.System {
@@ -158,6 +165,8 @@ func claudeProbeCode(reason string) string {
 		return "probe_changed_schema"
 	case "changed reasoning effort":
 		return "probe_changed_effort"
+	case "changed output token cap":
+		return "probe_changed_max_output_tokens"
 	case "unexpected system instruction type":
 		return "probe_instruction_type"
 	case "unexpected system instructions":

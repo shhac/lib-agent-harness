@@ -136,7 +136,7 @@ func TestClaudeCapabilityProbeRejectsNativeToolsAndInstructions(t *testing.T) {
 		`{"tools":[{"name":"Bash","input_schema":{"type":"object"}}]}`,
 		`{"tools":[{"name":"StructuredOutput","input_schema":{"type":"object"}}],"system":[{"type":"text","text":"unwanted global instructions"}]}`,
 	} {
-		if validClaudeProbe([]byte(fixture), schema, "") {
+		if validClaudeProbe([]byte(fixture), schema, "", 0) {
 			t.Fatal("unsafe probe accepted")
 		}
 	}

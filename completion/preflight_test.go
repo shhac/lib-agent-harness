@@ -141,6 +141,7 @@ func TestProbeMismatchDiagnostics(t *testing.T) {
 		"invalid output schema":              "probe_invalid_schema",
 		"changed output schema":              "probe_changed_schema",
 		"changed reasoning effort":           "probe_changed_effort",
+		"changed output token cap":           "probe_changed_max_output_tokens",
 		"unexpected system instruction type": "probe_instruction_type",
 		"unexpected system instructions":     "probe_unexpected_instructions",
 		"missing application instructions":   "probe_missing_instructions",

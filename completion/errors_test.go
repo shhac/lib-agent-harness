@@ -262,6 +262,8 @@ func TestRequestErrorFacts(t *testing.T) {
 		{"unsupported effort", preflightFailure(harness.Codex, "unsupported_effort"), harness.FailureCapability},
 		{"dialect", preflightFailure(harness.OpenAICompatible, "api_dialect_unsupported"), harness.FailureCapability},
 		{"effort parameter", preflightFailure(harness.OpenAICompatible, "api_effort_parameter_unsupported"), harness.FailureCapability},
+		{"output cap", preflightFailure(harness.Codex, "max_output_tokens_unsupported"), harness.FailureCapability},
+		{"probe output cap", preflightFailure(harness.Claude, "probe_changed_max_output_tokens"), harness.FailureCapability},
 
 		{"model required", preflightFailure(harness.Codex, "model_required"), harness.FailurePreflight},
 		{"probe timeout", preflightFailure(harness.Claude, "probe_timeout"), harness.FailurePreflight},

@@ -14,7 +14,10 @@ type chatRequest struct {
 	Tools           []chatTool     `json:"tools,omitempty"`
 	ReasoningEffort string         `json:"reasoning_effort,omitempty"`
 	Reasoning       *chatReasoning `json:"reasoning,omitempty"`
-	Stream          bool           `json:"stream"`
+	// MaxCompletionTokens is OpenAI's current output cap. The deprecated
+	// max_tokens is not sent: OpenAI's reasoning models do not accept it.
+	MaxCompletionTokens int  `json:"max_completion_tokens,omitempty"`
+	Stream              bool `json:"stream"`
 }
 
 type chatReasoning struct {
@@ -51,7 +54,7 @@ func chatRequestBody(cfg Config, messages []Message, tools []Tool) ([]byte, erro
 	if !ok {
 		return nil, preflightFailure(harness.OpenAICompatible, "invalid_messages")
 	}
-	request := chatRequest{Model: cfg.Model, Messages: wire}
+	request := chatRequest{Model: cfg.Model, Messages: wire, MaxCompletionTokens: cfg.MaxOutputTokens}
 	switch cfg.Provider.API.EffortParameter {
 	case harness.EffortReasoningEffort:
 		request.ReasoningEffort = cfg.Effort

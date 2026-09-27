@@ -28,6 +28,14 @@ type Config struct {
 	// and chmod does not establish an owner-only Windows access policy.
 	WorkDirRoot     string
 	MaxContextBytes int
+	// MaxOutputTokens caps the tokens the model may generate for each model
+	// request, reasoning included; zero leaves the provider's default and a
+	// negative value is refused. Only an engine whose mechanism is proven
+	// accepts it: Claude (checked in its capability probe) and an
+	// OpenAI-compatible endpoint (max_completion_tokens). Codex and Grok
+	// refuse it with max_output_tokens_unsupported rather than drop it. A
+	// reply cut off at the cap is a failure, never a proposal.
+	MaxOutputTokens int
 	Timeout         time.Duration
 	// BeforeRequest runs after non-billable probes and before inference.
 	BeforeRequest func(context.Context) error
@@ -109,8 +117,11 @@ func Complete(ctx context.Context, cfg Config, messages []Message, tools []Tool)
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 5 * time.Minute
 	}
-	if cfg.MaxContextBytes < 1024 || cfg.Timeout <= 0 {
+	if cfg.MaxContextBytes < 1024 || cfg.Timeout <= 0 || cfg.MaxOutputTokens < 0 {
 		return Result{}, preflightFailure(engine, "invalid_limits")
+	}
+	if cfg.MaxOutputTokens > 0 && !offersMaxOutputTokens(engine) {
+		return Result{}, preflightFailure(engine, "max_output_tokens_unsupported")
 	}
 	messages, tools, err := composeSkills(engine, cfg.Skills, messages, tools)
 	if err != nil {
@@ -124,6 +135,15 @@ func Complete(ctx context.Context, cfg Config, messages []Message, tools []Tool)
 		return result, err
 	}
 	return separateSkillCalls(engine, result)
+}
+
+// offersMaxOutputTokens names the engines with a verified way to carry
+// Config.MaxOutputTokens to the provider. Codex exec reads no output-token
+// setting (codex-cli 0.156.1 sent none for any candidate key), and Grok's
+// max_completion_tokens is overridden by a value its model catalog supplies,
+// which no local probe can observe.
+func offersMaxOutputTokens(engine harness.Engine) bool {
+	return harness.Support(engine, harness.Complete, harness.MaxOutputTokens).Usable()
 }
 
 func dispatch(ctx context.Context, cfg Config, messages []Message, tools []Tool) (Result, error) {

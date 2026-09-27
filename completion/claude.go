@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/shhac/lib-agent-harness"
@@ -48,11 +49,20 @@ func ClaudeEnvironment(home string) ([]string, error) {
 	return env, nil
 }
 
+// claudeMaxOutputVariable is Claude Code's output cap. Only this adapter sets
+// it, and only from Config; ClaudeEnvironment never forwards an ambient value.
+const claudeMaxOutputVariable = "CLAUDE_CODE_MAX_OUTPUT_TOKENS"
+
 func claudeComplete(ctx context.Context, cfg Config, messages []Message, tools []Tool) (Result, error) {
 	var empty Result
 	env, err := ClaudeEnvironment(cfg.Provider.CLI.Home)
 	if err != nil {
 		return empty, err
+	}
+	if cfg.MaxOutputTokens > 0 {
+		// Claude Code sets each request's max_tokens from this, lowered to the
+		// model's own limit; the probe proves it reached the request.
+		env = append(env, claudeMaxOutputVariable+"="+strconv.Itoa(cfg.MaxOutputTokens))
 	}
 	bin := cfg.Provider.CLI.Binary
 	if bin == "" {

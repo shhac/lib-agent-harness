@@ -70,9 +70,11 @@ const (
 	CostReport          Feature = "cost"           // the harness values its token spend
 	CacheSplit          Feature = "cache_split"    // cached input is reported apart from fresh
 	ContextWindow       Feature = "context_window" // the serving model's window is stated
-	Login               Feature = "login"
-	Quota               Feature = "quota"   // subscription usage windows
-	Credits             Feature = "credits" // prepaid or overage balance
+	// MaxOutputTokens: a caller-set cap on the tokens one response may produce.
+	MaxOutputTokens Feature = "max_output_tokens"
+	Login           Feature = "login"
+	Quota           Feature = "quota"   // subscription usage windows
+	Credits         Feature = "credits" // prepaid or overage balance
 	// ProvidedSkills: caller-provided skills (Skills.Provided) made available
 	// for one invocation. Native where the harness loads them itself, composed
 	// where the library does. (The names Skills and GlobalSkills are the
@@ -149,6 +151,11 @@ var supportTable = map[supportKey]Capability{
 	{OpenAICompatible, Complete, Effort}:     {Native, "requires API.EffortParameter"},
 	{OpenAICompatible, Complete, Tools}:      native,
 	{OpenAICompatible, Complete, CacheSplit}: cacheVaries,
+
+	{Claude, Complete, MaxOutputTokens}:           {Native, "CLAUDE_CODE_MAX_OUTPUT_TOKENS, proven by the capability probe"},
+	{OpenAICompatible, Complete, MaxOutputTokens}: {Native, "sent as max_completion_tokens"},
+	{Codex, Complete, MaxOutputTokens}:            {Unsupported, "codex exec sends no output limit"},
+	{Grok, Complete, MaxOutputTokens}:             {Unsupported, "the catalog model's own limit can override it, and no probe can prove it"},
 
 	{Codex, Complete, ProvidedSkills}:                 composedSkills,
 	{Claude, Complete, ProvidedSkills}:                composedSkills,
