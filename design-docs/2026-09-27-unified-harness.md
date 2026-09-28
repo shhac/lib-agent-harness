@@ -392,6 +392,28 @@ releasable.
      Because Claude's browser is the operator's own, the capability reason says
      so, and the README recommends a dedicated Chrome profile for agents.
 
+9. **Fail fast when the credential store cannot answer silently.** Claude Code
+   keeps its login in the macOS keychain, so every Claude process the library
+   starts (probes, sessions, completion, discovery, account inspection) reads
+   it, and applications poll some of these. While the keychain answers
+   silently this is invisible. When it cannot (locked, or wedged), each start
+   raises its own prompt at the same time. Observed on 2026-09-28, with `gh`
+   and GPG signing prompts in the mix, the pile-up wedged SecurityAgent ("Unapproved
+   caller").
+   - Before launching an engine whose login lives in the keychain, the library
+     checks, without any interaction, that the keychain can answer. If it
+     cannot, it refuses with a typed `keychain_unavailable` failure (preflight
+     family, not retryable on its own terms), and never starts a process that
+     would prompt.
+   - The check must be proven not to prompt, on a throwaway keychain, never
+     the operator's. It must stay CGO-free, and must be cheap enough to run
+     before every launch, or be cached briefly.
+   - Applications back off on `keychain_unavailable`. They stop polling quota
+     and discovery until a check succeeds again, and show one "unlock your
+     keychain" message rather than a failure per poll.
+   - Out of scope: how a deployment provides credentials to other tools (`gh`
+     tokens, GPG agents). The library only avoids adding prompts of its own.
+
 A portable permission vocabulary for native runs is deliberately left out. It
 would need a mapping for each engine, with a proof that no mapping widens
 access, which is increment-5-sized work. Until then, engine option structs are
