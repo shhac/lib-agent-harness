@@ -20,6 +20,12 @@ func TestHelper(t *testing.T) {
 		fmt.Println("ready")
 	case "wait":
 		time.Sleep(30 * time.Second)
+	case "detached":
+		// Leave the launch's process group, as Claude Code's background
+		// commands do. The shell's own job control cannot be relied on for
+		// this: dash ignores set -m without a terminal.
+		leaveGroup()
+		time.Sleep(30 * time.Second)
 	case "parent":
 		child := exec.Command(os.Args[0], "-test.run=^TestHelper$", "--", "wait")
 		child.Env = os.Environ()

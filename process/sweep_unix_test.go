@@ -15,14 +15,14 @@ import (
 	"time"
 )
 
-// escapee runs a shell that backgrounds a waiting helper into a process group
-// of its own (job control) and exits, as Claude Code does with a background
+// escapee runs a shell that backgrounds a helper, which moves itself into a
+// process group of its own, and exits, as Claude Code does with a background
 // command: the helper is reparented and outside the contained group. The
 // helper is this test binary, not sleep: macOS hides the environment of its
 // own platform binaries.
 func escapee(t *testing.T, ctx context.Context, linger string) (*Process, func() int) {
 	t.Helper()
-	cmd, p, err := Command(ctx, "/bin/sh", "-c", `set -m; "$0" -test.run='^TestHelper$' -- wait >/dev/null 2>&1 & echo $!; `+linger, os.Args[0])
+	cmd, p, err := Command(ctx, "/bin/sh", "-c", `"$0" -test.run='^TestHelper$' -- detached >/dev/null 2>&1 & echo $!; `+linger, os.Args[0])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,6 +85,9 @@ func TestCloseReapsWhatTheLaunchLeftBehind(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = syscall.Kill(escaped, syscall.SIGKILL) })
 	own, _ := syscall.Getpgid(escaped)
+	for deadline := time.Now().Add(3 * time.Second); own != escaped && time.Now().Before(deadline); own, _ = syscall.Getpgid(escaped) {
+		time.Sleep(20 * time.Millisecond)
+	}
 	if !alive(escaped) || own != escaped {
 		t.Fatalf("the escapee is not running in a group of its own (group %d)", own)
 	}
@@ -144,7 +147,7 @@ func TestLaunchTokensNest(t *testing.T) {
 }
 
 func TestSweepReachesUnreadableChildrenOfMarkedProcesses(t *testing.T) {
-	cmd, p, err := Command(context.Background(), "/bin/sh", "-c", `set -m; "$0" -test.run='^TestHelper$' -- sleeper & sleep 1; exit 0`, os.Args[0])
+	cmd, p, err := Command(context.Background(), "/bin/sh", "-c", `"$0" -test.run='^TestHelper$' -- sleeper & sleep 1; exit 0`, os.Args[0])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +180,7 @@ func niceOf(t *testing.T, pid int) string {
 // The tree runs niced, including a descendant forked later into a process
 // group of its own, as an agent's background server is.
 func TestBackgroundLowersTheWholeTree(t *testing.T) {
-	cmd, p, err := Command(context.Background(), "/bin/sh", "-c", `sleep 0.3; set -m; "$0" -test.run='^TestHelper$' -- wait >/dev/null 2>&1 & echo $!; sleep 1`, os.Args[0])
+	cmd, p, err := Command(context.Background(), "/bin/sh", "-c", `sleep 0.3; "$0" -test.run='^TestHelper$' -- detached >/dev/null 2>&1 & echo $!; sleep 1`, os.Args[0])
 	if err != nil {
 		t.Fatal(err)
 	}
