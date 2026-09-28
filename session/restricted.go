@@ -148,7 +148,7 @@ func claudeRestrictedArgs(h *toolHost) []string {
 		// disable the explicit MCP configuration too, and --bare would drop the
 		// subscription login for an API key; neither is usable for a worker.
 		"--restricted",
-		"--setting-sources=", `--settings={"disableAllHooks":true}`,
+		"--setting-sources=", claudeRestrictedSettings,
 		"--strict-mcp-config", claudeMCPConfig(h),
 		"--disable-slash-commands", "--no-chrome",
 		"--tools=",
@@ -156,14 +156,33 @@ func claudeRestrictedArgs(h *toolHost) []string {
 	}
 }
 
+// claudeRestrictedSettings turns tool search off, so the session's surface is
+// the one the probe proved.
+//
+// Checked against 2.1.283: tool search is on by default, but only against a
+// first-party endpoint. The probe's loopback provider is not one, so the probe
+// saw every hosted tool in its request while a session on the operator's login
+// ran a different surface: a `DeferredToolPlaceholder` entry with
+// `defer_loading`, and MCP tools eligible to be held back behind a search. The
+// setting is carried here rather than in the environment because a flag's
+// settings win over an inherited ENABLE_TOOL_SEARCH, `force` included, and
+// because it then travels in the arguments the probe and the session share.
+const claudeRestrictedSettings = `--settings={"disableAllHooks":true,"env":{"ENABLE_TOOL_SEARCH":"false"}}`
+
 // claudeMCPConfig registers the tool channel's bridge as the session's one
 // MCP server. Restricted and sandboxed sessions both load it this way, beside
 // --strict-mcp-config.
+//
+// alwaysLoad keeps the hosted tools out of any deferral and makes the harness
+// wait for the bridge before it starts, rather than connecting it in the
+// background as it otherwise does: a first prompt must not race the tools it
+// was promised.
 func claudeMCPConfig(h *toolHost) string {
 	config, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{
 		h.cfg.Server: map[string]any{
 			"type": "stdio", "command": h.cfg.Bridge.Path,
 			"args": bridgeArgs(h), "env": h.environment(),
+			"alwaysLoad": true,
 		},
 	}})
 	return "--mcp-config=" + string(config)

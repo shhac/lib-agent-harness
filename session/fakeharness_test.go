@@ -53,6 +53,10 @@ const (
 	fakeGarbage  = "garbage"  // a body that is not JSON
 	fakeListed   = "listed"   // Codex: deferred tools, served over the channel
 	fakeUnlisted = "unlisted" // Codex: deferred tools, never asked for
+	// fakeToolSearch is Claude 2.1.283 on a first-party endpoint: tool search
+	// is on unless the launch's settings turn it off, and then every request
+	// carries a DeferredToolPlaceholder beside the hosted tools.
+	fakeToolSearch = "tool-search"
 )
 
 // fakeHarness writes an executable standing in for an installed CLI and returns
@@ -165,6 +169,9 @@ func fakeClaude(scenario string, args []string) int {
 		for _, name := range names {
 			tools = append(tools, map[string]any{"name": name, "input_schema": map[string]any{"type": "object"}})
 		}
+		if scenario == fakeToolSearch && fakeClaudeToolSearch(args) {
+			tools = append(tools, map[string]any{"name": "DeferredToolPlaceholder", "description": "Reserved placeholder that keeps deferred tool loading active; never call this tool.", "input_schema": map[string]any{"type": "object", "properties": map[string]any{}}, "defer_loading": true})
+		}
 		body, _ := json.Marshal(map[string]any{"model": "picked", "tools": tools, "messages": []any{map[string]any{"role": "user", "content": "Capability check only."}}})
 		return fakePost(base+"/v1/messages", body)
 	}
@@ -221,6 +228,24 @@ func fakeClaude(scenario string, args []string) int {
 		}
 	}
 	return 0
+}
+
+// fakeClaudeToolSearch reports whether a launch leaves tool search on, reading
+// the --settings value the way the installed CLI does: its env block decides.
+func fakeClaudeToolSearch(args []string) bool {
+	for _, arg := range args {
+		value, found := strings.CutPrefix(arg, "--settings=")
+		if !found {
+			continue
+		}
+		var settings struct {
+			Env map[string]string `json:"env"`
+		}
+		if json.Unmarshal([]byte(value), &settings) == nil && settings.Env["ENABLE_TOOL_SEARCH"] == "false" {
+			return false
+		}
+	}
+	return true
 }
 
 // fakeClaudeProject is where the installed CLI keeps a working directory's

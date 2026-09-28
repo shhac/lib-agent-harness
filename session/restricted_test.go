@@ -98,7 +98,7 @@ func TestRestrictedClaudeArgumentsDisableInheritedSurfaces(t *testing.T) {
 	}
 	defer host.close()
 	args := strings.Join(commandArgs(o, "session-1", false, &launch{host: host, extra: claudeRestrictedArgs(host)}), "\n")
-	for _, required := range []string{"--setting-sources=", `--settings={"disableAllHooks":true}`, "--strict-mcp-config", "--disable-slash-commands", "--no-chrome", "--tools=", "--allowedTools=mcp__agent_workspace__read_file,mcp__agent_workspace__finish"} {
+	for _, required := range []string{"--setting-sources=", `--settings={"disableAllHooks":true,"env":{"ENABLE_TOOL_SEARCH":"false"}}`, "--strict-mcp-config", "--disable-slash-commands", "--no-chrome", "--tools=", "--allowedTools=mcp__agent_workspace__read_file,mcp__agent_workspace__finish"} {
 		if !strings.Contains(args, required) {
 			t.Errorf("missing %q in\n%s", required, args)
 		}
@@ -114,9 +114,10 @@ func TestRestrictedClaudeArgumentsDisableInheritedSurfaces(t *testing.T) {
 	}
 	var parsed struct {
 		Servers map[string]struct {
-			Command string            `json:"command"`
-			Args    []string          `json:"args"`
-			Env     map[string]string `json:"env"`
+			Command    string            `json:"command"`
+			Args       []string          `json:"args"`
+			Env        map[string]string `json:"env"`
+			AlwaysLoad bool              `json:"alwaysLoad"`
 		} `json:"mcpServers"`
 	}
 	if json.Unmarshal([]byte(config), &parsed) != nil || len(parsed.Servers) != 1 {
@@ -125,6 +126,9 @@ func TestRestrictedClaudeArgumentsDisableInheritedSurfaces(t *testing.T) {
 	server := parsed.Servers["agent_workspace"]
 	if server.Command != "/usr/bin/true" || len(server.Args) != 1 {
 		t.Fatalf("bridge command was not configured: %+v", server)
+	}
+	if !server.AlwaysLoad {
+		t.Error("the hosted tools may be deferred, or connected after the first prompt")
 	}
 	// Paths may travel in the launch configuration; the credential may not.
 	if strings.Contains(config, string(host.secret)) || strings.Contains(args, string(host.secret)) {
@@ -472,6 +476,12 @@ func TestJudgeProbeMapsEachObservationToItsOutcome(t *testing.T) {
 		{name: "a request that is not JSON", o: claude, requests: [][]byte{[]byte("not json")}, code: CapabilityProbeUnreadable},
 		{name: "exactly the hosted tools", o: claude, requests: [][]byte{exact}, timedOut: true},
 		{name: "a retained built-in", o: claude, requests: [][]byte{claudeRequest("mcp__agent_workspace__read_file", "mcp__agent_workspace__finish", "Bash")}, code: CapabilityNativeToolsPresent},
+		// Claude 2.1.283's shapes with tool search on. The placeholder is not one
+		// of this session's tools, and channel evidence never excuses a tool the
+		// session did not configure.
+		{name: "tool search's placeholder beside the hosted tools", o: claude, requests: [][]byte{claudeRequest("mcp__agent_workspace__read_file", "mcp__agent_workspace__finish", "DeferredToolPlaceholder")}, served: true, code: CapabilityNativeToolsPresent},
+		{name: "hosted tools deferred behind tool search", o: claude, requests: [][]byte{claudeRequest("ToolSearch", "DeferredToolPlaceholder")}, served: true, code: CapabilityNativeToolsPresent},
+		{name: "hosted tools deferred and never served", o: claude, requests: [][]byte{claudeRequest()}, code: CapabilityHostedToolsMissing},
 		{name: "a changed model", o: codex, requests: [][]byte{codexRequest("other")}, served: true, code: CapabilityChangedModel},
 		{name: "deferred tools the channel served", o: codex, requests: [][]byte{codexRequest("picked")}, served: true},
 		{name: "deferred tools never served", o: codex, requests: [][]byte{codexRequest("picked")}, code: CapabilityHostedToolsMissing},

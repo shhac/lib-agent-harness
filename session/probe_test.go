@@ -43,6 +43,10 @@ func TestProbeJudgesWhatTheHarnessActuallySent(t *testing.T) {
 		code     string
 	}{
 		{"exactly the hosted tools", harness.Claude, fakeClean, ""},
+		// Claude 2.1.283 turns tool search on against a first-party endpoint,
+		// adding a placeholder the probe's loopback provider never sees. The
+		// launch turns it off, so the probe and the session run one surface.
+		{"tool search turned off by the launch", harness.Claude, fakeToolSearch, ""},
 		{"a built-in kept", harness.Claude, fakeBuiltIn, CapabilityNativeToolsPresent},
 		{"only auxiliary requests", harness.Claude, fakeNoTools, CapabilityHostedToolsMissing},
 		{"no request at all", harness.Claude, fakeSilent, CapabilityProbeNoRequest},
