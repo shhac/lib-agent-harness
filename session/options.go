@@ -298,7 +298,8 @@ func reference(o Options, id string) Ref {
 			Web         bool     `json:",omitempty"`
 			ToolServer  string   `json:",omitempty"`
 			RuntimeHome string
-		}{legacy, true, o.Sandbox.Write, o.Sandbox.Read, o.Sandbox.Web, sandboxToolServer(o.Sandbox), o.RuntimeHome})
+			Loopback    bool `json:",omitempty"`
+		}{legacy, true, o.Sandbox.Write, o.Sandbox.Read, o.Sandbox.Web, sandboxToolServer(o.Sandbox), o.RuntimeHome, o.Sandbox.Loopback})
 	}
 	if skills := skillsDigest(o); skills != nil {
 		// A skill request changes what the agent can do, so a resume must

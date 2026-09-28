@@ -86,6 +86,10 @@ const (
 	// ToolActivity: session tool events carry the tool's arguments and its
 	// result text, bounded, as the harness reported them.
 	ToolActivity Feature = "tool_activity"
+	// Loopback: a sandboxed session may bind and connect to this machine's own
+	// addresses only, proven before launch, while every other host stays
+	// closed.
+	Loopback Feature = "loopback"
 )
 
 type supportKey struct {
@@ -116,7 +120,7 @@ func Support(e Engine, op Operation, f Feature) Capability {
 // sandboxed hosting of a CLI harness are unavailable on Windows. An API
 // session has no process to contain, so it is unaffected.
 func platform(e Engine, op Operation, f Feature, c Capability) Capability {
-	if runtime.GOOS == "windows" && op == Session && e.Transport() == CLITransport && (f == RestrictTools || f == Sandbox || f == Tools) {
+	if runtime.GOOS == "windows" && op == Session && e.Transport() == CLITransport && (f == RestrictTools || f == Sandbox || f == Tools || f == Loopback) {
 		return Capability{Unsupported, "restricted and sandboxed hosting are unavailable on Windows"}
 	}
 	if runtime.GOOS == "windows" && e == Grok && op == Complete {
@@ -273,6 +277,13 @@ var supportTable = map[supportKey]Capability{
 	{OpenAICompatible, Session, ContextWindow}:       {Unknown, "estimated from each response's input; Chat Completions states no window"},
 	{OpenAICompatible, Session, ToolActivity}:        {Composed, "the library reports the model's call arguments and the handler's result as it ran them"},
 	{OpenAICompatible, Account, Available}:           {Unsupported, "API endpoints expose no account inspection"},
+
+	{Claude, Session, Loopback}: {Unknown, "Claude Code's sandbox allowLocalBinding, which admits this machine's own addresses; proved before each launch by a canary that must reach and bind loopback and be refused an off-machine address"},
+	{Codex, Session, Loopback}:  {Unsupported, "codex-cli 0.156.1's sandbox network is all or nothing: allow_local_binding has no effect while the network is off, and turning it on opens every address"},
+	{Grok, Session, Loopback}:   {Unsupported, "Grok sessions have no proven OS sandbox"},
+	{Codex, Run, Loopback}:      {Unsupported, "a native run has no library-proven sandbox to scope networking in"},
+	{Claude, Run, Loopback}:     {Unsupported, "a native run has no library-proven sandbox to scope networking in"},
+	{Grok, Run, Loopback}:       {Unsupported, "a native run has no library-proven sandbox to scope networking in"},
 
 	{Codex, Account, Available}:  unverified,
 	{Codex, Account, Login}:      unverified,

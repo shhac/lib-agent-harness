@@ -601,6 +601,24 @@ fetched URL can carry data out. A reference records whether a sandbox had
 `Web`, so a resume cannot change it; a sandbox without it keeps its earlier
 reference digest.
 
+### Loopback networking
+
+`Sandbox.Loopback` lets a sandboxed Claude session start a local server and
+request it: its shell may bind and connect to this machine's own addresses and
+nothing else. Claude Code's `allowLocalBinding` admits the machine's interface
+addresses as well as loopback, so a server bound to one of those is reachable
+too; no other host is, and the domain allowlist stays empty. Anything the
+project needs at run time must therefore be local.
+
+The claim is proved before each launch, without inference. The session's own
+arguments drive Claude Code against a local provider that answers the first
+turn with one scripted shell call, the canary, and reads its result back. The
+canary must reach the probe's loopback listener, bind and reach one of its
+own, and be refused `api.anthropic.com` on 443, which the probe has just
+reached itself; if that address cannot be reached from outside the sandbox,
+nothing is proved and the session is refused. Codex is refused: its sandbox
+network is all or nothing.
+
 ### Caller-hosted tools beside native ones
 
 `Sandbox.Tools` takes the same `ToolHost` a restriction does, and serves it the

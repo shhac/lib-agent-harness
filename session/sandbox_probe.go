@@ -36,6 +36,9 @@ func verifySandbox(ctx context.Context, o Options, l *launch) error {
 		err = probeCodexSandbox(ctx, o)
 	} else {
 		err = probeClaudeSandbox(ctx, o)
+		if err == nil && o.Sandbox.Loopback {
+			err = probeClaudeLoopback(ctx, o, l)
+		}
 	}
 	if err != nil {
 		return err

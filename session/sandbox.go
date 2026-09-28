@@ -44,6 +44,17 @@ type Sandbox struct {
 	// names no domain, because a domain rule would also open the shell's
 	// network, and Codex searches through its provider.
 	Web bool
+	// Loopback lets the session's shell bind and connect to this machine's own
+	// addresses and nothing else, so it can start a dev server and request it.
+	// Claude Code's allowLocalBinding admits the machine's interface addresses
+	// as well as 127.0.0.0/8 and ::1, so a server bound to one of those is
+	// reachable too; no other host is. Everything the project needs at run
+	// time must then be local. It is proved before launch — a canary inside
+	// the sandbox must reach a loopback listener, bind one of its own, and be
+	// refused an off-machine address the probe reached itself — or the session
+	// is refused. Claude Code offers it; Codex is refused, because its sandbox
+	// network is all or nothing (see harness.Support).
+	Loopback bool
 	// Tools adds the caller's tools beside the session's own, served through
 	// the same bridge and tool channel a restricted session uses, with the same
 	// lease, launch record and reclamation. Its Dir must lie outside WorkDir.
@@ -131,6 +142,11 @@ func normalizeSandbox(o Options) (Options, error) {
 		return o, refuse(o, "sandbox", RefusedSandboxRead, problem)
 	}
 	o.Sandbox.Read = read
+	if o.Sandbox.Loopback {
+		if c := harness.Support(o.Provider.Engine, harness.Session, harness.Loopback); !c.Usable() {
+			return o, &UnsupportedError{Engine: o.Provider.Engine, Operation: "loopback", Code: RefusedNotOffered, Capability: c}
+		}
+	}
 	if err := validateSandboxTools(o); err != nil {
 		return o, err
 	}
@@ -275,12 +291,18 @@ func claudeSandboxSettings(o Options) string {
 	if len(allow) > 0 {
 		permissions["allow"] = allow
 	}
+	network := map[string]any{"allowedDomains": []string{}, "strictAllowlist": true}
+	if o.Sandbox.Loopback {
+		// No domain is added: a loopback domain rule would route through the
+		// sandbox's proxy, which is the path to every other allowed domain.
+		network["allowLocalBinding"] = true
+	}
 	sandbox := map[string]any{
 		"enabled":                  true,
 		"failIfUnavailable":        true,
 		"allowUnsandboxedCommands": false,
 		"autoAllowBashIfSandboxed": true,
-		"network":                  map[string]any{"allowedDomains": []string{}, "strictAllowlist": true},
+		"network":                  network,
 	}
 	if len(filesystem) > 0 {
 		sandbox["filesystem"] = filesystem

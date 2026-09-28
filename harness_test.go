@@ -225,3 +225,22 @@ func TestProvidedSkillsAreOfferedWhereverThereIsAnAgent(t *testing.T) {
 		t.Error("constrained completion never loads installed skills")
 	}
 }
+
+// Loopback networking is offered only where a proof exists: a sandboxed
+// Claude session. Codex's sandbox network is all or nothing.
+func TestLoopbackClaims(t *testing.T) {
+	claude := Support(Claude, Session, Loopback)
+	if (runtime.GOOS == "windows") == (claude.Availability == Unknown) || claude.Reason == "" {
+		t.Fatalf("Claude session loopback on %s: %+v", runtime.GOOS, claude)
+	}
+	for _, e := range Engines() {
+		for _, op := range Operations() {
+			if e == Claude && op == Session {
+				continue
+			}
+			if c := Support(e, op, Loopback); c.Usable() {
+				t.Errorf("%s %s claims loopback: %+v", e, op, c)
+			}
+		}
+	}
+}
