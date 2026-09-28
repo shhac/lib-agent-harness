@@ -346,11 +346,19 @@ func freezeTools(tools []ToolDefinition) []ToolDefinition {
 	return out
 }
 
+// freezeValue also makes the copy a valid JSON Schema. Go marshals a nil
+// slice as null, and a schema keyword is never null: Claude Code 2.1.283
+// rejects a whole tools/list that carries one ("required": null from a tool
+// with no required arguments), retries, and then starts with no hosted tools.
+// So a nil slice becomes an empty array and a null keyword is left out.
 func freezeValue(value any) any {
 	switch typed := value.(type) {
 	case map[string]any:
 		out := make(map[string]any, len(typed))
 		for key, nested := range typed {
+			if nested == nil {
+				continue
+			}
 			out[key] = freezeValue(nested)
 		}
 		return out
@@ -361,7 +369,7 @@ func freezeValue(value any) any {
 		}
 		return out
 	case []string:
-		return append([]string(nil), typed...)
+		return append([]string{}, typed...)
 	default:
 		return value
 	}
