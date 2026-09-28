@@ -104,6 +104,7 @@ func requestProblem(engine harness.Engine, c Config, r Request) string {
 		{r.Schema != "", harness.StructuredOutput},
 		{r.ResumeSession != "", harness.Resume},
 		{c.Effort != "", harness.Effort},
+		{c.Browser, harness.Browser},
 	}
 	for _, w := range wanted {
 		if w.on && !harness.Support(engine, harness.Run, w.feature).Usable() {
@@ -128,7 +129,7 @@ var managedFlags = map[harness.Engine]struct {
 		short: "osCm",
 	},
 	harness.Claude: {
-		long:  []string{"json-schema", "output-format", "permission-mode", "allowedTools", "allowed-tools", "max-budget-usd", "resume", "model", "effort", "append-system-prompt"},
+		long:  []string{"json-schema", "output-format", "permission-mode", "allowedTools", "allowed-tools", "max-budget-usd", "resume", "model", "effort", "append-system-prompt", "chrome", "no-chrome"},
 		short: "r",
 	},
 	harness.Grok: {

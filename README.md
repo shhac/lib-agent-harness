@@ -619,6 +619,42 @@ reached itself; if that address cannot be reached from outside the sandbox,
 nothing is proved and the session is refused. Codex is refused: its sandbox
 network is all or nothing.
 
+A process the agent starts in the background, such as that server, is not
+yet reaped when the session ends: Claude Code runs it in a process group of
+its own, outside the one the library stops. Ask the agent to stop what it
+started, or stop it yourself.
+
+### The harness's own browser
+
+`Options.Browser` (and `native.Config.Browser` for a run) switches on the
+browser integration the harness ships, for that invocation only. It is off
+unless set and never implied by another option. Only Claude Code has one
+here: `--chrome` (Claude in Chrome), which drives the operator's real Chrome
+through its extension. Codex's `browser_use` features are not enabled yet,
+and Grok 1.0.41 has none; both are refused, as are API sessions and
+restricted sessions, whose tools are exactly the caller's.
+
+That browser is not sandboxed. It runs outside the OS sandbox, with that
+Chrome profile's logins, and reaches whatever the extension's site
+permissions allow. For agents:
+
+- Give them a dedicated Chrome profile with the extension, signed in to
+  nothing they should not use, rather than your everyday profile.
+- Limit the extension's site permissions to the sites the agent should
+  visit, typically the local dev server.
+- Pair it with `Sandbox.Loopback`, so the agent's shell can start the project
+  and the browser can use it, while the shell reaches nothing off the machine.
+
+A sandboxed session admits the browser's tools beside its own, with explicit
+allow rules for the ones Claude Code 2.1.283 lists. `file_upload` (which reads
+local files from outside the sandbox) and the shortcut tools (which start
+another agent in the browser's side panel) are denied, and a tool a later
+build adds stays refused until it is reviewed. `--strict-mcp-config` keeps
+only the browser's server, claude.ai connectors are switched off, and the
+startup report must show that server connected and no other server's tools.
+Checked live: a sandboxed session served a page on loopback, read it through
+Chrome, and found no `file_upload` tool.
+
 ### Caller-hosted tools beside native ones
 
 `Sandbox.Tools` takes the same `ToolHost` a restriction does, and serves it the

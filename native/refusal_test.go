@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -105,6 +106,8 @@ func TestOptionsAnEngineCannotHonourAreRefused(t *testing.T) {
 		"grok bad telemetry":   {Config{Provider: provider(harness.Grok), Grok: GrokOptions{Telemetry: 7}}, Request{}, CodeUnsupportedOption},
 		"invalid schema":       {Config{Provider: provider(harness.Claude)}, Request{Schema: "{"}, CodeInvalidSchema},
 		"invalid codex schema": {Config{Provider: provider(harness.Codex)}, Request{Schema: "not json"}, CodeInvalidSchema},
+		"codex browser":        {Config{Provider: provider(harness.Codex), Browser: true}, Request{}, CodeUnsupportedOption},
+		"grok browser":         {Config{Provider: provider(harness.Grok), Browser: true}, Request{}, CodeUnsupportedOption},
 	} {
 		if facts := refusal(t, tc.c, tc.r); facts.Code != tc.code {
 			t.Errorf("%s: %+v", name, facts)
@@ -125,7 +128,7 @@ func TestManagedFlagsInArgsAreRefused(t *testing.T) {
 		harness.Claude: {
 			{"--json-schema", "{}"}, {"--json-schema={}"}, {"--output-format", "text"}, {"--permission-mode", "bypassPermissions"},
 			{"--allowedTools", "Bash"}, {"--allowed-tools=Bash"}, {"--max-budget-usd", "9"}, {"--resume", "s"}, {"-r", "s"},
-			{"--model", "m"}, {"--effort=max"}, {"--append-system-prompt", "x"}, {"--"},
+			{"--model", "m"}, {"--effort=max"}, {"--append-system-prompt", "x"}, {"--chrome"}, {"--no-chrome"}, {"--"},
 		},
 		harness.Grok: {
 			{"--single=x"}, {"-p", "x"}, {"--output-format=json"}, {"--json-schema={}"}, {"--tools=bash"}, {"--sandbox=off"},
@@ -247,5 +250,16 @@ func TestVersionTakesTheProvider(t *testing.T) {
 		t.Fatal("missing binary reported a version")
 	} else if facts, _ := harness.ErrorFacts(err); facts.Code != CodeExecutableNotFound {
 		t.Fatalf("%+v", facts)
+	}
+}
+
+// The browser is only ever switched on by Config.Browser.
+func TestClaudeBrowserFlag(t *testing.T) {
+	r := Request{Prompt: "p"}
+	if slices.Contains(claudeArgs(Config{Provider: provider(harness.Claude)}, r), "--chrome") {
+		t.Fatal("a run without Browser enables the browser")
+	}
+	if !slices.Contains(claudeArgs(Config{Provider: provider(harness.Claude), Browser: true}, r), "--chrome") {
+		t.Fatal("Browser does not enable the browser")
 	}
 }

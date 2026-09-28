@@ -283,6 +283,9 @@ func claudeSandboxSettings(o Options) string {
 	if o.Sandbox.Tools != nil {
 		allow = append(allow, o.Sandbox.Tools.Qualified()...)
 	}
+	if o.Browser {
+		allow = append(allow, claudeBrowserTools(claudeBrowserAdmitted)...)
+	}
 	permissions := map[string]any{
 		"defaultMode":                         "dontAsk",
 		"deny":                                deny,
@@ -308,9 +311,9 @@ func claudeSandboxSettings(o Options) string {
 		sandbox["filesystem"] = filesystem
 	}
 	document := map[string]any{"sandbox": sandbox, "disableAllHooks": true, "permissions": permissions, "claudeMdExcludes": claudeInstructionExcludes(o)}
-	if o.Sandbox.Tools != nil {
-		// With hosted tools, MCP is no longer denied wholesale, so the
-		// connectors a subscription login would fetch are switched off too.
+	if o.Sandbox.Tools != nil || o.Browser {
+		// With hosted tools or a browser, MCP is no longer denied wholesale, so
+		// the connectors a subscription login would fetch are switched off too.
 		document["disableClaudeAiConnectors"] = true
 	}
 	raw, _ := json.Marshal(document)
@@ -349,10 +352,14 @@ func claudeSandboxArgs(o Options) []string {
 		disallowed = append(disallowed, claudeWebTools...)
 	}
 	// A deny outranks every allow in Claude Code, so denying MCP wholesale
-	// would deny the hosted tools too. With them, --strict-mcp-config loads
-	// only their server and dontAsk refuses any tool without an allow rule.
-	if o.Sandbox.Tools == nil {
+	// would deny the hosted tools and the browser's too. With either,
+	// --strict-mcp-config loads only their servers and dontAsk refuses any
+	// tool without an allow rule.
+	if o.Sandbox.Tools == nil && !o.Browser {
 		disallowed = append(disallowed, "mcp__*")
+	}
+	if o.Browser {
+		disallowed = append(disallowed, claudeBrowserTools(claudeBrowserWithheld)...)
 	}
 	args := []string{"--setting-sources=", "--strict-mcp-config", "--disable-slash-commands"}
 	if len(disallowed) > 0 {

@@ -42,6 +42,12 @@ type Config struct {
 	// for Codex and Grok, or for every engine with SkillDeliveryComposed.
 	// Excluding installed skills is refused.
 	Skills harness.Skills
+	// Browser turns on the browser integration the harness itself ships, for
+	// this run only: Claude Code's --chrome (Claude in Chrome), which drives
+	// the operator's real Chrome through its extension, with that profile's
+	// logins. Off unless set; an engine without one is refused (see
+	// harness.Support).
+	Browser bool
 	// Args is a trusted escape hatch for flags the library does not model. It
 	// must not come from untrusted model output, and a flag the library manages
 	// is refused rather than allowed to override the typed options.
@@ -260,6 +266,9 @@ func claudeArgs(c Config, r Request) []string {
 	}
 	if c.Claude.PermissionMode != "" {
 		args = append(args, "--permission-mode", c.Claude.PermissionMode)
+	}
+	if c.Browser {
+		args = append(args, "--chrome")
 	}
 	if len(c.Claude.AllowedTools) > 0 {
 		args = append(args, "--allowedTools", strings.Join(c.Claude.AllowedTools, ","))

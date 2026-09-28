@@ -113,13 +113,15 @@ func mustMarshal(v any) []byte { b, _ := json.Marshal(v); return b }
 // dropped, and the session reported success with nothing to work with.
 //
 // A sandboxed session keeps its own tools, so only its MCP surface is judged:
-// the hosted tools must be there, and no other server's may be.
+// the hosted tools must be there, the browser's server too when it asked for
+// one, and no other server's tools may be.
 func (s *Session) observeClaudeInit(m map[string]json.RawMessage) bool {
 	if str(m, "type") != "system" || str(m, "subtype") != "init" {
 		return false
 	}
 	host := hostedTools(s.options)
-	if host == nil {
+	browser := s.options.Browser && s.options.Sandbox != nil
+	if host == nil && !browser {
 		return false
 	}
 	var frame struct {
@@ -133,26 +135,50 @@ func (s *Session) observeClaudeInit(m map[string]json.RawMessage) bool {
 		s.recordSurface(&CapabilityError{Engine: harness.Claude, Code: CapabilityProbeUnreadable, Phase: BeforeFirstPrompt})
 		return true
 	}
-	server := host.Server
-	loaded := false
-	for _, advertised := range frame.Servers {
-		if advertised.Name == server && advertised.Status == "connected" {
-			loaded = true
-		}
+	var required []string
+	if browser {
+		required = append(required, claudeBrowserServer)
 	}
-	if !loaded {
-		s.recordSurface(&CapabilityError{Engine: harness.Claude, Code: CapabilityServerNotLoaded, Phase: BeforeFirstPrompt, Tools: []string{server}})
-		return true
+	if host != nil {
+		required = append(required, host.Server)
+	}
+	for _, server := range required {
+		loaded := false
+		for _, advertised := range frame.Servers {
+			if advertised.Name == server && advertised.Status == "connected" {
+				loaded = true
+			}
+		}
+		if !loaded {
+			s.recordSurface(&CapabilityError{Engine: harness.Claude, Code: CapabilityServerNotLoaded, Phase: BeforeFirstPrompt, Tools: []string{server}})
+			return true
+		}
 	}
 	// Judged as identity, not as text: an advertised tool that did not arrive
 	// under this session's server prefix is a built-in that happens to share a
 	// name, and accepting it would be the whole point of the check undone.
 	surface := requestSurface{}
+	var foreign []string
 	for _, name := range frame.Tools {
 		if s.options.Sandbox != nil && !strings.HasPrefix(name, "mcp__") {
 			continue
 		}
-		surface.tools = append(surface.tools, identify(name, server))
+		if browser && browserTool(s.options, name) {
+			continue
+		}
+		if host == nil {
+			foreign = append(foreign, name)
+			continue
+		}
+		surface.tools = append(surface.tools, identify(name, host.Server))
+	}
+	if host == nil {
+		var failure *CapabilityError
+		if len(foreign) > 0 {
+			failure = &CapabilityError{Engine: harness.Claude, Code: CapabilityNativeToolsPresent, Phase: BeforeFirstPrompt, Tools: foreign}
+		}
+		s.recordSurface(failure)
+		return true
 	}
 	failure := judgeSurfaces(harness.Claude, toolNames(host.Tools), []requestSurface{surface}, false)
 	if failure != nil {

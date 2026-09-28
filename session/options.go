@@ -19,6 +19,9 @@ func normalize(o Options) (Options, error) {
 	if err := supported(o); err != nil {
 		return o, err
 	}
+	if err := normalizeBrowser(o); err != nil {
+		return o, err
+	}
 	if o.Provider.Engine.Transport() == harness.APITransport {
 		return normalizeAPI(o)
 	}
@@ -300,6 +303,14 @@ func reference(o Options, id string) Ref {
 			RuntimeHome string
 			Loopback    bool `json:",omitempty"`
 		}{legacy, true, o.Sandbox.Write, o.Sandbox.Read, o.Sandbox.Web, sandboxToolServer(o.Sandbox), o.RuntimeHome, o.Sandbox.Loopback})
+	}
+	if o.Browser {
+		// The browser widens what the agent can reach, so a resume must carry
+		// it too. Wrapped, so a session without one keeps its digest.
+		payload, _ = json.Marshal(struct {
+			Base    json.RawMessage
+			Browser bool
+		}{payload, true})
 	}
 	if skills := skillsDigest(o); skills != nil {
 		// A skill request changes what the agent can do, so a resume must

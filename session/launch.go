@@ -112,6 +112,9 @@ func commandArgs(o Options, nativeID string, resuming bool, l *launch) []string 
 	if l != nil {
 		args = append(args, l.extra...)
 	}
+	if o.Browser {
+		args = append(args, "--chrome")
+	}
 	if resuming {
 		args = append(args, "--resume", nativeID)
 	} else {

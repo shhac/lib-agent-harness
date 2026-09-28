@@ -143,6 +143,17 @@ type Options struct {
 	// Sandbox.Write is set. It is proved before a credentialed launch. A session is either
 	// restricted or sandboxed, never both. Nil keeps the ordinary contract.
 	Sandbox *Sandbox
+	// Browser turns on the browser integration the harness itself ships, for
+	// this session only: Claude Code's --chrome (Claude in Chrome), which
+	// drives the operator's real Chrome through its extension. It is off
+	// unless set and never implied by another option; an engine without one
+	// is refused (see harness.Support). A sandboxed session admits the
+	// browser's tools beside its own, except those that would read local files
+	// or start another agent. The browser itself runs outside the OS sandbox,
+	// with that Chrome profile's logins, and reaches whatever the extension's
+	// site permissions allow. A restricted session is refused: its tools are
+	// exactly the caller's. It is part of a Ref.
+	Browser bool
 	// Skills are made available to the session, and installed skills kept or
 	// excluded, as skills.go describes for each engine and mode: natively
 	// where the harness loads them itself, and otherwise composed by the

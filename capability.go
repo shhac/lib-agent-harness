@@ -90,6 +90,9 @@ const (
 	// addresses only, proven before launch, while every other host stays
 	// closed.
 	Loopback Feature = "loopback"
+	// Browser: the browser integration the harness itself ships, switched on
+	// for this invocation. Off unless asked for.
+	Browser Feature = "browser"
 )
 
 type supportKey struct {
@@ -130,9 +133,12 @@ func platform(e Engine, op Operation, f Feature, c Capability) Capability {
 }
 
 var (
-	native      = Capability{Availability: Native}
-	unverified  = Capability{Unknown, "not verified against the installed harness"}
-	cacheVaries = Capability{Unknown, "reported only by endpoints that split cached input"}
+	native     = Capability{Availability: Native}
+	unverified = Capability{Unknown, "not verified against the installed harness"}
+	// Claude in Chrome is not a sandboxed browser: it is the operator's own.
+	claudeBrowser = Capability{Native, "Claude in Chrome (--chrome) drives the operator's real Chrome through its extension, outside any sandbox, reaching whatever the extension's site permissions allow with that profile's logins"}
+	codexBrowser  = Capability{Unsupported, "codex-cli 0.156.1's browser_use features are not enabled: their tools and reach have not been identified against the installed CLI without inference"}
+	cacheVaries   = Capability{Unknown, "reported only by endpoints that split cached input"}
 	// Constrained completion has no native tools, so no engine loads skills
 	// there; the library composes them for every engine instead.
 	composedSkills = Capability{Composed, "the library indexes provided skills and answers a read-only skill tool; a permitted skill's scripts run only when the caller answers those calls"}
@@ -284,6 +290,12 @@ var supportTable = map[supportKey]Capability{
 	{Codex, Run, Loopback}:      {Unsupported, "a native run has no library-proven sandbox to scope networking in"},
 	{Claude, Run, Loopback}:     {Unsupported, "a native run has no library-proven sandbox to scope networking in"},
 	{Grok, Run, Loopback}:       {Unsupported, "a native run has no library-proven sandbox to scope networking in"},
+	{Claude, Session, Browser}:  claudeBrowser,
+	{Claude, Run, Browser}:      claudeBrowser,
+	{Codex, Session, Browser}:   codexBrowser,
+	{Codex, Run, Browser}:       codexBrowser,
+	{Grok, Session, Browser}:    {Unsupported, "Grok 1.0.41 ships no browser integration"},
+	{Grok, Run, Browser}:        {Unsupported, "Grok 1.0.41 ships no browser integration"},
 
 	{Codex, Account, Available}:  unverified,
 	{Codex, Account, Login}:      unverified,
