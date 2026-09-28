@@ -372,6 +372,26 @@ releasable.
      sessions get the same behaviour through a ready-made handler for their
      tool host.
 
+8. **Agents that can run and use what they build.** A QA or designer role
+   that can only run `make check` answers "does it build?". To answer "does it
+   work?", an agent must start the project and use it:
+   - **Loopback networking.** `Sandbox.Loopback` lets a sandboxed session bind
+     and reach loopback addresses only, so it can start a dev server and
+     request it. The outside network stays closed. Each engine proves it before
+     launch, like the rest of the sandbox, or the request is refused.
+   - **The harness's own browser.** `Browser` turns on the browser integration
+     each harness ships: Claude's `--chrome` (claude-in-chrome, which drives
+     the operator's real Chrome through its extension, under the extension's
+     site permissions) and Codex's `browser_use` features. Native integrations
+     beat third-party automation in practice, so the library enables them
+     rather than hosting its own. It is off by default and never implied by
+     another option. A sandboxed session's proven tool surface then admits
+     exactly the harness's browser tools beside its own. `Support(e, op,
+     Browser)` reports which engines have one: Grok 1.0.41 does not, so it is
+     refused there. A composed headless browser is a possible later fallback.
+     Because Claude's browser is the operator's own, the capability reason says
+     so, and the README recommends a dedicated Chrome profile for agents.
+
 A portable permission vocabulary for native runs is deliberately left out. It
 would need a mapping for each engine, with a proof that no mapping widens
 access, which is increment-5-sized work. Until then, engine option structs are
