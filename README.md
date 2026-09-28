@@ -619,10 +619,8 @@ reached itself; if that address cannot be reached from outside the sandbox,
 nothing is proved and the session is refused. Codex is refused: its sandbox
 network is all or nothing.
 
-A process the agent starts in the background, such as that server, is not
-yet reaped when the session ends: Claude Code runs it in a process group of
-its own, outside the one the library stops. Ask the agent to stop what it
-started, or stop it yourself.
+A process the agent starts in the background, such as that server, is
+stopped when the session closes (see Process containment below).
 
 ### The harness's own browser
 
@@ -886,10 +884,24 @@ A separate working directory does not require a separate account. Selecting a
 custom home can select a different login namespace; authenticate through the
 CLI's supported flow for that home.
 
+### Process containment
+
 Unix subprocesses run outside the parent's terminal process group. Windows
 subprocesses start suspended and are assigned to a job before running. Context
 cancellation terminates contained descendants. Event/output bounds keep a noisy
 CLI from growing memory indefinitely where the API advertises those bounds.
+
+An agent's background commands leave that group: Claude Code starts each in a
+process group of its own, and once its shell exits it belongs to launchd. So
+every launch carries a random token in `AGENT_HARNESS_LAUNCH`, which its
+descendants inherit, and stopping or closing the launch kills every process of
+this user that carries it, and those processes' descendants. Close does this
+even after the CLI itself exited, so a native run's leftovers go with it, and a
+session's go when it closes. It is a best-effort sweep, not a boundary: a
+process that clears its environment escapes, and on macOS, which hides the
+environment of its own platform binaries, so does one of those whose marked
+parent has already exited. A shared helper that a harness starts on first use
+would be stopped too, and started again by the next launch.
 
 Usage preserves provider-specific accounting scopes. Missing or interrupted
 usage can be unknown; zero counters do not necessarily mean a free run. A

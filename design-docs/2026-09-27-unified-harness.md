@@ -228,8 +228,11 @@ classifies any library failure the same way, whichever mode produced it.
   requires loopback to work and an off-machine address, reached by the probe
   itself, to be refused. The browser is Claude in Chrome; Codex's
   `browser_use` and a Codex loopback mode remain unsupported.
+- **Increment 10:** shipped in v0.11.0. macOS 26 hides the environment of its
+  own platform binaries, so the sweep also takes the descendants of marked
+  processes; an orphaned platform binary still escapes.
 - **Not yet:** streamed text deltas for API endpoints, composed compaction,
-  the Responses dialect, increment 9, and increment 10.
+  the Responses dialect, and increment 9.
 
 ## Increments
 

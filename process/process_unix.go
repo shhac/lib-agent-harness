@@ -7,10 +7,13 @@ import (
 	"os/exec"
 	"sync"
 	"syscall"
+	"time"
 )
 
-// Process contains a CLI and its descendants in a separate process group.
-// Build it with Command, which wires the command's cancellation to Stop.
+// Process contains a CLI and its descendants in a separate process group, and
+// marks their environment so Stop and Close can also find the descendants that
+// left it, such as a server an agent backgrounded. Build it with Command,
+// which wires the command's cancellation to Stop.
 type Process struct {
 	cmd      *exec.Cmd
 	mu       sync.Mutex
@@ -18,6 +21,8 @@ type Process struct {
 	finished bool
 	stopped  bool
 	onStart  func(int)
+	token    string
+	launched time.Time
 }
 
 // Notify registers a callback invoked once, after the child is running and
@@ -39,6 +44,8 @@ func (p *Process) Run() error {
 		p.mu.Unlock()
 		return errors.New("harness process cancelled before startup")
 	}
+	p.token, p.launched = newLaunchToken(), time.Now()
+	p.cmd.Env = markedEnvironment(p.cmd.Env, p.token)
 	err := p.cmd.Start()
 	p.started = err == nil
 	pid := 0
@@ -60,19 +67,36 @@ func (p *Process) Run() error {
 	return err
 }
 
-// Stop kills the process group. Calls before Run prevent startup.
+// Stop kills the process group and every marked descendant. Calls before Run
+// prevent startup.
 func (p *Process) Stop() {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.stopped {
+		p.mu.Unlock()
 		return
 	}
 	p.stopped = true
 	if p.started && !p.finished {
 		_ = syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
 	}
+	started := p.started
+	p.mu.Unlock()
+	if started {
+		sweep(p.token, p.launched)
+	}
 }
 
-// Close stops a live group. After Wait has reaped its leader, the numeric
-// process-group ID may be reused, so Close must not signal it again.
-func (p *Process) Close() { p.Stop() }
+// Close stops a live group and kills whatever marked descendants remain, also
+// after the CLI itself exited: what its agent started must not outlive the
+// handle. After Wait has reaped the leader, the numeric process-group ID may be
+// reused, so Close must not signal that group again; the sweep matches each
+// process by its own marker instead.
+func (p *Process) Close() {
+	p.Stop()
+	p.mu.Lock()
+	started := p.started
+	p.mu.Unlock()
+	if started {
+		sweep(p.token, p.launched)
+	}
+}

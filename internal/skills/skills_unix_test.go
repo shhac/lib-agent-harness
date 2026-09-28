@@ -130,7 +130,9 @@ func TestRunEnvironmentIsAnAllowlist(t *testing.T) {
 		t.Fatalf("environment %v", got)
 	}
 	for key := range got {
-		if !allowed(key) && key != "CALLER_VALUE" && key != "PWD" && key != "SHLVL" && key != "_" {
+		// AGENT_HARNESS_LAUNCH is containment's own marker, added to every
+		// contained launch: a random token, not caller environment.
+		if !allowed(key) && key != "CALLER_VALUE" && key != "PWD" && key != "SHLVL" && key != "_" && key != "AGENT_HARNESS_LAUNCH" {
 			t.Errorf("unexpected variable %s", key)
 		}
 	}

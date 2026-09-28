@@ -29,6 +29,15 @@ func TestHelper(t *testing.T) {
 		}
 		fmt.Println(child.Process.Pid)
 		time.Sleep(30 * time.Second)
+	case "sleeper":
+		// A platform binary under this one: macOS hides its environment, so
+		// only its parent's marker can find it.
+		child := exec.Command("sleep", "60")
+		if err := child.Start(); err != nil {
+			os.Exit(2)
+		}
+		fmt.Println(child.Process.Pid)
+		time.Sleep(30 * time.Second)
 	default:
 		os.Exit(2)
 	}
