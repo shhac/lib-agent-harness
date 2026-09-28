@@ -408,6 +408,12 @@ releasable.
    - The check must be proven not to prompt, on a throwaway keychain, never
      the operator's. It must stay CGO-free, and must be cheap enough to run
      before every launch, or be cached briefly.
+   - The check belongs in `lib-agent-keyring`, the family's single OS
+     secret-store package (already used by lib-agent-cli and lib-agent-mcp),
+     as a non-interactive status: can the store answer silently, is it
+     locked, or is it unavailable. Its own macOS `Get`/`Set` then refuse
+     instead of prompting, so every agent CLI benefits. This library depends
+     on its released version and does not reimplement keychain access.
    - Applications back off on `keychain_unavailable`. They stop polling quota
      and discovery until a check succeeds again, and show one "unlock your
      keychain" message rather than a failure per poll.
