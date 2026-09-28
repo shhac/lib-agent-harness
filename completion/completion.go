@@ -7,6 +7,7 @@ package completion
 import (
 	"context"
 	"net/http"
+	"runtime"
 	"time"
 
 	"github.com/shhac/lib-agent-harness"
@@ -102,6 +103,11 @@ type Function struct {
 // Complete performs one invocation and never executes proposed application tools.
 func Complete(ctx context.Context, cfg Config, messages []Message, tools []Tool) (Result, error) {
 	engine := cfg.Provider.Engine
+	if engine == harness.Grok && runtime.GOOS == "windows" {
+		// Said precisely, rather than as an unknown engine: the shared login
+		// needs owner-only files this library does not have on Windows.
+		return Result{}, preflightFailure(engine, "grok_platform_unsupported")
+	}
 	if !harness.Support(engine, harness.Complete, harness.Available).Usable() {
 		return Result{}, preflightFailure(engine, "unsupported_engine")
 	}

@@ -108,8 +108,12 @@ func TestSupportIsTheOnlyEngineQuestion(t *testing.T) {
 	if Support(Grok, Models, ContextWindow).Availability != Native || Support(OpenAICompatible, Models, ContextWindow).Availability != Unknown || Support(Codex, Models, ContextWindow).Usable() {
 		t.Fatal("context window listing claims changed")
 	}
+	grokCompletion := Native
+	if runtime.GOOS == "windows" {
+		grokCompletion = Unsupported
+	}
 	for _, f := range []Feature{Available, Effort, Tools, CacheSplit, CostReport} {
-		if c := Support(Grok, Complete, f); c.Availability != Native {
+		if c := Support(Grok, Complete, f); c.Availability != grokCompletion {
 			t.Errorf("Grok completion %s: %+v", f, c)
 		}
 	}

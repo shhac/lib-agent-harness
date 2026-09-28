@@ -79,8 +79,8 @@ func TestBackgroundIsRefusedWhereItIsNotOffered(t *testing.T) {
 		t.Fatal("an API session accepted background priority")
 	}
 	claude := Options{Provider: harness.Provider{Engine: harness.Claude}, WorkDir: t.TempDir(), Background: true}
-	if _, err := normalize(claude); err != nil {
-		t.Fatalf("a Claude session refused background priority: %v", err)
+	if _, err := normalize(claude); (err == nil) != harness.Support(harness.Claude, harness.Session, harness.Background).Usable() {
+		t.Fatalf("a Claude session's background priority disagrees with Support: %v", err)
 	}
 	plain := claude
 	plain.Background = false

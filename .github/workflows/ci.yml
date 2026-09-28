@@ -7,6 +7,8 @@ on:
 jobs:
   test:
     strategy:
+      # Every platform reports, so one platform's failure cannot hide another's.
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
