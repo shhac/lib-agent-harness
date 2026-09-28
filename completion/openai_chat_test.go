@@ -239,3 +239,18 @@ func TestOpenAIChatUsageIsMeasuredOnlyFromCompleteReports(t *testing.T) {
 		})
 	}
 }
+
+// A Go schema with no required arguments carries a nil slice; it must reach
+// the endpoint as an empty array, never as null.
+func TestOpenAIChatSendsValidSchemas(t *testing.T) {
+	api := respondWith(200, chatBody(chatChoice(`"stop"`, `{"content":"ok"}`)))
+	var required []string
+	tools := []Tool{{Type: "function", Function: Function{Name: "ping", Parameters: map[string]any{"type": "object", "properties": map[string]any{}, "required": required, "description": nil}}}}
+	if _, err := Complete(context.Background(), apiConfig(api), userMessage, tools); err != nil {
+		t.Fatal(err)
+	}
+	body := string(api.last(t).body)
+	if strings.Contains(body, "null") || !strings.Contains(body, `"required":[]`) {
+		t.Fatalf("schema sent as %s", body)
+	}
+}
