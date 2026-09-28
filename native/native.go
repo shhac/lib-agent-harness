@@ -319,6 +319,9 @@ func Run(ctx context.Context, c Config, r Request, stream *Stream) (Result, erro
 	if err := validate(c, r); err != nil {
 		return Result{}, err
 	}
+	if harness.LoginStoreLocked(engine) {
+		return Result{}, &RunError{Engine: engine, Family: harness.FailurePreflight, Code: harness.CodeKeychainUnavailable}
+	}
 	structured := r.Schema != ""
 	if stream != nil && (stream.engine != engine || stream.structured != structured) {
 		return Result{}, capabilityError(engine, CodeStreamMismatch)

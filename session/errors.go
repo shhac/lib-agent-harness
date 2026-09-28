@@ -90,6 +90,9 @@ const (
 	RefusedNotNative     = "not_native"
 	RefusedMethodMissing = "method_unavailable"
 	RefusedNotOffered    = "not_offered"
+	// RefusedKeychainUnavailable: the engine's login lives in a keychain that
+	// is locked, so launching it would raise an unlock prompt.
+	RefusedKeychainUnavailable = harness.CodeKeychainUnavailable
 )
 
 // refusalFamily says whether a refusal is about what can be honoured or about
@@ -106,6 +109,14 @@ func refusalFamily(code string) harness.Family {
 // refuse builds an option refusal: nothing is available as configured.
 func refuse(o Options, operation, code, reason string) *UnsupportedError {
 	return &UnsupportedError{Engine: o.Provider.Engine, Operation: operation, Code: code, Capability: harness.Capability{Availability: harness.Unsupported, Reason: reason}}
+}
+
+// lockedLogin refuses a launch that would read a locked keychain, or is nil.
+func lockedLogin(o Options) error {
+	if !harness.LoginStoreLocked(o.Provider.Engine) {
+		return nil
+	}
+	return refuse(o, "login", RefusedKeychainUnavailable, "the engine's login is in a locked keychain; launching it would ask the user to unlock it")
 }
 
 // toolHostRefusal refuses a tool host that failed validation. The reason is

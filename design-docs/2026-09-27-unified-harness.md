@@ -231,8 +231,12 @@ classifies any library failure the same way, whichever mode produced it.
 - **Increment 10:** shipped in v0.11.0. macOS 26 hides the environment of its
   own platform binaries, so the sweep also takes the descendants of marked
   processes; an orphaned platform binary still escapes.
+- **Increment 9:** shipped in v0.12.0 on lib-agent-keyring v0.2.0, whose
+  `HostStatus` reads `SecKeychainGetStatus` through purego (CGO-free, never
+  prompts; proved on a throwaway keychain). Only Claude on macOS is checked:
+  Codex and Grok keep their logins in files by default.
 - **Not yet:** streamed text deltas for API endpoints, composed compaction,
-  the Responses dialect, and increment 9.
+  and the Responses dialect.
 
 ## Increments
 

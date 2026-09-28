@@ -94,6 +94,9 @@ func open(ctx context.Context, o Options, r *Ref, lease *os.File) (*Session, err
 	if err != nil {
 		return refuse(err)
 	}
+	if err = lockedLogin(o); err != nil {
+		return refuse(err)
+	}
 	if err = ctx.Err(); err != nil {
 		return refuse(err)
 	}

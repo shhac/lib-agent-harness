@@ -428,6 +428,9 @@ func VerifySandbox(ctx context.Context, o Options) error {
 	if err != nil {
 		return err
 	}
+	if err = lockedLogin(o); err != nil {
+		return err
+	}
 	if o.Provider.Engine == harness.Codex {
 		if login, err := credentialDigest(filepath.Join(o.Provider.CLI.Home, codexCredentialFile)); err != nil || login == nil {
 			// Start would refuse to share a missing login; say so here too rather

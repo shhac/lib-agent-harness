@@ -884,6 +884,21 @@ A separate working directory does not require a separate account. Selecting a
 custom home can select a different login namespace; authenticate through the
 CLI's supported flow for that home.
 
+### A locked keychain
+
+Claude Code keeps its login in the macOS login keychain, and every Claude
+process reads it at startup. While the keychain is locked, each start raises
+its own unlock prompt, and several at once have wedged SecurityAgent. So
+before any operation launches Claude on macOS (sessions and their checks,
+native runs, completion, discovery, account inspection), the library asks
+the keychain's own status, which never prompts, through
+[lib-agent-keyring](https://github.com/shhac/lib-agent-keyring). If it is
+locked, the operation fails with `harness.CodeKeychainUnavailable`
+(`keychain_unavailable`, preflight family, not retryable) and starts nothing.
+`harness.LoginStoreLocked(engine)` asks the same question, in about a
+millisecond, so an application can stop polling until it is false again and
+show one "unlock your keychain" message rather than a failure per poll.
+
 ### Process containment
 
 Unix subprocesses run outside the parent's terminal process group. Windows

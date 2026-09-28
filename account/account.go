@@ -47,6 +47,9 @@ func Inspect(ctx context.Context, p harness.Provider) (harness.AccountReport, er
 	if code := p.Problem(); code != "" {
 		return report, &Error{Engine: p.Engine, Code: code, Family: harness.FailurePreflight}
 	}
+	if harness.LoginStoreLocked(p.Engine) {
+		return report, &Error{Engine: p.Engine, Code: harness.CodeKeychainUnavailable, Family: harness.FailurePreflight}
+	}
 	binary := p.CLI.Binary
 	if binary == "" {
 		binary = string(p.Engine)

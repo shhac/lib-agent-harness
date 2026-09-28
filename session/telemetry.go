@@ -22,6 +22,9 @@ func Inspect(ctx context.Context, o Options) (Inspection, error) {
 	if o.Provider.Engine.Transport() == harness.APITransport {
 		return out, &UnsupportedError{Engine: o.Provider.Engine, Operation: "inspect", Code: RefusedNotOffered, Capability: harness.Support(o.Provider.Engine, harness.Account, harness.Available)}
 	}
+	if err := lockedLogin(o); err != nil {
+		return out, err
+	}
 	// Ignore conversation-only configuration, including instructions and policy.
 	o = Options{Provider: o.Provider}
 	dir, err := os.MkdirTemp("", "agent-harness-inspect-")

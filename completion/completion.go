@@ -108,6 +108,9 @@ func Complete(ctx context.Context, cfg Config, messages []Message, tools []Tool)
 	if code := cfg.Provider.Problem(); code != "" {
 		return Result{}, preflightFailure(engine, code)
 	}
+	if harness.LoginStoreLocked(engine) {
+		return Result{}, preflightFailure(engine, harness.CodeKeychainUnavailable)
+	}
 	if cfg.Model == "" {
 		return Result{}, preflightFailure(engine, "model_required")
 	}

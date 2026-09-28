@@ -81,6 +81,9 @@ func (d discoverer) discover(ctx context.Context, p harness.Provider) ([]Model, 
 	if code := p.Problem(); code != "" {
 		return nil, refusal(engine, code)
 	}
+	if harness.LoginStoreLocked(engine) {
+		return nil, refusal(engine, harness.CodeKeychainUnavailable)
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
