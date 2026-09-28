@@ -221,7 +221,20 @@ sandboxed and compacted Grok sessions, and Grok quota, are unsupported.
 Consume turn events while the turn runs. `Wait` does not drain the stream;
 backpressure fails explicitly instead of silently dropping tool activity.
 Cancellation of a wait only stops waiting. Interruption and session closure are
-separate operations.
+separate operations. Tool events say what an agent did (`harness.ToolActivity`):
+`tool_started` carries the tool's arguments in `Input` (always valid JSON) and
+`tool_completed` carries its result text in `Output`, with `Status` saying
+whether it failed and `ExitCode` where a command reports one. Codex reports
+command, cwd, output and exit code, file changes, MCP and dynamic tool
+arguments and results, and web search queries; Claude its `tool_use` input and
+`tool_result` content; Grok `rawInput` and `rawOutput` or content; an API
+session the model's arguments and the handler's result. A hosted call is
+reported once, by the engine's own events. Each of `Input` and `Output` is
+bounded to `session.MaxToolPayloadBytes` (64 KiB) with `InputTruncated` or
+`OutputTruncated` set; a truncated `Input` becomes a JSON string holding the
+head of the original text. Payloads are passed through unredacted apart from
+the library's own tool-channel credential: they can contain private data, and
+applications apply their own visibility rules.
 
 `Health` reports `running`, `active`, `quiet`, `idle`, `exited` or `failed` from
 what has been observed, without contacting the CLI. Quiet means nothing recently

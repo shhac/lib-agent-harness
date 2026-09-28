@@ -81,7 +81,10 @@ func (s *Session) claudeAssistant(t *Turn, m map[string]json.RawMessage) {
 	s.observeRequestUsage(t, claudeResponseUsage(m["message"]))
 	var message struct {
 		ID      string
-		Content []struct{ Type, ID, Name, Text string }
+		Content []struct {
+			Type, ID, Name, Text string
+			Input                json.RawMessage
+		}
 	}
 	if json.Unmarshal(m["message"], &message) != nil {
 		return
@@ -92,7 +95,7 @@ func (s *Session) claudeAssistant(t *Turn, m map[string]json.RawMessage) {
 		case "text":
 			text = append(text, block.Text)
 		case "tool_use":
-			s.emit(t, Event{Kind: "tool_started", ItemID: block.ID, Tool: block.Name, Status: "running"})
+			s.emit(t, s.withToolPayload(Event{Kind: "tool_started", ItemID: block.ID, Tool: block.Name, Status: "running"}, block.Input, ""))
 		}
 	}
 	if len(text) > 0 {
@@ -104,8 +107,9 @@ func (s *Session) claudeUser(t *Turn, m map[string]json.RawMessage) {
 	var message struct {
 		Content []struct {
 			Type      string
-			ToolUseID string `json:"tool_use_id"`
-			IsError   bool   `json:"is_error"`
+			ToolUseID string          `json:"tool_use_id"`
+			IsError   bool            `json:"is_error"`
+			Content   json.RawMessage `json:"content"`
 		}
 	}
 	if json.Unmarshal(m["message"], &message) != nil {
@@ -117,7 +121,7 @@ func (s *Session) claudeUser(t *Turn, m map[string]json.RawMessage) {
 			if block.IsError {
 				status = "failed"
 			}
-			s.emit(t, Event{Kind: "tool_completed", ItemID: block.ToolUseID, Status: status})
+			s.emit(t, s.withToolPayload(Event{Kind: "tool_completed", ItemID: block.ToolUseID, Status: status}, nil, toolResultText(block.Content)))
 		}
 	}
 }

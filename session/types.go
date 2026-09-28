@@ -236,18 +236,40 @@ type SteerResult struct {
 	Strategy harness.Availability
 	Turn     *Turn
 }
+
+// Event is observable session activity. Text, Input and Output are model and
+// tool data that can be private: the library passes them through unredacted
+// (except its own tool-channel credential) and applications apply their own
+// visibility rules before showing or storing them.
 type Event struct {
-	Kind    string                   `json:"kind"` // text_delta, text, tool_started, tool_completed, status, usage, context, quota, credits, account
-	TurnID  string                   `json:"turn_id"`
-	ItemID  string                   `json:"item_id,omitempty"`
-	Text    string                   `json:"text,omitempty"`
-	Tool    string                   `json:"tool,omitempty"`
-	Status  string                   `json:"status,omitempty"`
-	Usage   *Usage                   `json:"usage,omitempty"`
-	Context *ContextSnapshot         `json:"context,omitempty"`
-	Quota   *harness.QuotaSnapshot   `json:"quota,omitempty"`
-	Credits *harness.CreditSnapshot  `json:"credits,omitempty"`
-	Account *harness.AccountSnapshot `json:"account,omitempty"`
+	Kind   string `json:"kind"` // text_delta, text, tool_started, tool_completed, status, usage, context, quota, credits, account
+	TurnID string `json:"turn_id"`
+	ItemID string `json:"item_id,omitempty"`
+	Text   string `json:"text,omitempty"`
+	Tool   string `json:"tool,omitempty"`
+	// Status on tool_completed is "completed", "failed", or the engine's own
+	// terminal word (Codex's "declined", an API session's "refused").
+	Status string `json:"status,omitempty"`
+	// Input is a tool's arguments as the harness reported them, always valid
+	// JSON: set on tool_started, and on tool_completed where the completion
+	// restates the call (Codex items, Grok updates carrying rawInput).
+	Input json.RawMessage `json:"input,omitempty"`
+	// Output is a tool's result text on tool_completed: its aggregated output,
+	// result content or error message.
+	Output string `json:"output,omitempty"`
+	// ExitCode is a command's exit status, where the harness reports one.
+	ExitCode *int `json:"exit_code,omitempty"`
+	// Input and Output are each bounded to MaxToolPayloadBytes. A truncated
+	// Output is its first bytes, cut on a character boundary; a truncated Input
+	// becomes a JSON string holding the first bytes of the original JSON text,
+	// so it stays valid JSON but no longer parses as the arguments object.
+	InputTruncated  bool                     `json:"input_truncated,omitempty"`
+	OutputTruncated bool                     `json:"output_truncated,omitempty"`
+	Usage           *Usage                   `json:"usage,omitempty"`
+	Context         *ContextSnapshot         `json:"context,omitempty"`
+	Quota           *harness.QuotaSnapshot   `json:"quota,omitempty"`
+	Credits         *harness.CreditSnapshot  `json:"credits,omitempty"`
+	Account         *harness.AccountSnapshot `json:"account,omitempty"`
 }
 
 // Usage is what a provider reported, in the shared harness shape: Input counts

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"regexp"
 	"strconv"
+	"strings"
 
 	harness "github.com/shhac/lib-agent-harness"
 )
@@ -63,13 +64,49 @@ func (s *Session) grokEvent(t *Turn, ref Ref, m map[string]json.RawMessage) {
 		if status == "" {
 			status = "pending"
 		}
-		s.emit(t, Event{Kind: "tool_started", ItemID: id, Tool: grokToolName(p.Update), Status: status})
+		s.emit(t, s.withToolPayload(Event{Kind: "tool_started", ItemID: id, Tool: grokToolName(p.Update), Status: status}, p.Update["rawInput"], ""))
 	case "tool_call_update":
 		id, status := str(p.Update, "toolCallId"), str(p.Update, "status")
 		if id != "" && (status == "completed" || status == "failed") {
-			s.emit(t, Event{Kind: "tool_completed", ItemID: id, Status: status})
+			s.emit(t, s.withToolPayload(Event{Kind: "tool_completed", ItemID: id, Status: status}, p.Update["rawInput"], grokToolOutput(p.Update)))
 		}
 	}
+}
+
+// grokToolOutput is an ACP tool call's result: its rawOutput, as text when it
+// is a string and as JSON text otherwise, or failing that the text of its
+// content blocks. A content block with no text, such as a diff, is kept as the
+// content's JSON text rather than dropped.
+func grokToolOutput(update map[string]json.RawMessage) string {
+	if raw := update["rawOutput"]; !jsonAbsent(raw) {
+		var text string
+		if json.Unmarshal(raw, &text) == nil {
+			return text
+		}
+		return string(raw)
+	}
+	var blocks []struct {
+		Type    string `json:"type"`
+		Content struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	raw := update["content"]
+	if jsonAbsent(raw) || json.Unmarshal(raw, &blocks) != nil {
+		return toolResultText(raw)
+	}
+	if len(blocks) == 0 {
+		return ""
+	}
+	var parts []string
+	for _, b := range blocks {
+		if b.Type != "content" || b.Content.Type != "text" {
+			return string(raw)
+		}
+		parts = append(parts, b.Content.Text)
+	}
+	return strings.Join(parts, "\n")
 }
 
 // grokResponseCompleted publishes one model response's usage while the turn

@@ -129,7 +129,7 @@ func (s *Session) runAPICall(ctx context.Context, t *Turn, response int, call co
 		return false
 	}
 	s.touch()
-	s.emit(t, Event{Kind: "tool_started", ItemID: call.ID, Tool: name, Status: "running"})
+	s.emit(t, s.withToolPayload(Event{Kind: "tool_started", ItemID: call.ID, Tool: name, Status: "running"}, json.RawMessage(call.Function.Arguments), ""))
 	settle := func(out toolOutcome) {
 		outcome := outcomeRan
 		if !out.ran {
@@ -158,7 +158,9 @@ func (s *Session) runAPICall(ctx context.Context, t *Turn, response int, call co
 		case out.isError:
 			status = "failed"
 		}
-		s.emit(t, Event{Kind: "tool_completed", ItemID: call.ID, Tool: name, Status: status})
+		// Output is what the model was answered: the handler's bounded result,
+		// its error, or the library's refusal.
+		s.emit(t, s.withToolPayload(Event{Kind: "tool_completed", ItemID: call.ID, Tool: name, Status: status}, nil, out.text))
 		return true
 	case <-ctx.Done():
 		return false

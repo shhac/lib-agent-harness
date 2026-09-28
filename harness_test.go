@@ -168,6 +168,27 @@ func TestOpenAICompatibleSessionClaims(t *testing.T) {
 	}
 }
 
+// Every session engine reports what its tools were asked and what they
+// produced: natively where the harness states it, composed where the library
+// runs the loop. Nothing else claims it.
+func TestToolActivityClaims(t *testing.T) {
+	for _, e := range []Engine{Codex, Claude, Grok} {
+		if c := Support(e, Session, ToolActivity); c.Availability != Native || c.Reason == "" {
+			t.Errorf("%s session tool activity: %+v", e, c)
+		}
+	}
+	if c := Support(OpenAICompatible, Session, ToolActivity); c.Availability != Composed || c.Reason == "" {
+		t.Errorf("API session tool activity: %+v", c)
+	}
+	for _, op := range []Operation{Complete, Run, Models, Account} {
+		for _, e := range Engines() {
+			if Support(e, op, ToolActivity).Usable() {
+				t.Errorf("%s %s claims tool activity", e, op)
+			}
+		}
+	}
+}
+
 type carrier struct{ facts Facts }
 
 func (c carrier) Error() string       { return "failed" }

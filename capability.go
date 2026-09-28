@@ -83,6 +83,9 @@ const (
 	// IncludeGlobalSkills: including the harness's own installed skills
 	// (Skills.Global Include).
 	IncludeGlobalSkills Feature = "global_skills"
+	// ToolActivity: session tool events carry the tool's arguments and its
+	// result text, bounded, as the harness reported them.
+	ToolActivity Feature = "tool_activity"
 )
 
 type supportKey struct {
@@ -213,6 +216,7 @@ var supportTable = map[supportKey]Capability{
 	{Codex, Session, Tools}:                unverified,
 	{Codex, Session, CacheSplit}:           native,
 	{Codex, Session, ContextWindow}:        unverified,
+	{Codex, Session, ToolActivity}:         {Native, "item arguments, aggregated output, exit code and MCP results from the app-server's own items"},
 	{Claude, Session, Available}:           unverified,
 	{Claude, Session, Resume}:              unverified,
 	{Claude, Session, Interrupt}:           unverified,
@@ -225,6 +229,7 @@ var supportTable = map[supportKey]Capability{
 	{Claude, Session, Tools}:               unverified,
 	{Claude, Session, CacheSplit}:          native,
 	{Claude, Session, ContextWindow}:       unverified,
+	{Claude, Session, ToolActivity}:        {Native, "tool_use input and tool_result content from the stream"},
 	{Grok, Session, Available}:             unverified,
 	{Grok, Session, Resume}:                unverified,
 	{Grok, Session, Interrupt}:             unverified,
@@ -237,6 +242,7 @@ var supportTable = map[supportKey]Capability{
 	{Grok, Session, Tools}:                 {Unsupported, "Grok sessions do not host caller tools"},
 	{Grok, Session, CacheSplit}:            native,
 	{Grok, Session, ContextWindow}:         {Unknown, "estimated from each response's input against the window Grok's model state states"},
+	{Grok, Session, ToolActivity}:          {Native, "the agent protocol's rawInput, and rawOutput or content on a tool call's final update"},
 
 	{Codex, Models, Available}:                native,
 	{Codex, Models, Effort}:                   native,
@@ -265,6 +271,7 @@ var supportTable = map[supportKey]Capability{
 	{OpenAICompatible, Session, Compact}:             {Unsupported, "the library does not compact a composed session's history"},
 	{OpenAICompatible, Session, CacheSplit}:          cacheVaries,
 	{OpenAICompatible, Session, ContextWindow}:       {Unknown, "estimated from each response's input; Chat Completions states no window"},
+	{OpenAICompatible, Session, ToolActivity}:        {Composed, "the library reports the model's call arguments and the handler's result as it ran them"},
 	{OpenAICompatible, Account, Available}:           {Unsupported, "API endpoints expose no account inspection"},
 
 	{Codex, Account, Available}:  unverified,

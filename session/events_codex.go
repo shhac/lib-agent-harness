@@ -2,6 +2,7 @@ package session
 
 import (
 	"encoding/json"
+	"strings"
 
 	harness "github.com/shhac/lib-agent-harness"
 )
@@ -77,12 +78,63 @@ func (s *Session) codexItem(t *Turn, completed bool, p map[string]json.RawMessag
 		if name := str(item, "tool"); name != "" {
 			tool = name
 		}
-		kind := "tool_started"
+		input, output, exit := codexToolActivity(typ, item)
+		event := Event{Kind: "tool_started", ItemID: id, Tool: tool, Status: str(item, "status")}
 		if completed {
-			kind = "tool_completed"
+			event.Kind, event.ExitCode = "tool_completed", exit
+		} else {
+			output = ""
 		}
-		s.emit(t, Event{Kind: kind, ItemID: id, Tool: tool, Status: str(item, "status")})
+		s.emit(t, s.withToolPayload(event, input, output))
 	}
+}
+
+// codexToolActivity reads what an item was asked to do and what it produced,
+// from the ThreadItem shapes codex-cli 0.156.1's app-server protocol declares
+// (codex app-server generate-ts). A completed item restates the call, so its
+// input is reported again on completion.
+func codexToolActivity(typ string, item map[string]json.RawMessage) (json.RawMessage, string, *int) {
+	switch typ {
+	case "commandExecution":
+		var exit *int
+		_ = json.Unmarshal(item["exitCode"], &exit)
+		return pickFields(item, "command", "cwd"), str(item, "aggregatedOutput"), exit
+	case "fileChange":
+		return pickFields(item, "changes"), "", nil
+	case "mcpToolCall":
+		var failure struct {
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(item["error"], &failure) == nil && failure.Message != "" {
+			return item["arguments"], failure.Message, nil
+		}
+		var result struct {
+			Content json.RawMessage `json:"content"`
+		}
+		_ = json.Unmarshal(item["result"], &result)
+		return item["arguments"], toolResultText(result.Content), nil
+	case "dynamicToolCall":
+		var items []struct{ Type, Text string }
+		_ = json.Unmarshal(item["contentItems"], &items)
+		var parts []string
+		for _, content := range items {
+			if content.Type == "inputText" {
+				parts = append(parts, content.Text)
+			}
+		}
+		return item["arguments"], strings.Join(parts, "\n"), nil
+	case "webSearch":
+		output := ""
+		if !jsonAbsent(item["results"]) {
+			output = string(item["results"])
+		}
+		return pickFields(item, "query", "action"), output, nil
+	case "imageView":
+		return pickFields(item, "path"), "", nil
+	case "collabAgentToolCall":
+		return pickFields(item, "prompt", "model", "receiverThreadIds"), "", nil
+	}
+	return nil, "", nil
 }
 
 func (s *Session) codexTokenUsage(t *Turn, p map[string]json.RawMessage) {
