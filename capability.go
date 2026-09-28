@@ -93,6 +93,12 @@ const (
 	// Browser: the browser integration the harness itself ships, switched on
 	// for this invocation. Off unless asked for.
 	Browser Feature = "browser"
+	// Background: the harness and everything it starts run at background
+	// priority, so agent work yields to the machine's interactive use.
+	Background Feature = "background"
+	// ToolImages: tool_completed events carry the images a tool returned,
+	// such as a browser screenshot, decoded and bounded.
+	ToolImages Feature = "tool_images"
 )
 
 type supportKey struct {
@@ -126,6 +132,9 @@ func platform(e Engine, op Operation, f Feature, c Capability) Capability {
 	if runtime.GOOS == "windows" && op == Session && e.Transport() == CLITransport && (f == RestrictTools || f == Sandbox || f == Tools || f == Loopback) {
 		return Capability{Unsupported, "restricted and sandboxed hosting are unavailable on Windows"}
 	}
+	if runtime.GOOS == "windows" && f == Background {
+		return Capability{Unsupported, "background priority is not implemented on Windows"}
+	}
 	if runtime.GOOS == "windows" && e == Grok && op == Complete {
 		return Capability{Unsupported, "Grok's restricted runtime home is unavailable on Windows"}
 	}
@@ -139,6 +148,7 @@ var (
 	claudeBrowser = Capability{Native, "Claude in Chrome (--chrome) drives the operator's real Chrome through its extension, outside any sandbox, reaching whatever the extension's site permissions allow with that profile's logins"}
 	codexBrowser  = Capability{Unsupported, "codex-cli 0.156.1's browser_use features are not enabled: their tools and reach have not been identified against the installed CLI without inference"}
 	cacheVaries   = Capability{Unknown, "reported only by endpoints that split cached input"}
+	background    = Capability{Native, "the process group is niced, and on macOS put in the kernel's background band; descendants inherit both"}
 	// Constrained completion has no native tools, so no engine loads skills
 	// there; the library composes them for every engine instead.
 	composedSkills = Capability{Composed, "the library indexes provided skills and answers a read-only skill tool; a permitted skill's scripts run only when the caller answers those calls"}
@@ -284,18 +294,27 @@ var supportTable = map[supportKey]Capability{
 	{OpenAICompatible, Session, ToolActivity}:        {Composed, "the library reports the model's call arguments and the handler's result as it ran them"},
 	{OpenAICompatible, Account, Available}:           {Unsupported, "API endpoints expose no account inspection"},
 
-	{Claude, Session, Loopback}: {Unknown, "Claude Code's sandbox allowLocalBinding, which admits this machine's own addresses; proved before each launch by a canary that must reach and bind loopback and be refused an off-machine address"},
-	{Codex, Session, Loopback}:  {Unsupported, "codex-cli 0.156.1's sandbox network is all or nothing: allow_local_binding has no effect while the network is off, and turning it on opens every address"},
-	{Grok, Session, Loopback}:   {Unsupported, "Grok sessions have no proven OS sandbox"},
-	{Codex, Run, Loopback}:      {Unsupported, "a native run has no library-proven sandbox to scope networking in"},
-	{Claude, Run, Loopback}:     {Unsupported, "a native run has no library-proven sandbox to scope networking in"},
-	{Grok, Run, Loopback}:       {Unsupported, "a native run has no library-proven sandbox to scope networking in"},
-	{Claude, Session, Browser}:  claudeBrowser,
-	{Claude, Run, Browser}:      claudeBrowser,
-	{Codex, Session, Browser}:   codexBrowser,
-	{Codex, Run, Browser}:       codexBrowser,
-	{Grok, Session, Browser}:    {Unsupported, "Grok 1.0.41 ships no browser integration"},
-	{Grok, Run, Browser}:        {Unsupported, "Grok 1.0.41 ships no browser integration"},
+	{Claude, Session, Loopback}:   {Unknown, "Claude Code's sandbox allowLocalBinding, which admits this machine's own addresses; proved before each launch by a canary that must reach and bind loopback and be refused an off-machine address"},
+	{Codex, Session, Loopback}:    {Unsupported, "codex-cli 0.156.1's sandbox network is all or nothing: allow_local_binding has no effect while the network is off, and turning it on opens every address"},
+	{Grok, Session, Loopback}:     {Unsupported, "Grok sessions have no proven OS sandbox"},
+	{Codex, Run, Loopback}:        {Unsupported, "a native run has no library-proven sandbox to scope networking in"},
+	{Claude, Run, Loopback}:       {Unsupported, "a native run has no library-proven sandbox to scope networking in"},
+	{Grok, Run, Loopback}:         {Unsupported, "a native run has no library-proven sandbox to scope networking in"},
+	{Claude, Session, Background}: background,
+	{Codex, Session, Background}:  background,
+	{Grok, Session, Background}:   background,
+	{Claude, Run, Background}:     background,
+	{Codex, Run, Background}:      background,
+	{Grok, Run, Background}:       background,
+	{Claude, Session, ToolImages}: {Native, "image blocks in Claude Code's tool results, checked with a claude-in-chrome screenshot"},
+	{Codex, Session, ToolImages}:  {Unknown, "image content in an MCP tool call's result, as the app-server protocol declares it; not seen from a real tool"},
+	{Grok, Session, ToolImages}:   {Unknown, "image content blocks in an ACP tool call update, as the protocol declares them; not seen from a real tool"},
+	{Claude, Session, Browser}:    claudeBrowser,
+	{Claude, Run, Browser}:        claudeBrowser,
+	{Codex, Session, Browser}:     codexBrowser,
+	{Codex, Run, Browser}:         codexBrowser,
+	{Grok, Session, Browser}:      {Unsupported, "Grok 1.0.41 ships no browser integration"},
+	{Grok, Run, Browser}:          {Unsupported, "Grok 1.0.41 ships no browser integration"},
 
 	{Codex, Account, Available}:  unverified,
 	{Codex, Account, Login}:      unverified,

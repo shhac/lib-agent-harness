@@ -269,3 +269,19 @@ func TestBrowserClaims(t *testing.T) {
 		t.Error("an API session claims a browser")
 	}
 }
+
+func TestBackgroundAndToolImageClaims(t *testing.T) {
+	for _, e := range []Engine{Claude, Codex, Grok} {
+		for _, op := range []Operation{Session, Run} {
+			if c := Support(e, op, Background); (runtime.GOOS == "windows") == c.Usable() || c.Reason == "" {
+				t.Errorf("%s %s background on %s: %+v", e, op, runtime.GOOS, c)
+			}
+		}
+	}
+	if Support(OpenAICompatible, Session, Background).Usable() || Support(Claude, Complete, Background).Usable() {
+		t.Error("background claimed where nothing is launched for it")
+	}
+	if Support(Claude, Session, ToolImages).Availability != Native || Support(Codex, Session, ToolImages).Availability != Unknown || Support(Grok, Session, ToolImages).Availability != Unknown {
+		t.Error("tool image claims changed")
+	}
+}

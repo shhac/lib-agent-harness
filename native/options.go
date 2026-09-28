@@ -105,6 +105,7 @@ func requestProblem(engine harness.Engine, c Config, r Request) string {
 		{r.ResumeSession != "", harness.Resume},
 		{c.Effort != "", harness.Effort},
 		{c.Browser, harness.Browser},
+		{c.Background, harness.Background},
 	}
 	for _, w := range wanted {
 		if w.on && !harness.Support(engine, harness.Run, w.feature).Usable() {

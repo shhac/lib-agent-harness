@@ -11,6 +11,7 @@ package session
 // loop reports each call itself.
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"unicode/utf8"
@@ -102,36 +103,104 @@ func jsonAbsent(raw json.RawMessage) bool {
 	return trimmed == "" || trimmed == "null"
 }
 
+// Tool images: at most MaxToolImages on one tool_completed event, each at
+// most MaxToolImageBytes decoded, and only these types. A screenshot is tens
+// of kilobytes; the bound is for a tool that returns a photograph.
+const (
+	MaxToolImages     = 4
+	MaxToolImageBytes = 4 << 20
+)
+
+var toolImageTypes = map[string]bool{"image/png": true, "image/jpeg": true, "image/gif": true, "image/webp": true}
+
+// Image is an image a tool returned, such as a browser screenshot, decoded.
+// Data JSON-encodes as base64.
+type Image struct {
+	MediaType string `json:"media_type"`
+	Data      []byte `json:"data"`
+}
+
+// toolContentBlock is one block of a tool result, in either shape: Claude's
+// ({"type":"image","source":{"type":"base64","media_type","data"}}) or MCP's
+// ({"type":"image","mimeType","data"}).
+type toolContentBlock struct {
+	Type     string `json:"type"`
+	Text     string `json:"text"`
+	Data     string `json:"data"`
+	MimeType string `json:"mimeType"`
+	Source   struct {
+		Type      string `json:"type"`
+		MediaType string `json:"media_type"`
+		Data      string `json:"data"`
+	} `json:"source"`
+}
+
+// toolImages collects the image blocks, bounded, and counts those left out.
+type toolImages struct {
+	images  []Image
+	omitted int
+}
+
+func (c *toolImages) add(b toolContentBlock) {
+	mediaType, data := b.MimeType, b.Data
+	if b.Source.Type == "base64" {
+		mediaType, data = b.Source.MediaType, b.Source.Data
+	}
+	decoded, err := base64.StdEncoding.DecodeString(data)
+	if err != nil || !toolImageTypes[mediaType] || len(decoded) > MaxToolImageBytes || len(c.images) >= MaxToolImages {
+		c.omitted++
+		return
+	}
+	c.images = append(c.images, Image{MediaType: mediaType, Data: decoded})
+}
+
+// withImages sets a completed tool event's images.
+func withImages(e Event, c toolImages) Event {
+	e.Images, e.ImagesOmitted = c.images, c.omitted
+	return e
+}
+
 // toolResultText reads a tool result's content the way both MCP and Claude
-// shape it: a plain string, or blocks whose text parts are the result. Content
-// with no text in it is kept as its JSON text rather than dropped.
+// shape it: a plain string, or blocks whose text parts are the result. Image
+// blocks are taken out as images rather than kept as text. Other content with
+// no text in it is kept as its JSON text rather than dropped.
 func toolResultText(raw json.RawMessage) string {
+	text, _ := toolResult(raw)
+	return text
+}
+
+func toolResult(raw json.RawMessage) (string, toolImages) {
+	var images toolImages
 	if jsonAbsent(raw) {
-		return ""
+		return "", images
 	}
 	var text string
 	if json.Unmarshal(raw, &text) == nil {
-		return text
+		return text, images
 	}
-	var blocks []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
+	var blocks []toolContentBlock
+	if json.Unmarshal(raw, &blocks) != nil {
+		return string(raw), images
 	}
-	if json.Unmarshal(raw, &blocks) == nil {
-		if len(blocks) == 0 {
-			return ""
-		}
-		var parts []string
-		for _, b := range blocks {
-			if b.Type == "text" {
-				parts = append(parts, b.Text)
-			}
-		}
-		if len(parts) > 0 {
-			return strings.Join(parts, "\n")
+	if len(blocks) == 0 {
+		return "", images
+	}
+	var parts []string
+	for _, b := range blocks {
+		switch b.Type {
+		case "text":
+			parts = append(parts, b.Text)
+		case "image":
+			images.add(b)
 		}
 	}
-	return string(raw)
+	if len(parts) > 0 {
+		return strings.Join(parts, "\n"), images
+	}
+	if len(images.images) > 0 || images.omitted > 0 {
+		return "", images
+	}
+	return string(raw), images
 }
 
 // pickFields builds an input object from the named fields a harness reported,

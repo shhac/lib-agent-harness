@@ -121,7 +121,8 @@ func (s *Session) claudeUser(t *Turn, m map[string]json.RawMessage) {
 			if block.IsError {
 				status = "failed"
 			}
-			s.emit(t, s.withToolPayload(Event{Kind: "tool_completed", ItemID: block.ToolUseID, Status: status}, nil, toolResultText(block.Content)))
+			text, images := toolResult(block.Content)
+			s.emit(t, withImages(s.withToolPayload(Event{Kind: "tool_completed", ItemID: block.ToolUseID, Status: status}, nil, text), images))
 		}
 	}
 }

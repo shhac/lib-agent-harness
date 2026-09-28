@@ -48,6 +48,17 @@ func normalizeBrowser(o Options) error {
 	return nil
 }
 
+// normalizeBackground refuses background priority where it is not offered.
+func normalizeBackground(o Options) error {
+	if !o.Background {
+		return nil
+	}
+	if c := harness.Support(o.Provider.Engine, harness.Session, harness.Background); !c.Usable() {
+		return &UnsupportedError{Engine: o.Provider.Engine, Operation: "background", Code: RefusedNotOffered, Capability: c}
+	}
+	return nil
+}
+
 // browserTool reports whether an advertised tool is the browser's. Which of
 // them a sandboxed session may call is decided by its permission rules.
 func browserTool(o Options, name string) bool {

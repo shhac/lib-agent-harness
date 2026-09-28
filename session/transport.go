@@ -71,6 +71,9 @@ func newProcessWireArgs(ctx context.Context, o Options, args, env []string, onSt
 		cancel()
 		return nil, ErrTransport
 	}
+	if o.Background {
+		p.Background()
+	}
 	cmd.Dir = o.WorkDir
 	if env == nil {
 		env = environment(o)

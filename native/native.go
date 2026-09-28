@@ -48,6 +48,10 @@ type Config struct {
 	// logins. Off unless set; an engine without one is refused (see
 	// harness.Support).
 	Browser bool
+	// Background runs the harness, and everything it starts, at background
+	// priority, so agent work yields to the machine's interactive use (see
+	// harness.Support for where it is offered).
+	Background bool
 	// Args is a trusted escape hatch for flags the library does not model. It
 	// must not come from untrusted model output, and a flag the library manages
 	// is refused rather than allowed to override the typed options.
@@ -299,6 +303,9 @@ func execute(ctx context.Context, c Config, args []string, workDir string, stdou
 		return err
 	}
 	defer p.Close()
+	if c.Background {
+		p.Background()
+	}
 	cmd.Dir = workDir
 	var outputMu sync.Mutex
 	cmd.Stdout = lockedWriter{mu: &outputMu, out: stdout}

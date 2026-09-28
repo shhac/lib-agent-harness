@@ -235,6 +235,9 @@ classifies any library failure the same way, whichever mode produced it.
   `HostStatus` reads `SecKeychainGetStatus` through purego (CGO-free, never
   prompts; proved on a throwaway keychain). Only Claude on macOS is checked:
   Codex and Grok keep their logins in files by default.
+- **v0.13.0:** `Background` priority for sessions and native runs, and tool
+  images (a claude-in-chrome screenshot) on `tool_completed` events, both
+  asked for by crew-assistant's researcher and checked live on macOS 27.
 - **Not yet:** streamed text deltas for API endpoints, composed compaction,
   and the Responses dialect.
 

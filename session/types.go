@@ -154,6 +154,11 @@ type Options struct {
 	// site permissions allow. A restricted session is refused: its tools are
 	// exactly the caller's. It is part of a Ref.
 	Browser bool
+	// Background runs the harness, and everything it starts, at background
+	// priority, so agent work yields to the machine's interactive use (see
+	// harness.Support for where it is offered). It changes no behaviour, so it
+	// is not part of a Ref.
+	Background bool
 	// Skills are made available to the session, and installed skills kept or
 	// excluded, as skills.go describes for each engine and mode: natively
 	// where the harness loads them itself, and otherwise composed by the
@@ -274,13 +279,19 @@ type Event struct {
 	// Output is its first bytes, cut on a character boundary; a truncated Input
 	// becomes a JSON string holding the first bytes of the original JSON text,
 	// so it stays valid JSON but no longer parses as the arguments object.
-	InputTruncated  bool                     `json:"input_truncated,omitempty"`
-	OutputTruncated bool                     `json:"output_truncated,omitempty"`
-	Usage           *Usage                   `json:"usage,omitempty"`
-	Context         *ContextSnapshot         `json:"context,omitempty"`
-	Quota           *harness.QuotaSnapshot   `json:"quota,omitempty"`
-	Credits         *harness.CreditSnapshot  `json:"credits,omitempty"`
-	Account         *harness.AccountSnapshot `json:"account,omitempty"`
+	InputTruncated  bool `json:"input_truncated,omitempty"`
+	OutputTruncated bool `json:"output_truncated,omitempty"`
+	// Images are the images a tool returned, on tool_completed, such as a
+	// browser screenshot: at most MaxToolImages, each at most
+	// MaxToolImageBytes decoded, PNG, JPEG, GIF or WebP. ImagesOmitted counts
+	// the ones left out for their number, size or type.
+	Images        []Image                  `json:"images,omitempty"`
+	ImagesOmitted int                      `json:"images_omitted,omitempty"`
+	Usage         *Usage                   `json:"usage,omitempty"`
+	Context       *ContextSnapshot         `json:"context,omitempty"`
+	Quota         *harness.QuotaSnapshot   `json:"quota,omitempty"`
+	Credits       *harness.CreditSnapshot  `json:"credits,omitempty"`
+	Account       *harness.AccountSnapshot `json:"account,omitempty"`
 }
 
 // Usage is what a provider reported, in the shared harness shape: Input counts

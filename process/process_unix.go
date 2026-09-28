@@ -15,14 +15,15 @@ import (
 // left it, such as a server an agent backgrounded. Build it with Command,
 // which wires the command's cancellation to Stop.
 type Process struct {
-	cmd      *exec.Cmd
-	mu       sync.Mutex
-	started  bool
-	finished bool
-	stopped  bool
-	onStart  func(int)
-	token    string
-	launched time.Time
+	cmd        *exec.Cmd
+	mu         sync.Mutex
+	started    bool
+	finished   bool
+	stopped    bool
+	onStart    func(int)
+	token      string
+	launched   time.Time
+	background bool
 }
 
 // Notify registers a callback invoked once, after the child is running and
@@ -30,6 +31,13 @@ type Process struct {
 // before it can safely recover from a crash needs that identity, and needs it
 // only when containment actually took effect. Set it before Run.
 func (p *Process) Notify(fn func(int)) { p.onStart = fn }
+
+// Background lowers the whole contained tree to background priority once it
+// starts: its process group is niced, and on macOS it also enters the
+// kernel's background band, which throttles its CPU and I/O. Descendants
+// inherit both, including ones started later in a process group of their own.
+// Set it before Run.
+func (p *Process) Background() { p.background = true }
 
 // New prepares containment before any child starts.
 func New(cmd *exec.Cmd) (*Process, error) {
@@ -51,6 +59,16 @@ func (p *Process) Run() error {
 	pid := 0
 	if err == nil {
 		pid = p.cmd.Process.Pid
+	}
+	if err == nil && p.background {
+		if lowerErr := lowerPriority(pid); lowerErr != nil {
+			// Asked for background work and not given it: stop rather than
+			// compete with the foreground at normal priority.
+			_ = syscall.Kill(-pid, syscall.SIGKILL)
+			p.mu.Unlock()
+			_ = p.cmd.Wait()
+			return lowerErr
+		}
 	}
 	notify := p.onStart
 	p.mu.Unlock()

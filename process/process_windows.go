@@ -29,6 +29,10 @@ type Process struct {
 // contained, with its process ID. Set it before Run.
 func (p *Process) Notify(fn func(int)) { p.onStart = fn }
 
+// Background is not offered on Windows; harness.Support says so, and callers
+// refuse the request before building a process.
+func (p *Process) Background() {}
+
 func New(cmd *exec.Cmd) (*Process, error) {
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {

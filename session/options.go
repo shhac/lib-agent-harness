@@ -22,6 +22,9 @@ func normalize(o Options) (Options, error) {
 	if err := normalizeBrowser(o); err != nil {
 		return o, err
 	}
+	if err := normalizeBackground(o); err != nil {
+		return o, err
+	}
 	if o.Provider.Engine.Transport() == harness.APITransport {
 		return normalizeAPI(o)
 	}

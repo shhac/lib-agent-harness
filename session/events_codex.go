@@ -80,13 +80,28 @@ func (s *Session) codexItem(t *Turn, completed bool, p map[string]json.RawMessag
 		}
 		input, output, exit := codexToolActivity(typ, item)
 		event := Event{Kind: "tool_started", ItemID: id, Tool: tool, Status: str(item, "status")}
+		var images toolImages
 		if completed {
 			event.Kind, event.ExitCode = "tool_completed", exit
+			images = codexToolImages(typ, item)
 		} else {
 			output = ""
 		}
-		s.emit(t, s.withToolPayload(event, input, output))
+		s.emit(t, withImages(s.withToolPayload(event, input, output), images))
 	}
+}
+
+// codexToolImages are the image content of an MCP tool call's result.
+func codexToolImages(typ string, item map[string]json.RawMessage) toolImages {
+	if typ != "mcpToolCall" {
+		return toolImages{}
+	}
+	var result struct {
+		Content json.RawMessage `json:"content"`
+	}
+	_ = json.Unmarshal(item["result"], &result)
+	_, images := toolResult(result.Content)
+	return images
 }
 
 // codexToolActivity reads what an item was asked to do and what it produced,

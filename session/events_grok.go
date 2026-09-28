@@ -68,15 +68,34 @@ func (s *Session) grokEvent(t *Turn, ref Ref, m map[string]json.RawMessage) {
 	case "tool_call_update":
 		id, status := str(p.Update, "toolCallId"), str(p.Update, "status")
 		if id != "" && (status == "completed" || status == "failed") {
-			s.emit(t, s.withToolPayload(Event{Kind: "tool_completed", ItemID: id, Status: status}, p.Update["rawInput"], grokToolOutput(p.Update)))
+			s.emit(t, withImages(s.withToolPayload(Event{Kind: "tool_completed", ItemID: id, Status: status}, p.Update["rawInput"], grokToolOutput(p.Update)), grokToolImages(p.Update)))
 		}
 	}
 }
 
+// grokToolImages are the image blocks among an ACP tool call's content, which
+// wraps each block: {"type":"content","content":{"type":"image",...}}.
+func grokToolImages(update map[string]json.RawMessage) toolImages {
+	var images toolImages
+	var blocks []struct {
+		Type    string           `json:"type"`
+		Content toolContentBlock `json:"content"`
+	}
+	if json.Unmarshal(update["content"], &blocks) != nil {
+		return images
+	}
+	for _, b := range blocks {
+		if b.Type == "content" && b.Content.Type == "image" {
+			images.add(b.Content)
+		}
+	}
+	return images
+}
+
 // grokToolOutput is an ACP tool call's result: its rawOutput, as text when it
 // is a string and as JSON text otherwise, or failing that the text of its
-// content blocks. A content block with no text, such as a diff, is kept as the
-// content's JSON text rather than dropped.
+// content blocks. Image blocks are reported as images; another block with no
+// text, such as a diff, keeps the content's JSON text rather than dropping it.
 func grokToolOutput(update map[string]json.RawMessage) string {
 	if raw := update["rawOutput"]; !jsonAbsent(raw) {
 		var text string
@@ -101,10 +120,14 @@ func grokToolOutput(update map[string]json.RawMessage) string {
 	}
 	var parts []string
 	for _, b := range blocks {
-		if b.Type != "content" || b.Content.Type != "text" {
+		switch {
+		case b.Type == "content" && b.Content.Type == "image":
+			// Reported as an image by grokToolImages.
+		case b.Type == "content" && b.Content.Type == "text":
+			parts = append(parts, b.Content.Text)
+		default:
 			return string(raw)
 		}
-		parts = append(parts, b.Content.Text)
 	}
 	return strings.Join(parts, "\n")
 }

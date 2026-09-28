@@ -236,6 +236,14 @@ head of the original text. Payloads are passed through unredacted apart from
 the library's own tool-channel credential: they can contain private data, and
 applications apply their own visibility rules.
 
+Images a tool returns, such as a browser screenshot, are taken out of the text
+and carried on `tool_completed` as `Images`, decoded (`MediaType` and `Data`):
+at most `session.MaxToolImages` (4), each at most `session.MaxToolImageBytes`
+(4 MiB), PNG, JPEG, GIF or WebP, with `ImagesOmitted` counting the rest.
+Claude's image blocks are checked live (a claude-in-chrome screenshot); Codex
+MCP results and Grok content are read as their protocols declare them, and
+`harness.Support(e, Session, ToolImages)` says which.
+
 `Health` reports `running`, `active`, `quiet`, `idle`, `exited` or `failed` from
 what has been observed, without contacting the CLI. Quiet means nothing recently
 and the process is alive: that is unknown, not stuck, and the library draws no
@@ -652,6 +660,18 @@ only the browser's server, claude.ai connectors are switched off, and the
 startup report must show that server connected and no other server's tools.
 Checked live: a sandboxed session served a page on loopback, read it through
 Chrome, and found no `file_upload` tool.
+
+### Background priority
+
+`Options.Background` (and `native.Config.Background`) runs the harness, and
+everything it starts, at background priority, so agent work yields to whatever
+the person at the machine is doing. Once the harness starts, its process group
+is niced to 10 and, on macOS, put in the kernel's background band, which also
+throttles its disk and network I/O. Descendants inherit both, including a
+server an agent backgrounds into a process group of its own. Checked live: a
+sandboxed Claude session ran at nice 10 in the background band. If the
+priority cannot be lowered, the launch is stopped rather than run at normal
+priority. It is not offered on Windows, and it is not part of a `Ref`.
 
 ### Caller-hosted tools beside native ones
 
