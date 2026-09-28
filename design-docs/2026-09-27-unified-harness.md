@@ -222,8 +222,14 @@ classifies any library failure the same way, whichever mode produced it.
   unsupported.
 - **Increment 7:** shipped in v0.7.0, with `MaxOutputTokens` for completion.
 - **Increment 6:** shipped in v0.8.0.
-- **Not yet:** streamed text deltas for API endpoints, composed compaction, and
-  the Responses dialect.
+- **Increment 8:** shipped in v0.10.0 for Claude. Loopback turned out to be
+  "this machine": Claude Code's `allowLocalBinding` admits the machine's own
+  interface addresses as well as loopback (checked live), so the proof
+  requires loopback to work and an off-machine address, reached by the probe
+  itself, to be refused. The browser is Claude in Chrome; Codex's
+  `browser_use` and a Codex loopback mode remain unsupported.
+- **Not yet:** streamed text deltas for API endpoints, composed compaction,
+  the Responses dialect, increment 9, and increment 10.
 
 ## Increments
 
@@ -419,6 +425,23 @@ releasable.
      keychain" message rather than a failure per poll.
    - Out of scope: how a deployment provides credentials to other tools (`gh`
      tokens, GPG agents). The library only avoids adding prompts of its own.
+
+10. **Reap what a session's agent started.** The live increment-8 check left
+    its dev server running after the session closed. Claude Code runs a
+    background command in a process group of its own, and once its wrapper
+    shell exits the command belongs to launchd, so stopping the harness's
+    group never reaches it. An agent that can start servers must not leave
+    them behind: repeated QA rounds would pile them up.
+    - Every process a session launches carries a per-launch marker in its
+      environment, which descendants inherit. On close, the library finds its
+      own user's processes carrying that marker (the kernel's process
+      arguments on macOS, `/proc/<pid>/environ` on Linux, CGO-free) and stops
+      them, group first, then SIGKILL after a grace period.
+    - A process that clears its environment escapes, so the marker is a
+      best-effort sweep, not a boundary; Windows' job objects already contain
+      the whole tree.
+    - Proved by a test that starts a detached, reparented grandchild and
+      checks it is gone after Close.
 
 A portable permission vocabulary for native runs is deliberately left out. It
 would need a mapping for each engine, with a proof that no mapping widens
