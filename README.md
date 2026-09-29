@@ -666,12 +666,16 @@ Chrome, and found no `file_upload` tool.
 `Options.Background` (and `native.Config.Background`) runs the harness, and
 everything it starts, at background priority, so agent work yields to whatever
 the person at the machine is doing. Once the harness starts, its process group
-is niced to 10 and, on macOS, put in the kernel's background band, which also
-throttles its disk and network I/O. Descendants inherit both, including a
-server an agent backgrounds into a process group of its own. Checked live: a
-sandboxed Claude session ran at nice 10 in the background band. If the
-priority cannot be lowered, the launch is stopped rather than run at normal
-priority. It is not offered on Windows, and it is not part of a `Ref`.
+is niced to 10, which descendants inherit, including a server an agent
+backgrounds into a process group of its own. If the priority cannot be
+lowered, the launch is stopped rather than run at normal priority. It is not
+offered on Windows, and it is not part of a `Ref`.
+
+macOS's background band (`PRIO_DARWIN_BG`) is deliberately not used. v0.13.0
+used it, and on a busy machine it made an agent's 5-second test suite take two
+minutes and time out: it also throttles disk I/O and confines work to the
+efficiency cores. Nice 10 alone ran the same suite in 5.5 seconds at the same
+load while still yielding to foreground work.
 
 ### Caller-hosted tools beside native ones
 

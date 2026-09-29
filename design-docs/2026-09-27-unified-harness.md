@@ -238,6 +238,8 @@ classifies any library failure the same way, whichever mode produced it.
 - **v0.13.0:** `Background` priority for sessions and native runs, and tool
   images (a claude-in-chrome screenshot) on `tool_completed` events, both
   asked for by crew-assistant's researcher and checked live on macOS 27.
+  v0.13.2 drops macOS's background band from `Background`, keeping nice 10:
+  the band made QA's test suites time out on a busy machine.
 - **Not yet:** streamed text deltas for API endpoints, composed compaction,
   and the Responses dialect.
 

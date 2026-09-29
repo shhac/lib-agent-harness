@@ -33,10 +33,8 @@ type Process struct {
 func (p *Process) Notify(fn func(int)) { p.onStart = fn }
 
 // Background lowers the whole contained tree to background priority once it
-// starts: its process group is niced, and on macOS it also enters the
-// kernel's background band, which throttles its CPU and I/O. Descendants
-// inherit both, including ones started later in a process group of their own.
-// Set it before Run.
+// starts: its process group is niced, which descendants inherit, including
+// ones started later in a process group of their own. Set it before Run.
 func (p *Process) Background() { p.background = true }
 
 // New prepares containment before any child starts.

@@ -148,7 +148,7 @@ var (
 	claudeBrowser = Capability{Native, "Claude in Chrome (--chrome) drives the operator's real Chrome through its extension, outside any sandbox, reaching whatever the extension's site permissions allow with that profile's logins"}
 	codexBrowser  = Capability{Unsupported, "codex-cli 0.156.1's browser_use features are not enabled: their tools and reach have not been identified against the installed CLI without inference"}
 	cacheVaries   = Capability{Unknown, "reported only by endpoints that split cached input"}
-	background    = Capability{Native, "the process group is niced, and on macOS put in the kernel's background band; descendants inherit both"}
+	background    = Capability{Native, "the process group is niced to 10, which descendants inherit"}
 	// Constrained completion has no native tools, so no engine loads skills
 	// there; the library composes them for every engine instead.
 	composedSkills = Capability{Composed, "the library indexes provided skills and answers a read-only skill tool; a permitted skill's scripts run only when the caller answers those calls"}
