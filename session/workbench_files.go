@@ -25,7 +25,9 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"time"
 	"unicode/utf8"
 
 	"github.com/shhac/lib-agent-harness/internal/wsfile"
@@ -76,6 +78,8 @@ const (
 	wbNotText          = "file_not_text"
 	wbReserved         = "file_reserved"
 	wbUnreadable       = "file_unreadable"
+	wbLinked           = "file_linked"
+	wbOtherMount       = "file_other_mount"
 	// list_files never follows a link, not even one it was asked for.
 	wbIsSymlink      = "file_is_symlink"
 	wbThroughSymlink = "path_through_symlink"
@@ -86,7 +90,15 @@ const (
 
 // workspace is one session's handle on its WorkDir.
 type workspace struct {
-	root *os.Root
+	root     *os.Root
+	mount    wsfile.Mount
+	jobs     chan workspaceJob
+	stop     chan struct{}
+	stopped  chan struct{}
+	stopOnce sync.Once
+	stuck    atomic.Pointer[TurnError]
+	failed   func(error)
+	grace    time.Duration
 	// budget is the smaller of a tool's own limit and the host's
 	// MaxResultBytes, so the host never cuts a result without it saying so.
 	budget int
@@ -96,6 +108,8 @@ type workspace struct {
 	// step, when set, runs before each chunk or directory batch; tests use it
 	// to act mid-call.
 	step func()
+	// openStep lets tests swap a name after Lstat but before an open.
+	openStep func()
 	// dirFault, when set, fails reading a directory before its batch n; tests
 	// use it to stand in for an I/O error part-way through a listing. rel is
 	// the directory's slash path from the root.
@@ -110,28 +124,64 @@ func openWorkspace(o Options) (*workspace, error) {
 	if o.Workbench == nil {
 		return nil, nil
 	}
-	root, err := os.OpenRoot(o.WorkDir)
+	if !wsfile.MountCheckSupported {
+		return nil, refuse(o, "workbench", RefusedWorkbenchMountCheck, "the runtime cannot check workspace mount identity")
+	}
+	root, err := os.OpenRoot(o.WorkDir + string(filepath.Separator) + ".")
 	if err != nil {
 		return nil, refuse(o, "work_dir", RefusedWorkDir, "the workspace could not be opened")
+	}
+	f, err := root.OpenFile(".", wsfile.DirectoryFlags, 0)
+	if err != nil {
+		root.Close()
+		return nil, refuse(o, "workbench", RefusedWorkbenchMountCheck, "the runtime cannot check workspace mount identity")
+	}
+	mount, err := workspaceMountID(f)
+	f.Close()
+	if err != nil {
+		root.Close()
+		return nil, refuse(o, "workbench", RefusedWorkbenchMountCheck, "the runtime cannot check workspace mount identity")
 	}
 	budget := maxWorkbenchResult
 	if limit := o.Restriction.Tools.MaxResultBytes; limit > 0 && limit < budget {
 		budget = limit
 	}
-	return &workspace{root: root, budget: budget}, nil
+	w := &workspace{root: root, mount: mount, budget: budget, grace: workspaceGrace, jobs: make(chan workspaceJob), stop: make(chan struct{}), stopped: make(chan struct{})}
+	go w.worker()
+	return w, nil
 }
 
 func (w *workspace) close() {
 	if w != nil {
-		_ = w.root.Close()
+		w.stopOnce.Do(func() { close(w.stop); _ = w.root.Close() })
 	}
 }
 
 // openIn opens a file through a directory handle, counted.
 func (w *workspace) openIn(dir *os.Root, name string) (*os.File, error) {
-	f, err := dir.Open(name)
+	if w.openStep != nil {
+		w.openStep()
+	}
+	f, err := dir.OpenFile(name, wsfile.OpenFlags, 0)
 	if err != nil {
 		return nil, err
+	}
+	facts, err := wsfile.Check(f, w.mount)
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	if !facts.Regular && !facts.Directory {
+		f.Close()
+		return nil, errNotRegular
+	}
+	if facts.Regular && facts.Links != 1 {
+		f.Close()
+		return nil, errLinked
+	}
+	if !facts.SameMount {
+		f.Close()
+		return nil, errOtherMount
 	}
 	w.handles.Add(1)
 	return f, nil
@@ -178,6 +228,14 @@ func resolveName(rel string, root bool) (clean, code string) {
 func rootFailure(err error) string {
 	var pathErr *fs.PathError
 	switch {
+	case errors.Is(err, errOtherMount):
+		return wbOtherMount
+	case errors.Is(err, errLinked):
+		return wbLinked
+	case errors.Is(err, errNotRegular):
+		return wbNotRegular
+	case errors.As(err, &pathErr) && wsfile.NotRegular(pathErr.Err):
+		return wbNotRegular
 	case errors.Is(err, fs.ErrNotExist):
 		return wbNotFound
 	case errors.As(err, &pathErr) && pathErr.Err.Error() == "path escapes from parent":
@@ -277,6 +335,9 @@ func (w *workspace) openRegular(c *cursor, top *dirNode, clean string) (*os.File
 		last := i == len(parts)-1
 		switch mode := info.Mode(); {
 		case mode&fs.ModeSymlink != 0:
+			if c.policy.git {
+				return nil, wbIsSymlink
+			}
 			if hops++; hops > maxLinkHops {
 				return nil, wbUnreadable
 			}
@@ -299,6 +360,9 @@ func (w *workspace) openRegular(c *cursor, top *dirNode, clean string) (*os.File
 		case !mode.IsRegular():
 			return nil, wbNotRegular
 		default:
+			if wsfile.LinkCount(info) > 1 {
+				return nil, wbLinked
+			}
 			f, err := w.openIn(dir, part)
 			if err != nil {
 				return nil, rootFailure(err)
@@ -310,7 +374,7 @@ func (w *workspace) openRegular(c *cursor, top *dirNode, clean string) (*os.File
 				return nil, wbUnreadable
 			}
 			if aliasedNames {
-				if name, err := realName(f); err != nil || wsfile.Reserved(name) {
+				if name, err := realName(f); err != nil || c.policy.hides(name) {
 					w.release(f)
 					if err != nil {
 						return nil, wbUnreadable
@@ -476,6 +540,22 @@ func (w *workspace) listFiles(ctx context.Context, raw json.RawMessage) (ToolRes
 				}
 				rel := path.Join(d.node.rel, name)
 				line, info, exists := describe(handle, name, rel)
+				if info != nil && info.Mode().IsRegular() && w.fileOtherMount(handle, name, info) {
+					line = rel + " [mount]"
+					info = nil
+				}
+				if info != nil && info.IsDir() {
+					probe := d.node.child(name, info)
+					r, e := c.enter(handle, probe)
+					if e == nil {
+						r.Close()
+						w.handles.Add(-1)
+					}
+					if errors.Is(e, errOtherMount) {
+						line = rel + "/ [mount]"
+						info = nil
+					}
+				}
 				if !exists {
 					// Gone since the directory was read: nothing to list.
 					return true, nil
@@ -636,6 +716,9 @@ func describe(dir *os.Root, name, rel string) (line string, info fs.FileInfo, ex
 	case !mode.IsRegular():
 		return rel + " [other]", info, true
 	}
+	if wsfile.LinkCount(info) > 1 {
+		return rel + " [linked]", info, true
+	}
 	return rel, info, true
 }
 
@@ -644,4 +727,21 @@ func (w *workspace) visitLimit() int {
 		return w.maxVisited
 	}
 	return maxListVisited
+}
+
+// fileOtherMount checks regular listing entries too: bind mounts can target
+// a file. No content is read and a swapped special file is opened nonblocking.
+func (w *workspace) fileOtherMount(dir *os.Root, name string, info fs.FileInfo) bool {
+	f, err := dir.OpenFile(name, wsfile.OpenFlags, 0)
+	if err != nil {
+		return false
+	}
+	w.handles.Add(1)
+	defer w.release(f)
+	opened, err := f.Stat()
+	if err != nil || !os.SameFile(opened, info) {
+		return false
+	}
+	facts, err := wsfile.Check(f, w.mount)
+	return err == nil && facts.Regular && !facts.SameMount
 }

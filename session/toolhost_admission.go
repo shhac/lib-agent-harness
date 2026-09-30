@@ -88,6 +88,9 @@ func (h *toolHost) execute(ready *admitted, turn string, settle func(toolOutcome
 	defer h.release()
 	result, err := h.cfg.Handler.CallTool(ready.call.ctx, ToolCall{TurnID: turn, Name: ready.name, Arguments: ready.arguments})
 	if err != nil {
+		if workspaceStuck(err) {
+			return toolOutcome{text: unknownOutcomeText, isError: true, ran: true, unknown: true}
+		}
 		if errors.Is(err, context.Canceled) {
 			return toolOutcome{text: "tool execution was cancelled; its effect is unknown and must be established from evidence", isError: true, ran: true}
 		}
@@ -116,6 +119,7 @@ func (h *toolHost) bounded(text string) string { return bound(text, h.cfg.result
 // toolOutcome is what one call produced for the model. ran is false for a
 // refusal, whose reason is set: nothing was executed.
 type toolOutcome struct {
+	unknown bool
 	text    string
 	isError bool
 	ran     bool

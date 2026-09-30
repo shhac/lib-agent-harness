@@ -218,6 +218,12 @@ func (s *Session) interrupt(ctx context.Context, expected string) error {
 		return waitErr
 	}
 	if result.Status != "interrupted" {
+		s.mu.Lock()
+		failure := s.failure
+		s.mu.Unlock()
+		if workspaceStuck(failure) {
+			return failure
+		}
 		return ErrStaleTurn
 	}
 	if s.api != nil {

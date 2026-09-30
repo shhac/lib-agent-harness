@@ -445,6 +445,17 @@ func (s *Session) Release(ctx context.Context) (Reclamation, error) {
 		// returned; until then the conversation is still this session's.
 		select {
 		case <-s.api.released:
+			if w := s.api.workspace; w != nil {
+				if err := w.stuck.Load(); err != nil {
+					return Reclamation{Confirmed: true}, err
+				}
+			}
+			s.mu.Lock()
+			failure := s.failure
+			s.mu.Unlock()
+			if workspaceStuck(failure) {
+				return Reclamation{Confirmed: true}, failure
+			}
 			return Reclamation{Confirmed: true}, nil
 		case <-ctx.Done():
 			return Reclamation{Found: true}, ErrUnreclaimed

@@ -93,6 +93,9 @@ func (s *Session) Health() Health {
 }
 
 func failureReason(err error) string {
+	if workspaceStuck(err) {
+		return WorkspaceIOStuck
+	}
 	for _, known := range []struct {
 		error
 		code string

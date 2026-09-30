@@ -21,13 +21,6 @@ import (
 	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
-// enableWorkbench lets a workbench past its not-offered refusal for one test.
-func enableWorkbench(t *testing.T) {
-	t.Helper()
-	workbenchEnabled = true
-	t.Cleanup(func() { workbenchEnabled = false })
-}
-
 var finishTool = ToolDefinition{Name: "finish", Description: "Report the work.", Schema: map[string]any{"type": "object"}, Closing: true}
 
 // workbenchOptions is an API session with a read-only workbench on a fresh
@@ -65,7 +58,6 @@ func workbenchRefusal(t *testing.T, err error) string {
 }
 
 func TestWorkbenchIsRefusedForCLIEngines(t *testing.T) {
-	enableWorkbench(t)
 	for _, engine := range []harness.Engine{harness.Codex, harness.Claude, harness.Grok} {
 		o := Options{Provider: harness.Provider{Engine: engine, CLI: harness.CLI{Home: t.TempDir()}}, WorkDir: t.TempDir(), Workbench: &Workbench{}}
 		if engine == harness.Grok {
@@ -79,32 +71,17 @@ func TestWorkbenchIsRefusedForCLIEngines(t *testing.T) {
 	}
 }
 
-// With the workbench not offered, nothing a caller can reach changes: a
-// fully valid workbench is refused before anything exists on disk.
-func TestWorkbenchIsNotOfferedYet(t *testing.T) {
+func TestWorkbenchIsOffered(t *testing.T) {
 	o := workbenchOptions(t, nopHandler())
+	o.complete = (&scriptedModel{}).complete
 	s, err := Start(context.Background(), o)
-	if s != nil {
-		closeAPI(t, s)
-		t.Fatal("a workbench session started")
+	if err != nil {
+		t.Fatal(err)
 	}
-	var unsupported *UnsupportedError
-	if !errors.As(err, &unsupported) || unsupported.Code != RefusedNotOffered || unsupported.Operation != "workbench" || unsupported.Capability.Usable() {
-		t.Fatalf("%v", err)
-	}
-	if facts, _ := harness.ErrorFacts(err); facts.Family != harness.FailureCapability {
-		t.Fatalf("facts %+v", facts)
-	}
-	if _, _, err = Open(context.Background(), o, nil); !errors.As(err, &unsupported) || unsupported.Code != RefusedNotOffered {
-		t.Fatalf("open: %v", err)
-	}
-	if entries, _ := os.ReadDir(o.RuntimeHome); len(entries) != 0 {
-		t.Fatalf("a refused session left %d entries in its runtime home", len(entries))
-	}
+	closeAPI(t, s)
 }
 
 func TestWorkbenchNormalizeRefusals(t *testing.T) {
-	enableWorkbench(t)
 	for _, tc := range []struct {
 		name string
 		edit func(t *testing.T, o *Options)
@@ -179,7 +156,6 @@ func privateDirIn(t *testing.T, parent, name string) string {
 }
 
 func TestWorkbenchReservesItsToolNames(t *testing.T) {
-	enableWorkbench(t)
 	for _, name := range workbenchReserved {
 		if skills.IsTool(name) {
 			t.Errorf("%s is also a skill tool", name)
@@ -231,7 +207,6 @@ func TestWorkbenchRefIsPinned(t *testing.T) {
 }
 
 func TestWorkbenchResumeMustMatch(t *testing.T) {
-	enableWorkbench(t)
 	o := workbenchOptions(t, nopHandler())
 	s := startAPI(t, o)
 	ref := s.Ref()
@@ -311,7 +286,6 @@ func offeredNames(tools []completion.Tool) []string {
 }
 
 func TestWorkbenchToolsReachTheRequest(t *testing.T) {
-	enableWorkbench(t)
 	model := &scriptedModel{}
 	o := workbenchOptions(t, nopHandler())
 	o.Restriction.Tools.Tools = []ToolDefinition{readFileLike, finishTool}
@@ -321,7 +295,7 @@ func TestWorkbenchToolsReachTheRequest(t *testing.T) {
 		t.Fatal(done.err)
 	}
 	tools := model.tools[0]
-	if names := strings.Join(offeredNames(tools), ","); names != "view,finish,read_file,list_files" {
+	if names := strings.Join(offeredNames(tools), ","); names != "view,finish,read_file,list_files,search_files" {
 		t.Fatalf("tools %s", names)
 	}
 	for i, def := range workbenchDefinitions(o) {
@@ -348,7 +322,7 @@ func TestWorkbenchToolsReachTheRequest(t *testing.T) {
 	}
 }
 
-const workbenchDefinitionsBytes = 1074
+const workbenchDefinitionsBytes = 1710
 
 var readFileLike = ToolDefinition{Name: "view", Description: "The caller's own view.", Schema: map[string]any{"type": "object"}}
 
@@ -360,7 +334,6 @@ func TestWorkbenchToolsReachTheWire(t *testing.T) {
 		_ = listener.Close()
 	}
 	testenv.SkipIfRefused(t, "listening on loopback", err)
-	enableWorkbench(t)
 	e := newEndpoint(t, answer("Done."))
 	o := workbenchOptions(t, nopHandler())
 	o.Provider.API.BaseURL = e.url
@@ -368,7 +341,7 @@ func TestWorkbenchToolsReachTheWire(t *testing.T) {
 	if done := runAPITurnToEnd(t, s, "Look."); done.err != nil {
 		t.Fatal(done.err)
 	}
-	if names := strings.Join(e.seen()[0].toolNames(), ","); names != "finish,read_file,list_files" {
+	if names := strings.Join(e.seen()[0].toolNames(), ","); names != "finish,read_file,list_files,search_files" {
 		t.Fatalf("tools on the wire %s", names)
 	}
 }
@@ -376,7 +349,6 @@ func TestWorkbenchToolsReachTheWire(t *testing.T) {
 // A model lists, reads and then calls the caller's closing tool. The library
 // answers its own calls; the caller's handler sees only its own.
 func TestWorkbenchLoopCallsItsToolsBesideTheCallers(t *testing.T) {
-	enableWorkbench(t)
 	var mu sync.Mutex
 	var calls []ToolCall
 	o := workbenchOptions(t, echo(&calls, &mu))
@@ -385,6 +357,7 @@ func TestWorkbenchLoopCallsItsToolsBesideTheCallers(t *testing.T) {
 		{{"c1", "list_files", `{}`}},
 		{{"c2", "read_file", `{"path":"docs/notes.md"}`}},
 		{{"c3", "read_file", `{"path":"../escape"}`}},
+		{{"search", "search_files", `{"pattern":"second"}`}},
 		{{"c4", "finish", `{"ok":true}`}},
 	}}
 	o.complete = model.complete
@@ -426,7 +399,10 @@ func TestWorkbenchLoopCallsItsToolsBesideTheCallers(t *testing.T) {
 			t.Errorf("read_file's output %q", ev.Output)
 		}
 	}
-	want := "tool_started:list_files:running,tool_completed:list_files:completed,tool_started:read_file:running,tool_completed:read_file:completed,tool_started:read_file:running,tool_completed:read_file:failed,tool_started:finish:running,tool_completed:finish:completed"
+	if got := answered(4, "search"); got != "docs/notes.md:2: second" {
+		t.Fatal(got)
+	}
+	want := "tool_started:list_files:running,tool_completed:list_files:completed,tool_started:read_file:running,tool_completed:read_file:completed,tool_started:read_file:running,tool_completed:read_file:failed,tool_started:search_files:running,tool_completed:search_files:completed,tool_started:finish:running,tool_completed:finish:completed"
 	if strings.Join(events, ",") != want {
 		t.Fatalf("events\n got %v\nwant %s", events, want)
 	}
@@ -437,7 +413,7 @@ func TestWorkbenchLoopCallsItsToolsBesideTheCallers(t *testing.T) {
 			results++
 		}
 	}
-	if results != 4 {
+	if results != 5 {
 		t.Fatalf("%d results recorded", results)
 	}
 	if strings.Contains(answered(2, "c2")+answered(3, "c3"), o.WorkDir) {

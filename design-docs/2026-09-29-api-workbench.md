@@ -44,15 +44,9 @@ And after a sixth review:
 - the canary and an adversarial CI test try to unmount, remount and rebind
   around the `.git` overlay, and every attempt must fail.
 
-**Status.** Stage 1 part 1 (LAH-2) is implemented but switched off. It adds
-`Options.Workbench`, the `WorkDir` and `RuntimeHome` rules, the reserved names,
-the `Ref` digest, and `read_file` and `list_files` wired to the model and the
-host. Every session that sets `Workbench` is still refused with
-`RefusedNotOffered`, so no caller can reach the tools, and `Support` claims
-nothing. Stage 1 part 2 switches it on. It adds the opened-handle checks,
-non-blocking opens, the workspace worker, `search_files`, `Support`, the
-README and CI (see "Stage 1 lands in two parts" below). Stage 2 (LAH-3) is not
-implemented. The work is staged in the tasks at the end.
+**Status.** Stage 1 has shipped (LAH-2 and LAH-8): read-only tools,
+opened-handle checks on Linux, macOS and Windows, one bounded workspace
+worker, and the WorkspaceRead claim. Stage 2 (LAH-3) is not implemented.
 
 This supersedes one line in two earlier documents: "sandboxing is never
 claimed" for API sessions, in
@@ -374,7 +368,8 @@ Further rules:
       `match_not_found`/`match_not_unique` answers would reveal whether a string
       occurs in the outside file.
     - `list_files` returns names only, so it lists the entry and marks it
-      `linked`.
+      `linked` on Unix. Windows Lstat has no link count, so listing omits
+      that mark while opened-handle reads still refuse linked files.
     - `write_file` may replace the name, because the rename never writes the
       outside inode. The result says the link was replaced.
   - **Skills are not affected.** The skill tools read from the caller's own
@@ -553,12 +548,16 @@ Further rules:
       admitting work, a stuck worker can never be followed by a second one.
       There is at most one per session, and it is never multiplied by
       repeated cancellation.
-    - **`Close` waits for the worker the same way.** It waits up to the grace.
-      If the worker is still stuck, `Close` releases the transcript lock and
-      returns the `workspace_io_stuck` error: the one goroutine it could not
+    - **`Close` starts bounded shutdown.** It remains void and returns
+      without waiting; `Release` waits for shutdown. If the worker remains
+      stuck past the grace, shutdown releases the transcript lock and
+      `Release` returns the `workspace_io_stuck` error: the one goroutine it could not
       stop, and its handle, remain until the system call returns, which is
       when the worker exits. `Close` never reports that work stopped when it
-      did not. The crash cleanup at `Open` and `Resume` runs on the same
+      did not. A turn already closed by `Close` keeps its `ErrClosed` result;
+      the durable turn record, Health and Release carry the late stuck-I/O
+      failure. Health preserves an earlier session failure if one already
+      exists; Release still reports abandoned workspace I/O. The crash cleanup at `Open` and `Resume` runs on the same
       worker, under the same bound, and a stuck cleanup fails the `Open`.
     - **Commands are unaffected.** `run_command` is a process tree that can be
       killed, and the existing containment and `WaitDelay` already settle it.
@@ -567,9 +566,10 @@ Further rules:
       settle it while the hook holds, and releasing the hook within the grace
       settles it with `context.Canceled`.
     - A hook held past a shortened test grace fails the session with
-      `workspace_io_stuck`. No later call or turn is admitted, `Close` returns
+      `workspace_io_stuck`. No later call or turn is admitted, `Release` returns
       the same error, and once the hook is released the worker exits: a
-      goroutine counter returns to its baseline.
+      goroutine counter returns to its baseline and no handles remain beyond
+      the root. The worker's stopped channel independently proves worker exit.
     - Cancelling a stalled read, releasing it, and calling again, repeated 100
       times, ends with exactly one worker goroutine and no open handles beyond
       the root.
@@ -805,9 +805,10 @@ file. The tests prove it with escapes: `..`, absolute paths, a symlink to a
 sibling, a symlink chain, a directory swapped for a symlink, a hard link to a
 file outside `WorkDir` (pre-existing and created concurrently), a mount below
 `WorkDir`, a FIFO and a socket. Every byte returned meets "What a returned
-byte is" above, and no call blocks on what it opens.
+byte is" above, and no call blocks on what it opens: FIFOs and sockets
+return immediately. Cancellation also bounds the wait for stalled workspace I/O.
 
-**Stage 1 lands in two parts.** The owner split it so that each part can be
+**Stage 1 shipped in two parts.** The owner split it so that each part can be
 reviewed on its own:
 
 - **Part 1 (LAH-2), the inert foundation.** It adds:
@@ -819,9 +820,8 @@ reviewed on its own:
   - the shared `internal/wsfile` checks, which `internal/skills` now uses
     unchanged.
 
-  `normalizeWorkbench` runs every check and then still refuses the option
-  with `RefusedNotOffered`. Only an unexported flag that tests set gets past
-  that refusal. So `Support`, the README's planned note and CI do not change.
+  Part 1 originally refused the option with `RefusedNotOffered`. Part 2
+  removed that gate after adding the handle checks and worker below.
   `Workbench` has no stage 2 fields yet, so there is nothing to refuse for
   them. The `WorkDir` and `RuntimeHome` comparison uses `os.SameFile` on every
   platform, not only on macOS and Windows. That is stricter, and it costs
@@ -889,7 +889,7 @@ reviewed on its own:
     limit applies to every answer to a call: a result, a handler's error, a
     cancellation, a refusal, and the loop's not-run and unknown-outcome
     answers. So nothing the model is answered with exceeds it.
-- **Part 2 switches it on.** It adds:
+- **Part 2 (LAH-8), shipped, switches it on.** It adds:
   - the opened-handle checks (link count, mount identity, `GetFileType`) and
     the `O_NONBLOCK|O_NOCTTY` opens;
   - the workspace worker, with `workspace_io_stuck`;
@@ -897,12 +897,19 @@ reviewed on its own:
   - the `Support` entries, the README section with its data caveat, and the
     Linux CI bind-mount step.
 
-  Last, it removes the flag. Until then no caller can reach a tool that lacks
-  those checks.
+  The gate is removed. On Unix the checked Lstat link count is also a
+  pre-filter: removing an outside file's workspace link before the handle
+  check must not make that retained handle appear safe. The opened file
+  must still match Lstat. Directory OpenRoot uses a trailing `/.` so that
+  Go opens the child as an intermediate directory; Go's ordinary final
+  component open otherwise blocks on a substituted FIFO.
+  `TestWorkbenchNonblockingFIFOOpenAfterLstat/directory` guards this
+  dependency on Go's `os.Root` behaviour across upgrades. The retained
+  directory is checked for identity and mount before use.
 
 **Data caveat.** Anything a read tool returns goes to the model provider. With
 OpenRouter that is a third party chosen by routing (see below). `WorkDir` is
-therefore also the edge of what may leave the machine. The README will tell
+therefore also the edge of what may leave the machine. The README tells
 callers to use a workspace that holds no secrets, such as a clean checkout
 without `.env` files, and that nothing outside the session should link
 outside files into it.
@@ -1598,7 +1605,7 @@ shapes, and the tests use synthetic responses in those shapes:
    `Resume` alike. That also covers the workbench. Unknown goes ahead. The
    tests use fixtures and an in-process model; OpenRouter's real
    `supported_parameters` values are among the live checks above.
-3. **Stage 1 (LAH-2).** Add `Options.Workbench` and the `WorkDir` rules, the
+3. **Stage 1 (LAH-2 and LAH-8), done.** Add `Options.Workbench` and the `WorkDir` rules, the
    reserved names, `read_file`/`list_files`/`search_files` on `os.Root`, the
    shared file-check package, the `Ref` digest only when set (golden digests
    unchanged, plus a new golden for a workbench), and `WorkspaceRead` in

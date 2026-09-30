@@ -135,6 +135,9 @@ func (s *Session) runAPICall(ctx context.Context, t *Turn, response int, call co
 		if !out.ran {
 			outcome = outcomeRefused
 		}
+		if out.unknown {
+			outcome = outcomeUnknown
+		}
 		_ = a.append(record{Type: recordToolResult, Turn: t.id, Response: response, Call: call.ID, Tool: name, Text: out.text, IsError: out.isError, Outcome: outcome})
 	}
 	// Admission happens here, synchronously, so a call the loop hands over is
@@ -163,6 +166,11 @@ func (s *Session) runAPICall(ctx context.Context, t *Turn, response int, call co
 		s.emit(t, s.withToolPayload(Event{Kind: "tool_completed", ItemID: call.ID, Tool: name, Status: status}, nil, out.text))
 		return true
 	case <-ctx.Done():
+		// Workspace handlers bound their cancellation wait. Retain the turn
+		// until that handler settles or fails the session with a stuck worker.
+		if a.workspace != nil && isWorkbenchTool(name) {
+			<-outcomes
+		}
 		return false
 	}
 }
@@ -187,14 +195,20 @@ func (s *Session) skipCalls(t *Turn, response int, calls []completion.ToolCall) 
 
 // endAPITurn records how the turn ended and publishes its accounting and
 // status. A turn the session's closing already ended is still recorded, as
-// interrupted, so a later resume finds it settled.
+// interrupted, unless a workspace worker failed to settle, so a later
+// resume finds the durable failure.
 func (s *Session) endAPITurn(t *Turn, status string, err error, account *turnAccount) {
 	code := ""
 	var failure *TurnError
 	if errors.As(err, &failure) {
 		code = failure.Code
 	}
-	if t.ended() {
+	s.mu.Lock()
+	sessionFailure := s.failure
+	s.mu.Unlock()
+	if s.api.workspace != nil && s.api.workspace.stuck.Load() != nil || workspaceStuck(sessionFailure) {
+		status, code = "failed", WorkspaceIOStuck
+	} else if t.ended() {
 		status, code = "interrupted", "session_closed"
 	} else {
 		t.mu.Lock()

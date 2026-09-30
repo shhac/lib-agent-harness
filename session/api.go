@@ -8,7 +8,7 @@ package session
 // are the CLIs'.
 //
 // Only the caller's hosted tools, the library's skill tools and, with a
-// Workbench (not offered yet), the library's workbench tools exist. The
+// Workbench, the library's workbench tools exist. The
 // library writes every request itself, so the restricted surface holds by
 // construction rather than by probe, and no bridge is involved: the handlers
 // are called directly, under the same admission, serialization, closing-tool
@@ -447,6 +447,9 @@ func openAPI(ctx context.Context, o Options, r *Ref) (*Session, error) {
 	}
 	a.recovery = recovery
 	s.api = a
+	if ws != nil {
+		ws.failed = s.failWorkspace
+	}
 	// No onRefusal: the loop owns every call it hands the host, so it reports
 	// each refusal on the turn itself, in order.
 	host := newDirectToolHost(apiToolHost(o, ws), append(apiSkillDefinitions(o), workbenchDefinitions(o)...)...)

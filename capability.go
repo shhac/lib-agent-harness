@@ -51,7 +51,9 @@ type Feature string
 
 const (
 	// Available is the operation itself.
-	Available Feature = "available"
+	Available      Feature = "available"
+	WorkspaceRead  Feature = "workspace_read"  // confined read-only workspace tools
+	WorkspaceWrite Feature = "workspace_write" // workspace mutation
 
 	Effort           Feature = "effort"
 	Tools            Feature = "tools"             // caller-defined tools: proposed (Complete) or hosted (Session)
@@ -65,7 +67,7 @@ const (
 	Compact             Feature = "compact"
 	AppendInstructions  Feature = "append_instructions"
 	ReplaceInstructions Feature = "replace_instructions"
-	RestrictTools       Feature = "restrict_tools" // only the caller's tools, proven before launch
+	RestrictTools       Feature = "restrict_tools" // only configured tools, proven before launch
 	Sandbox             Feature = "sandbox"        // native tools inside a proven OS sandbox
 	CostReport          Feature = "cost"           // the harness values its token spend
 	CacheSplit          Feature = "cache_split"    // cached input is reported apart from fresh
@@ -129,6 +131,9 @@ func Support(e Engine, op Operation, f Feature) Capability {
 // sandboxed hosting of a CLI harness are unavailable on Windows. An API
 // session has no process to contain, so it is unaffected.
 func platform(e Engine, op Operation, f Feature, c Capability) Capability {
+	if f == WorkspaceRead && runtime.GOOS != "darwin" && runtime.GOOS != "linux" && runtime.GOOS != "windows" {
+		return Capability{Unsupported, "workspace mount checks are unavailable on this platform"}
+	}
 	if runtime.GOOS == "windows" && op == Session && e.Transport() == CLITransport && (f == RestrictTools || f == Sandbox || f == Tools || f == Loopback) {
 		return Capability{Unsupported, "restricted and sandboxed hosting are unavailable on Windows"}
 	}
@@ -280,11 +285,13 @@ var supportTable = map[supportKey]Capability{
 	{OpenAICompatible, Models, ContextWindow}: {Unknown, "reported only by some gateways"},
 
 	{OpenAICompatible, Run, Available}:               {Unsupported, "an API endpoint has no native agent; use Complete"},
+	{OpenAICompatible, Session, WorkspaceRead}:       {Composed, "the library's read_file, list_files and search_files: regular, singly linked files reached inside WorkDir on WorkDir's own mount"},
+	{OpenAICompatible, Session, WorkspaceWrite}:      {Unsupported, "not offered yet"},
 	{OpenAICompatible, Session, Available}:           {Composed, "the library runs the agent loop over the endpoint, keeping the conversation in RuntimeHome"},
 	{OpenAICompatible, Session, Resume}:              {Composed, "the library reloads its own transcript; a call interrupted mid-run is answered as an unknown outcome, never re-run"},
 	{OpenAICompatible, Session, Interrupt}:           {Composed, "the library cancels the in-flight request and the running handler"},
 	{OpenAICompatible, Session, Steer}:               {Composed, "the library interrupts the turn and starts another"},
-	{OpenAICompatible, Session, RestrictTools}:       {Composed, "only the caller's hosted tools exist: the library writes every request itself"},
+	{OpenAICompatible, Session, RestrictTools}:       {Composed, "only the caller's hosted tools and the library's workbench tools exist: the library writes every request itself"},
 	{OpenAICompatible, Session, Tools}:               {Composed, "the library calls the caller's handler directly, one call at a time"},
 	{OpenAICompatible, Session, AppendInstructions}:  {Composed, "sent as the leading system message"},
 	{OpenAICompatible, Session, ReplaceInstructions}: {Composed, "sent as the leading system message; an endpoint has no base prompt to replace"},

@@ -25,7 +25,10 @@ import (
 var (
 	// errHidden: the directory is one the tool's policy hides, under
 	// whatever name it was reached.
-	errHidden = errors.New("directory hidden")
+	errHidden     = errors.New("directory hidden")
+	errOtherMount = errors.New("other mount")
+	errLinked     = errors.New("linked file")
+	errNotRegular = errors.New("not regular")
 	// errChanged: the directory is not the one Lstat saw.
 	errChanged = errors.New("directory changed while walked")
 )
@@ -145,7 +148,13 @@ func (c *cursor) enter(parent *os.Root, n *dirNode) (*os.Root, error) {
 			return nil, errHidden
 		}
 	}
-	r, err := parent.OpenRoot(n.name)
+	// A trailing dot forces the child to be an intermediate directory open.
+	// Go OpenRoot otherwise opens its final component without O_DIRECTORY,
+	// which can block on a swapped-in FIFO. The dot uses that same handle.
+	if c.w.openStep != nil {
+		c.w.openStep()
+	}
+	r, err := parent.OpenRoot(n.name + "/.")
 	if err != nil {
 		return nil, err
 	}
@@ -153,6 +162,25 @@ func (c *cursor) enter(parent *os.Root, n *dirNode) (*os.Root, error) {
 	release := func() {
 		_ = r.Close()
 		c.w.handles.Add(-1)
+	}
+	f, err := r.OpenFile(".", wsfile.DirectoryFlags, 0)
+	if err != nil {
+		release()
+		return nil, err
+	}
+	facts, err := wsfile.Check(f, c.w.mount)
+	f.Close()
+	if err != nil {
+		release()
+		return nil, err
+	}
+	if !facts.Directory {
+		release()
+		return nil, errChanged
+	}
+	if !facts.SameMount {
+		release()
+		return nil, errOtherMount
 	}
 	opened, err := r.Stat(".")
 	if err != nil || !os.SameFile(opened, n.info) {

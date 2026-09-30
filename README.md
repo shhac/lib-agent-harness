@@ -338,36 +338,67 @@ s, opened, err := session.Open(ctx, session.Options{
 - **Turn control:** interrupting cancels the request and the running handler.
   Steering is composed.
 - **Not offered yet:** compaction, streamed text deltas, quota and account.
-  `Options.Workbench` exists for the workbench planned below, but every
-  session that sets it is refused with `RefusedNotOffered`.
 
-**Planned: the API workbench.** A
-[design](design-docs/2026-09-29-api-workbench.md) gives these sessions
-library-provided workspace tools confined to `WorkDir`. It comes in two stages:
+### Workbench, stage 1
 
-- **Stage 1:** reading, listing and searching files, with no shell, on every
-  platform.
-- **Stage 2:** editing files, and running commands in a sandbox the library
-  proves before launch. On Linux the command sandbox will require bubblewrap
-  (`bwrap`) 0.8.0 or later on the host, and a session is refused with a typed
-  error when it is missing or older. Ubuntu 22.04's package is older. Commands will read only a pinned set of system directories,
-  `WorkDir` and the directories you list, so a toolchain or cache elsewhere
-  (such as `~/go/pkg/mod`) has to be named. Windows gets the file tools but not
-  commands. A session that edits files records the mode it gives new files
-  (default 0600), and resuming it with a different mode is refused with
-  `ErrIncompatibleResume`, because the mode decides who can read those files.
+Set `Options.Workbench = &session.Workbench{}` for read-only workspace tools
+on an OpenAI-compatible session, on Linux, macOS or Windows. `WorkDir` must
+be an absolute existing directory; it and `RuntimeHome` must not contain
+one another. Its resolved path and workbench permissions form part of the
+resume reference. CLI engines refuse this option.
 
-None of this is available yet. `harness.Support` will report each stage when
-it ships. The design also covers OpenRouter
-(`https://openrouter.ai/api/v1`). Through a gateway like that, prompts and
-every tool result, including file contents, go to third-party model providers
-under their own data policies, and some free endpoints may log or train on
-inputs. Keep the workspace free of secrets, of hard links to files outside it,
-and of file systems mounted inside it. The file tools will refuse
-multiply-linked files and will not cross a mount. Sandboxed commands, however,
-match paths rather than files, so they cannot tell such a link or mount from
-the workspace's own files. The workspace and the session's `RuntimeHome` must
-not contain one another.
+- `read_file(path, offset, limit)` reads UTF-8 text: files at most 16 MiB,
+  at most 2,000 lines and 64 KiB per result, with continuation notes.
+- `list_files(path, depth)` lists at most 2,000 entries, to depth 8,
+  visiting at most 20,000 names. Links, FIFOs, linked files and mounts are
+  marked; Windows omits the listing's linked mark but still refuses linked
+  reads. Links are never followed while listing.
+- `search_files(pattern, literal, path, glob)` uses RE2, or literal text,
+  with patterns at most 4,096 bytes. It returns at most 200 matches in
+  `relative:line: text` form, cutting each result line to 400 bytes on rune
+  boundaries.
+  It skips files over 1 MiB, NUL in the first 8 KiB, invalid UTF-8, links,
+  non-regular files, hard links and mounts, with counts. A glob containing
+  a slash matches the workspace-relative path; otherwise it matches the
+  basename.
+
+Listings and searches skip `.git` and `.harness-workbench-*.tmp`, use bounded
+walks, retain partial results with an incomplete note, and state truncation.
+Neither observes `.gitignore`. Results also fit the host's `MaxResultBytes`,
+which must be at least 4,096. All six workbench tool names (including planned
+write and command tools) are reserved when the option is set.
+
+Opened handles must stay on the root's mount; regular files must have one
+link. Refusals include `file_linked`, `file_other_mount`, `file_not_regular`,
+`file_too_large`, `file_not_text`, `file_reserved`, `file_outside_workspace`,
+`file_path_invalid`, `file_not_found`, `file_not_directory`,
+`file_is_symlink`, `path_through_symlink`, `path_not_listed`,
+`file_unreadable` and `arguments_invalid`. When mount identity cannot be
+established, launch refuses with `workbench_mount_check_unavailable` before
+creating a transcript.
+
+One workspace worker executes the tools. Cancellation waits for its current
+I/O to settle. After a 10-second cancellation grace, a stuck read fails the
+session with `workspace_io_stuck`; no later call or turn is admitted. The
+transcript records an unknown outcome, shutdown releases its lock, and
+`Release` returns the error. `Close` remains void. The single abandoned
+worker and its read handle remain until the syscall returns. Health preserves
+an earlier session failure; Release still reports abandoned workspace I/O.
+
+`harness.Support` reports `WorkspaceRead` as `Composed`, `WorkspaceWrite`
+as `Unsupported`, and `RestrictTools` includes the library's workbench tools.
+A caller-supplied `CatalogModel` known to lack tools refuses before launch;
+unknown tool support proceeds.
+
+**Data caveat:** through gateways such as OpenRouter, prompts and every tool
+result, including file contents, go to third-party model providers under their
+own data policies; some free endpoints may log or train on inputs. Keep the
+workspace free of secrets, outside hard links and mounts. File tools reject
+multiply-linked files and other mounts. Keep other processes from injecting
+outside data while the session runs.
+
+Stage 2 remains planned: editing files and running commands under a sandbox
+proved before launch. See the [design](design-docs/2026-09-29-api-workbench.md).
 
 ## Long-lived conversations: Open and caller context
 
@@ -1088,6 +1119,7 @@ error:
 
 | Needs | Tests |
 | --- | --- |
+| Creating FIFOs, sockets, hard links and Windows junctions; a writable package directory | workbench containment tests; `TestWorkbenchFIFOAndSocketRefusal` binds directly in a workspace under `./.wbs-*` to keep the socket path short; Linux bind mounts require the CI mount setup |
 | A Unix domain socket under `TMPDIR` | every test that opens a restricted or sandboxed session's tool channel (`session/`) |
 | A process group of its own (setpgid) | the tests of what containment does with the group — detach, group cancellation, descendant pipes, escapees, sweeps (`process/`); the stand-in bridge and `Reclaim` tests (`session/`) |
 | Reading process status with `ps` | the cancelled-group and sweep tests (`process/`), which otherwise could not tell a live process from a gone one |

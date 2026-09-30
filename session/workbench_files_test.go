@@ -27,11 +27,10 @@ func testWorkspace(t *testing.T) (ws *workspace, work, outside string) {
 	work, outside = filepath.Join(base, "work"), filepath.Join(base, "outside")
 	writeFile(t, filepath.Join(outside, "secret.txt"), outsideMarker+"\n")
 	writeFile(t, filepath.Join(work, "a.txt"), "inside\n")
-	root, err := os.OpenRoot(work)
+	ws, err := openWorkspace(Options{Workbench: &Workbench{}, WorkDir: work, Restriction: &Restriction{Tools: ToolHost{}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ws = &workspace{root: root, budget: maxWorkbenchResult}
 	t.Cleanup(ws.close)
 	return ws, work, outside
 }
@@ -48,6 +47,8 @@ func call(t *testing.T, ws *workspace, tool string, args any) ToolResult {
 		result, err = ws.readFile(context.Background(), raw)
 	case workbenchListFiles:
 		result, err = ws.listFiles(context.Background(), raw)
+	case workbenchSearchFiles:
+		result, err = ws.searchFiles(context.Background(), raw)
 	}
 	if err != nil {
 		t.Fatalf("%s %s: %v", tool, raw, err)
@@ -351,7 +352,7 @@ func TestWorkbenchSwappedDirectoryStaysInside(t *testing.T) {
 	}()
 	deadline := time.Now().Add(300 * time.Millisecond)
 	for time.Now().Before(deadline) {
-		for _, r := range []ToolResult{read(t, ws, "sub/secret.txt"), call(t, ws, workbenchListFiles, map[string]any{"path": "sub"}), call(t, ws, workbenchListFiles, map[string]any{"depth": 3})} {
+		for _, r := range []ToolResult{read(t, ws, "sub/secret.txt"), call(t, ws, workbenchListFiles, map[string]any{"path": "sub"}), call(t, ws, workbenchListFiles, map[string]any{"depth": 3}), call(t, ws, workbenchSearchFiles, map[string]any{"path": "sub", "pattern": outsideMarker}), call(t, ws, workbenchSearchFiles, map[string]any{"path": "sub/secret.txt", "pattern": outsideMarker})} {
 			if strings.Contains(r.Content, outsideMarker) {
 				close(stop)
 				wg.Wait()

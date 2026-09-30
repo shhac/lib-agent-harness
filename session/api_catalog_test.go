@@ -123,14 +123,30 @@ func TestAPISessionRefusesAModelWithoutToolCallingBeforeLaunch(t *testing.T) {
 // A workbench adds tools, so the same check covers it, ahead of the
 // workbench's own checks.
 func TestAPISessionRefusesAWorkbenchOnAModelWithoutToolCalling(t *testing.T) {
-	enableWorkbench(t)
 	o := workbenchOptions(t, nopHandler())
+	model := &scriptedModel{}
+	o.complete = model.complete
+	s := startAPI(t, o)
+	ref := s.Ref()
+	closeAPI(t, s)
+	before := snapshot(t, o.RuntimeHome)
 	o.CatalogModel = withoutTools(o.Model)
-	_, err := normalize(o)
-	requireWithoutTools(t, err)
-	o.CatalogModel = &catalog.Model{ID: o.Model, Parameters: []string{"tools"}, ParametersKnown: true}
-	if _, err = normalize(o); err != nil {
-		t.Fatalf("a model with tool calling was refused: %v", err)
+	for _, launch := range []func() error{
+		func() error { _, err := Start(context.Background(), o); return err },
+		func() error { _, _, err := Open(context.Background(), o, nil); return err },
+		func() error { _, err := Resume(context.Background(), o, ref); return err },
+	} {
+		requireWithoutTools(t, launch())
+	}
+	if len(model.tools) != 0 || !sameFiles(before, snapshot(t, o.RuntimeHome)) {
+		t.Fatal("refusal wrote a request or transcript")
+	}
+	for _, known := range []bool{true, false} {
+		o.CatalogModel = &catalog.Model{ID: o.Model, Parameters: []string{"tools"}, ParametersKnown: known}
+		allowed := startAPI(t, o)
+		if done := runAPITurnToEnd(t, allowed, "go"); done.err != nil {
+			t.Fatal(done.err)
+		}
 	}
 }
 

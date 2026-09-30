@@ -1,8 +1,8 @@
 // Package session controls persistent agent sessions: native CLI sessions,
 // whose native tools are available according to the explicitly configured
 // provider policy, and sessions over an OpenAI-compatible endpoint, whose agent
-// loop the library runs with only the caller's hosted tools. This is not the
-// tools-disabled completion API.
+// loop the library runs with caller-hosted tools and optional library
+// workbench tools. This is not the tools-disabled completion API.
 package session
 
 import (
@@ -218,9 +218,8 @@ type Options struct {
 	Loop Loop
 	// Workbench gives an OpenAI-compatible session the library's own tools
 	// over WorkDir, which it then requires (see workbench.go). A CLI engine
-	// refuses it: its own tools and Sandbox cover this. It is not offered yet,
-	// so every session that sets it is refused with RefusedNotOffered. When
-	// set, it and WorkDir are part of a Ref.
+	// refuses it: its own tools and Sandbox cover this. Stage 1 provides
+	// read_file, list_files and search_files. It and WorkDir are part of a Ref.
 	Workbench *Workbench
 	// CatalogModel is the catalog entry the caller chose Model from, as
 	// catalog.Discover returned it, or nil. It is advisory evidence the caller

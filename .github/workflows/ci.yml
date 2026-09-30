@@ -23,4 +23,15 @@ jobs:
           go-version-file: go.mod
           cache: true
       - run: go vet ./...
+      - name: Prepare workspace bind-mount witness
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          witness="$RUNNER_TEMP/workbench-mount"
+          mkdir -p "$witness/source" "$witness/work/parent/mount"
+          printf 'OUTSIDE-BIND-MOUNT-MARKER' > "$witness/source/marker"
+          touch "$witness/work/parent/filemount"
+          sudo mount --bind "$witness/source" "$witness/work/parent/mount"
+          sudo mount --bind "$witness/source/marker" "$witness/work/parent/filemount"
+          echo "AGENT_HARNESS_TEST_BIND_MOUNT=$witness/work" >> "$GITHUB_ENV"
       - run: go test -race ./...

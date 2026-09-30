@@ -87,13 +87,14 @@ const (
 	// RefusedModelWithoutTools: Options.CatalogModel lists the model's request
 	// parameters and "tools" is not among them, so it cannot take the tools
 	// every API session sends.
-	RefusedModelWithoutTools = "model_without_tool_calling"
-	RefusedSandboxRead       = "sandbox_read_path_invalid"
-	RefusedSandboxTool       = "sandbox_tool_unsupported"
-	RefusedNotConfigured     = "not_configured"
-	RefusedNotNative         = "not_native"
-	RefusedMethodMissing     = "method_unavailable"
-	RefusedNotOffered        = "not_offered"
+	RefusedModelWithoutTools   = "model_without_tool_calling"
+	RefusedSandboxRead         = "sandbox_read_path_invalid"
+	RefusedSandboxTool         = "sandbox_tool_unsupported"
+	RefusedNotConfigured       = "not_configured"
+	RefusedNotNative           = "not_native"
+	RefusedMethodMissing       = "method_unavailable"
+	RefusedNotOffered          = "not_offered"
+	RefusedWorkbenchMountCheck = "workbench_mount_check_unavailable"
 	// RefusedKeychainUnavailable: the engine's login lives in a keychain that
 	// is locked, so launching it would raise an unlock prompt.
 	RefusedKeychainUnavailable = harness.CodeKeychainUnavailable

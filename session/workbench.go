@@ -6,9 +6,7 @@ package session
 // the two lists cannot drift apart. The tools themselves are in
 // workbench_files.go.
 //
-// The workbench is not offered yet. Every check below runs, and then the
-// option is refused as not offered, until the opened-handle checks and the
-// workspace worker land with it.
+// Stage 1 offers read-only tools with opened-handle checks and bounded I/O.
 
 import (
 	"context"
@@ -21,11 +19,10 @@ import (
 )
 
 // Workbench gives an OpenAI-compatible session the library's own tools over
-// Options.WorkDir. The zero value asks for the read tools, read_file and
-// list_files, which run in the library's process, confined to WorkDir.
+// Options.WorkDir. The zero value asks for read_file, list_files and
+// search_files, which run in the library's process, confined to WorkDir.
 //
-// It is not offered yet: every session that sets it is refused with
-// RefusedNotOffered.
+// Reads require singly linked regular files on the workspace mount.
 type Workbench struct{}
 
 // The workbench's tool names. All six are reserved whenever a workbench is
@@ -47,10 +44,6 @@ var workbenchReserved = []string{workbenchReadFile, workbenchListFiles, workbenc
 // silently replaced by the library's.
 const RefusedWorkbenchToolReserved = "workbench_tool_name_reserved"
 
-// workbenchEnabled lets the workbench past its final refusal. Only tests set
-// it; it goes when the workbench is offered.
-var workbenchEnabled = false
-
 func isWorkbenchTool(name string) bool {
 	for _, reserved := range workbenchReserved {
 		if name == reserved {
@@ -70,8 +63,8 @@ func refuseCLIWorkbench(o Options) error {
 }
 
 // normalizeWorkbench checks a workbench's WorkDir, its separation from
-// RuntimeHome and the reserved tool names, then refuses it as not offered
-// yet. It runs after RuntimeHome and the caller's tools are normalized.
+// RuntimeHome and the reserved tool names. It runs after RuntimeHome and
+// the caller's tools are normalized.
 func normalizeWorkbench(o Options) (Options, error) {
 	if o.Workbench == nil {
 		return o, nil
@@ -105,9 +98,6 @@ func normalizeWorkbench(o Options) (Options, error) {
 	}
 	if limit := o.Restriction.Tools.MaxResultBytes; limit > 0 && limit < minWorkbenchResult {
 		return o, refuse(o, "tools", RefusedLimit, "a workbench needs ToolHost.MaxResultBytes of at least 4096, so its results can say where they were cut")
-	}
-	if !workbenchEnabled {
-		return o, refuse(o, "workbench", RefusedNotOffered, "the workbench is not offered yet")
 	}
 	frozen := *o.Workbench
 	o.Workbench = &frozen
@@ -211,6 +201,16 @@ func workbenchDefinitions(o Options) []ToolDefinition {
 				"additionalProperties": false,
 			},
 		},
+		{
+			Name:        workbenchSearchFiles,
+			Description: "Search workspace UTF-8 files using RE2 or literal text. At most 200 matches, lines cut to 400 bytes; files over 1 MiB, binary files, links and .git are skipped.",
+			Schema: map[string]any{"type": "object", "properties": map[string]any{
+				"pattern": map[string]any{"type": "string", "description": "RE2 pattern, at most 4096 bytes."},
+				"literal": map[string]any{"type": "boolean"},
+				"path":    map[string]any{"type": "string", "description": "Relative file or directory. Default: workspace."},
+				"glob":    map[string]any{"type": "string", "description": "Slash-relative glob, or basename glob without a slash."},
+			}, "required": []any{"pattern"}, "additionalProperties": false},
+		},
 	}
 }
 
@@ -234,9 +234,11 @@ type workbenchHandler struct {
 func (h workbenchHandler) CallTool(ctx context.Context, call ToolCall) (ToolResult, error) {
 	switch call.Name {
 	case workbenchReadFile:
-		return h.ws.readFile(ctx, call.Arguments)
+		return h.ws.dispatch(ctx, func() (ToolResult, error) { return h.ws.readFile(ctx, call.Arguments) })
+	case workbenchSearchFiles:
+		return h.ws.dispatch(ctx, func() (ToolResult, error) { return h.ws.searchFiles(ctx, call.Arguments) })
 	case workbenchListFiles:
-		return h.ws.listFiles(ctx, call.Arguments)
+		return h.ws.dispatch(ctx, func() (ToolResult, error) { return h.ws.listFiles(ctx, call.Arguments) })
 	}
 	return h.next.CallTool(ctx, call)
 }

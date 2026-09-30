@@ -316,3 +316,25 @@ func TestBackgroundAndToolImageClaims(t *testing.T) {
 		t.Error("tool image claims changed")
 	}
 }
+
+func TestWorkbenchCapabilityClaims(t *testing.T) {
+	reason := "the library's read_file, list_files and search_files: regular, singly linked files reached inside WorkDir on WorkDir's own mount"
+	read := Support(OpenAICompatible, Session, WorkspaceRead)
+	supported := runtime.GOOS == "linux" || runtime.GOOS == "darwin" || runtime.GOOS == "windows"
+	if supported && (read.Availability != Composed || read.Reason != reason) || !supported && read.Usable() {
+		t.Fatal(read)
+	}
+	if write := Support(OpenAICompatible, Session, WorkspaceWrite); write.Availability != Unsupported || write.Reason != "not offered yet" {
+		t.Fatal(write)
+	}
+	if c := Support(OpenAICompatible, Session, RestrictTools); c.Reason != "only the caller's hosted tools and the library's workbench tools exist: the library writes every request itself" {
+		t.Fatal(c)
+	}
+	for _, e := range []Engine{Codex, Claude, Grok} {
+		for _, f := range []Feature{WorkspaceRead, WorkspaceWrite} {
+			if Support(e, Session, f).Usable() {
+				t.Fatalf("%s %s", e, f)
+			}
+		}
+	}
+}
