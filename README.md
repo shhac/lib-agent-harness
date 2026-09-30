@@ -723,11 +723,28 @@ stopped when the session closes (see Process containment below).
 
 `Options.Browser` (and `native.Config.Browser` for a run) switches on the
 browser integration the harness ships, for that invocation only. It is off
-unless set and never implied by another option. Only Claude Code has one
-here: `--chrome` (Claude in Chrome), which drives the operator's real Chrome
-through its extension. Codex's `browser_use` features are not enabled yet,
-and Grok 1.0.41 has none; both are refused, as are API sessions and
-restricted sessions, whose tools are exactly the caller's.
+unless set and never implied by another option:
+
+- Claude Code: `--chrome` (Claude in Chrome), with the
+  [Claude extension](https://chromewebstore.google.com/detail/claude/fcoeoabgfenejglbffodgkkbkcdhcgfn).
+- Codex: `features.browser_use=true` and `features.browser_use_external=true`,
+  with a configured native browser bridge in the selected `Provider.CLI.Home`
+  and the [ChatGPT extension](https://chromewebstore.google.com/detail/chatgpt/hehggadaopoacecdllhhajmbjkdcmajg).
+  The extension alone does not configure that bridge. The working local setup
+  uses the ChatGPT application's native Node REPL MCP bridge (`node_repl`),
+  browser plugins and native host. Restart the CLI after installing the extension.
+  The library does not install plugins, copy another home's configuration,
+  enable desktop control, or change site permissions.
+
+Codex 0.159.2's app-server and exec flags and deferred Node REPL tools were
+checked with disposable homes, dummy credentials and a local provider that
+refuses inference. Chrome control was separately checked in a configured CLI
+session by filling and validating a disposable local form. This establishes
+browser control; it does not establish a video recording API or hidden-window
+capture. Grok 1.0.41, API sessions and restricted sessions are refused.
+Sandboxed Codex sessions are also refused: their isolated home cannot inherit
+the owner's browser bridge safely. Use an ordinary native Codex session, or
+leave `Browser` unset.
 
 That browser is not sandboxed. It runs outside the OS sandbox, with that
 Chrome profile's logins, and reaches whatever the extension's site
@@ -737,10 +754,10 @@ permissions allow. For agents:
   nothing they should not use, rather than your everyday profile.
 - Limit the extension's site permissions to the sites the agent should
   visit, typically the local dev server.
-- Pair it with `Sandbox.Loopback`, so the agent's shell can start the project
+- For Claude, pair it with `Sandbox.Loopback`, so the agent's shell can start the project
   and the browser can use it, while the shell reaches nothing off the machine.
 
-A sandboxed session admits the browser's tools beside its own, with explicit
+A sandboxed Claude session admits the browser's tools beside its own, with explicit
 allow rules for the ones Claude Code 2.1.283 lists. `file_upload` (which reads
 local files from outside the sandbox) and the shortcut tools (which start
 another agent in the browser's side panel) are denied, and a tool a later

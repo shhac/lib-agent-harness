@@ -14,6 +14,7 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/nativecli"
 )
 
 // prepareLaunch builds a restricted session's runtime and proves it before any
@@ -97,6 +98,9 @@ type launch struct {
 func commandArgs(o Options, nativeID string, resuming bool, l *launch) []string {
 	if o.Provider.Engine == harness.Codex {
 		args := []string{"app-server", "--listen", "stdio://"}
+		if o.Browser {
+			args = append(args, nativecli.CodexBrowserArgs()...)
+		}
 		if l != nil {
 			args = append(args, l.extra...)
 		}

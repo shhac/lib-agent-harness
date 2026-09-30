@@ -146,7 +146,7 @@ var (
 	unverified = Capability{Unknown, "not verified against the installed harness"}
 	// Claude in Chrome is not a sandboxed browser: it is the operator's own.
 	claudeBrowser = Capability{Native, "Claude in Chrome (--chrome) drives the operator's real Chrome through its extension, outside any sandbox, reaching whatever the extension's site permissions allow with that profile's logins"}
-	codexBrowser  = Capability{Unsupported, "codex-cli 0.156.1's browser_use features are not enabled: their tools and reach have not been identified against the installed CLI without inference"}
+	codexBrowser  = Capability{Native, "codex-cli browser_use and browser_use_external features select the configured native browser bridge; requires that bridge in the selected CLI home and the ChatGPT Chrome extension; uses the browser profile's logins and site permissions outside the shell sandbox; not available with session.Sandbox or Restriction"}
 	cacheVaries   = Capability{Unknown, "reported only by endpoints that split cached input"}
 	background    = Capability{Native, "the process group is niced to 10, which descendants inherit"}
 	// Constrained completion has no native tools, so no engine loads skills

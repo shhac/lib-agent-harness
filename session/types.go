@@ -146,15 +146,17 @@ type Options struct {
 	// restricted or sandboxed, never both. Nil keeps the ordinary contract.
 	Sandbox *Sandbox
 	// Browser turns on the browser integration the harness itself ships, for
-	// this session only: Claude Code's --chrome (Claude in Chrome), which
-	// drives the operator's real Chrome through its extension. It is off
+	// this session only: Claude Code's --chrome, or Codex's browser_use and
+	// browser_use_external features with an already configured native bridge
+	// in the selected CLI home and the ChatGPT Chrome extension. It is off
 	// unless set and never implied by another option; an engine without one
-	// is refused (see harness.Support). A sandboxed session admits the
+	// is refused (see harness.Support). A sandboxed Claude session admits the
 	// browser's tools beside its own, except those that would read local files
 	// or start another agent. The browser itself runs outside the OS sandbox,
 	// with that Chrome profile's logins, and reaches whatever the extension's
 	// site permissions allow. A restricted session is refused: its tools are
-	// exactly the caller's. It is part of a Ref.
+	// exactly the caller's. Sandboxed Codex browser sessions are also refused.
+	// It is part of a Ref.
 	Browser bool
 	// Background runs the harness, and everything it starts, at background
 	// priority, so agent work yields to the machine's interactive use (see

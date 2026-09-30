@@ -60,7 +60,7 @@ func validate(c Config, r Request) *RunError {
 	if code := requestProblem(engine, c, r); code != "" {
 		return capabilityError(engine, code)
 	}
-	if managedFlagIn(engine, c.Args) {
+	if managedFlagIn(engine, c.Args) || (engine == harness.Codex && c.Browser && codexBrowserOverride(c.Args)) {
 		return capabilityError(engine, CodeManagedFlagInArgs)
 	}
 	if _, _, err := planSkills(c); err != nil {
@@ -176,13 +176,55 @@ func managedFlagIn(engine harness.Engine, args []string) bool {
 // codexManagedOverride reads the key of a -c/--config override, whose value is
 // the next argument, or attached directly or after "=".
 func codexManagedOverride(arg, flag string, args []string, i int) bool {
+	return slices.Contains(codexManagedOverrides, codexOverrideKey(arg, flag, args, i))
+}
+
+func codexOverrideKey(arg, flag string, args []string, i int) string {
 	value := strings.TrimPrefix(strings.TrimPrefix(arg, flag), "=")
 	if arg == flag {
 		if i+1 >= len(args) {
-			return false
+			return ""
 		}
 		value = args[i+1]
 	}
 	key, _, _ := strings.Cut(value, "=")
-	return slices.Contains(codexManagedOverrides, strings.Trim(strings.TrimSpace(key), `"'`))
+	parts := strings.Split(key, ".")
+	for i := range parts {
+		parts[i] = strings.Trim(strings.TrimSpace(parts[i]), `"'`)
+	}
+	return strings.Join(parts, ".")
+}
+
+// Browser owns only these feature switches, and only while opted in. Keep
+// ordinary callers' existing feature overrides available.
+func codexBrowserOverride(args []string) bool {
+	for i, arg := range args {
+		flag := ""
+		switch {
+		case strings.HasPrefix(arg, "--config=") || arg == "--config":
+			flag = "--config"
+		case strings.HasPrefix(arg, "-c") && !strings.HasPrefix(arg, "--"):
+			flag = "-c"
+		}
+		if flag != "" {
+			switch codexOverrideKey(arg, flag, args, i) {
+			case "features", "features.browser_use", "features.browser_use_external":
+				return true
+			}
+		}
+		for _, featureFlag := range []string{"--enable", "--disable"} {
+			value, joined := strings.CutPrefix(arg, featureFlag+"=")
+			if arg == featureFlag && i+1 < len(args) {
+				value, joined = args[i+1], true
+			}
+			if joined {
+				for _, feature := range strings.Split(value, ",") {
+					if feature == "browser_use" || feature == "browser_use_external" {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
 }

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/nativecli"
 	"github.com/shhac/lib-agent-harness/internal/restrict"
 	"github.com/shhac/lib-agent-harness/process"
 )
@@ -43,10 +44,11 @@ type Config struct {
 	// Excluding installed skills is refused.
 	Skills harness.Skills
 	// Browser turns on the browser integration the harness itself ships, for
-	// this run only: Claude Code's --chrome (Claude in Chrome), which drives
-	// the operator's real Chrome through its extension, with that profile's
-	// logins. Off unless set; an engine without one is refused (see
-	// harness.Support).
+	// this run only: Claude Code's --chrome, or Codex's browser_use and
+	// browser_use_external features with an already configured native bridge
+	// in the selected CLI home and the ChatGPT Chrome extension. The browser
+	// uses that profile's logins outside the shell sandbox. Off unless set;
+	// an engine without one is refused (see harness.Support).
 	Browser bool
 	// Background runs the harness, and everything it starts, at background
 	// priority, so agent work yields to the machine's interactive use (see
@@ -250,6 +252,9 @@ func codexArgs(c Config, r Request, report *codexReport) []string {
 		args = append(args, "--output-schema", report.schema, "--output-last-message", report.output)
 	}
 	args = append(args, c.Args...)
+	if c.Browser {
+		args = append(args, nativecli.CodexBrowserArgs()...)
+	}
 	if c.Effort != "" {
 		args = append(args, "-c", codexOverride("model_reasoning_effort", c.Effort))
 	}

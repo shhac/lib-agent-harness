@@ -43,7 +43,10 @@ func normalizeBrowser(o Options) error {
 		return &UnsupportedError{Engine: o.Provider.Engine, Operation: "browser", Code: RefusedNotOffered, Capability: c}
 	}
 	if o.Restriction != nil {
-		return refuse(o, "browser", RefusedConflict, "a restricted session's tools are exactly the caller's; leave Browser unset or use a sandboxed session")
+		return refuse(o, "browser", RefusedConflict, "a restricted session's tools are exactly the caller's; leave Browser unset or use an ordinary native session")
+	}
+	if o.Provider.Engine == harness.Codex && o.Sandbox != nil {
+		return refuse(o, "browser", RefusedConflict, "a sandboxed Codex session cannot inherit the owner's browser bridge safely; leave Browser unset or use an ordinary native session")
 	}
 	return nil
 }

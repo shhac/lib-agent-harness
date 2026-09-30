@@ -106,7 +106,6 @@ func TestOptionsAnEngineCannotHonourAreRefused(t *testing.T) {
 		"grok bad telemetry":   {Config{Provider: provider(harness.Grok), Grok: GrokOptions{Telemetry: 7}}, Request{}, CodeUnsupportedOption},
 		"invalid schema":       {Config{Provider: provider(harness.Claude)}, Request{Schema: "{"}, CodeInvalidSchema},
 		"invalid codex schema": {Config{Provider: provider(harness.Codex)}, Request{Schema: "not json"}, CodeInvalidSchema},
-		"codex browser":        {Config{Provider: provider(harness.Codex), Browser: true}, Request{}, CodeUnsupportedOption},
 		"grok browser":         {Config{Provider: provider(harness.Grok), Browser: true}, Request{}, CodeUnsupportedOption},
 	} {
 		if facts := refusal(t, tc.c, tc.r); facts.Code != tc.code {

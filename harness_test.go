@@ -275,14 +275,15 @@ func TestLoopbackClaims(t *testing.T) {
 	}
 }
 
-// Claude ships a browser integration, and says it is the operator's own;
-// Codex's is not identified and Grok has none. Nothing else offers one.
+// Browser integration is native to Codex and Claude, with local setup required.
 func TestBrowserClaims(t *testing.T) {
 	for _, op := range []Operation{Session, Run} {
-		if c := Support(Claude, op, Browser); c.Availability != Native || c.Reason == "" {
-			t.Errorf("Claude %s browser: %+v", op, c)
+		for _, e := range []Engine{Codex, Claude} {
+			if c := Support(e, op, Browser); c.Availability != Native || c.Reason == "" {
+				t.Errorf("%s %s browser: %+v", e, op, c)
+			}
 		}
-		for _, e := range []Engine{Codex, Grok} {
+		for _, e := range []Engine{Grok} {
 			if c := Support(e, op, Browser); c.Usable() || c.Reason == "" {
 				t.Errorf("%s %s browser: %+v", e, op, c)
 			}
