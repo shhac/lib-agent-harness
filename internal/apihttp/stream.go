@@ -91,6 +91,10 @@ func Stream(ctx context.Context, r Request, idle time.Duration, onEvent func([]b
 	case err == nil:
 		return nil, ResponseFailure("stream_incomplete")
 	}
+	var reader eventError
+	if errors.As(err, &reader) {
+		return nil, reader.err
+	}
 	var failure *Failure
 	if errors.As(err, &failure) {
 		return nil, failure
@@ -98,9 +102,15 @@ func Stream(ctx context.Context, r Request, idle time.Duration, onEvent func([]b
 	return nil, streamInterrupted(ctx, &stalled, PhaseResponse, err)
 }
 
+// eventError carries the reader's own refusal of an event out of the read, so
+// it is not mistaken for the stream failing.
+type eventError struct{ err error }
+
+func (e eventError) Error() string { return e.err.Error() }
+
 // readEvents splits a server-sent event stream into events' data. It returns
 // errStreamDone at [DONE], nil at an end with no terminator, and any error
-// onEvent returns.
+// onEvent returns as an eventError.
 func readEvents(body io.Reader, limit int, progressed func(), onEvent func([]byte) error) error {
 	reader := bufio.NewReaderSize(body, 64<<10)
 	read := 0
@@ -122,7 +132,7 @@ func readEvents(body io.Reader, limit int, progressed func(), onEvent func([]byt
 				return errStreamDone
 			}
 			if callbackErr := onEvent(data); callbackErr != nil {
-				return callbackErr
+				return eventError{callbackErr}
 			}
 			data, pending = nil, false
 		case bytes.HasPrefix(line, []byte("data:")):

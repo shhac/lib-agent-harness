@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -260,5 +262,97 @@ func TestRestrictedSessionRunsATurn(t *testing.T) {
 				t.Fatalf("%+v %v", result, err)
 			}
 		})
+	}
+}
+
+// writeLogin writes a login in the real auth.json shape, account and all.
+func writeLogin(t *testing.T, dir, login string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, codexCredentialFile), []byte(login), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func codexLogin(account, token string) string {
+	return `{"OPENAI_API_KEY":null,"tokens":{"id_token":"x","access_token":"y","refresh_token":"` + token + `","account_id":"` + account + `"}}`
+}
+
+// The operator logging in to another account between turns does not move a
+// running conversation onto it; the same account's refresh does come in.
+func TestTurnsNeverMoveASessionToAnotherAccount(t *testing.T) {
+	o, _ := probedOptions(t, harness.Codex, fakeListed)
+	writeLogin(t, o.Provider.CLI.Home, codexLogin("acct-a", "rt-1"))
+	ctx := probeContext(t)
+	s, err := Start(ctx, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _, _ = s.Release(ctx) }()
+	turnToEnd := func() {
+		turn, err := s.StartTurn(ctx, Input{"hello"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for range turn.Events() {
+		}
+		if _, err = turn.Wait(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeLogin(t, o.Provider.CLI.Home, codexLogin("acct-b", "rt-9"))
+	turnToEnd()
+	if got := credentialText(t, o.RuntimeHome); got != codexLogin("acct-a", "rt-1") {
+		t.Fatalf("a running session was moved to another account: %s", got)
+	}
+	writeLogin(t, o.Provider.CLI.Home, codexLogin("acct-a", "rt-2"))
+	turnToEnd()
+	if got := credentialText(t, o.RuntimeHome); got != codexLogin("acct-a", "rt-2") {
+		t.Fatalf("the same account's refresh did not come in: %s", got)
+	}
+}
+
+// A sync that cannot run is a diagnostic; the turn still runs on the login
+// the session holds.
+func TestAFailedLoginSyncDoesNotFailTheTurn(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	o, _ := probedOptions(t, harness.Codex, fakeListed)
+	var mu sync.Mutex
+	var diagnostics []Diagnostic
+	o.OnDiagnostic = func(d Diagnostic) {
+		mu.Lock()
+		diagnostics = append(diagnostics, d)
+		mu.Unlock()
+	}
+	ctx := probeContext(t)
+	s, err := Start(ctx, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _, _ = s.Release(ctx) }()
+	if err = os.Chmod(o.Provider.CLI.Home, 0500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(o.Provider.CLI.Home, 0700) })
+	turn, err := s.StartTurn(ctx, Input{"hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range turn.Events() {
+	}
+	if result, err := turn.Wait(ctx); err != nil || result.Status != "completed" {
+		t.Fatalf("%+v %v", result, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	found := false
+	for _, d := range diagnostics {
+		if d.Stage == "login_sync" {
+			found = d.Code == "login_share_failed" && d.Detail == ""
+		}
+	}
+	if !found {
+		t.Fatalf("diagnostics %+v", diagnostics)
 	}
 }

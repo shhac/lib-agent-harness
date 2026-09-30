@@ -234,3 +234,18 @@ func TestVerifyRestrictionRejectsAnUnrestrictedConfiguration(t *testing.T) {
 		t.Fatal("verification accepted a session with no restriction")
 	}
 }
+
+func TestCodexAccountReadsTheLoginsAccount(t *testing.T) {
+	for login, want := range map[string]string{
+		`{"tokens":{"account_id":"acct-a","refresh_token":"r"}}`: "acct-a",
+		`{"OPENAI_API_KEY":"sk-synthetic","tokens":null}`:        "",
+		`{"tokens":{"account_id":`:                               "",
+	} {
+		if got := codexAccount([]byte(login)); got != want {
+			t.Errorf("%s: %q", login, got)
+		}
+	}
+	if codexLoginValid([]byte(`{"tokens":`)) || codexLoginValid([]byte(`[]`)) || !codexLoginValid([]byte(`{}`)) {
+		t.Error("a torn or non-object login was accepted, or a whole one refused")
+	}
+}

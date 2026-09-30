@@ -138,6 +138,26 @@ func TestClaudeRefusalOnCurrentCLI(t *testing.T) {
 	if claudeRequestFailure([]byte(other)) != nil {
 		t.Fatal("non-API errored result granted retry permission")
 	}
+	// Only a stream that did nothing but refuse lends retry permission.
+	refusal := string(claudeRefusal("rate_limit", ""))
+	lines := strings.Split(strings.TrimSpace(refusal), "\n")
+	for name, stream := range map[string]string{
+		"output after the result": refusal + `{"type":"assistant","message":{"content":[{"type":"text","text":"more"}]}}` + "\n",
+		"a second refusal":        strings.Join([]string{lines[0], lines[1], lines[1], lines[2]}, "\n"),
+		"a second result":         refusal + lines[2] + "\n",
+		"a compaction":            strings.Join([]string{lines[0], `{"type":"system","subtype":"compact_boundary"}`, lines[1], lines[2]}, "\n"),
+	} {
+		if claudeRequestFailure([]byte(stream)) != nil {
+			t.Fatalf("%s granted retry permission", name)
+		}
+	}
+	// A later event replaces an earlier one: a window that reopened explains
+	// nothing, and the refusal is an ordinary rate limit again.
+	reopened := claudeRefusal("rate_limit", fmt.Sprintf(`{"status":"rejected","resetsAt":%d}`, reset.Unix()))
+	reopened = []byte(strings.Replace(string(reopened), `{"type":"assistant"`, `{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning"}}`+"\n"+`{"type":"assistant"`, 1))
+	if failure := claudeRequestFailure(reopened); failure == nil || failure.Cause != harness.CauseRateLimited || failure.ResetsAt != nil || !failure.Retryable() {
+		t.Fatalf("a reopened window still explained the refusal: %+v", failure)
+	}
 	// A rate_limit_event this library cannot read is not skipped silently.
 	if claudeRequestFailure(claudeRefusal("rate_limit", `{"status":"surprise"}`)) != nil {
 		t.Fatal("unknown rate limit status accepted")

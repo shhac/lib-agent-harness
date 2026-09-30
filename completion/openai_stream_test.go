@@ -101,6 +101,12 @@ func TestStreamedFailuresAreTheSameFailures(t *testing.T) {
 		{"incomplete arguments", []string{event(`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"c","type":"function","function":{"name":"lookup","arguments":"{\"q\""}}]},"finish_reason":"tool_calls"}]}`), streamDone}, "invalid_tool_call", harness.CauseUnknown},
 		{"malformed chunk", []string{event(`secret`), streamDone}, "malformed_response", harness.CauseUnknown},
 		{"second choice", []string{event(`{"choices":[{"index":1,"delta":{"content":"Hi"}}]}`), streamDone}, "unexpected_choice_count", harness.CauseUnknown},
+		{"index out of bounds", []string{event(`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":1000000000,"id":"c","type":"function","function":{"name":"lookup","arguments":"{}"}}]}}]}`), streamDone}, "invalid_tool_call", harness.CauseUnknown},
+		{"negative index", []string{event(`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":-1,"id":"c"}]}}]}`), streamDone}, "invalid_tool_call", harness.CauseUnknown},
+		{"missing index", []string{event(`{"choices":[{"index":0,"delta":{"tool_calls":[{"id":"c"}]}}]}`), streamDone}, "invalid_tool_call", harness.CauseUnknown},
+		{"second finish", []string{event(`{"choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":"stop"}]}`), event(`{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`), streamDone}, "ambiguous_terminal_state", harness.CauseUnknown},
+		{"refused before any output", []string{event(`{"error":{"code":"insufficient_quota","message":"secret"}}`), streamDone}, "insufficient_quota", harness.CauseQuotaExhausted},
+		{"streamed refusal", []string{event(`{"choices":[{"index":0,"delta":{"refusal":"secret"},"finish_reason":"stop"}]}`), streamDone}, "model_refusal", harness.CauseContentFiltered},
 		{"failure mid-stream", []string{event(`{"choices":[{"index":0,"delta":{"content":"Hi"}}]}`), event(`{"error":{"code":"insufficient_quota","message":"secret"}}`)}, "insufficient_quota", harness.CauseQuotaExhausted},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -147,5 +153,27 @@ func TestIdleTimeoutRequiresStreaming(t *testing.T) {
 	cfg.Provider.API.IdleTimeout = time.Second
 	if _, err := Complete(context.Background(), cfg, userMessage, nil); !hasCode(err, "api_idle_timeout_without_streaming") {
 		t.Fatalf("%v", err)
+	}
+}
+
+// OpenRouter streams reasoning_details a piece at a time; the reply keeps
+// every piece, in order, to send back.
+func TestStreamedReasoningDetailsAreKeptWhole(t *testing.T) {
+	api := streamWith(
+		event(`{"choices":[{"index":0,"delta":{"role":"assistant","reasoning_details":[{"type":"reasoning.text","text":"a"}]}}]}`),
+		event(`{"choices":[{"index":0,"delta":{"reasoning_details":[{"type":"reasoning.text","text":"b"}],"content":"ok"},"finish_reason":"stop"}]}`),
+		streamDone,
+	)
+	result, err := Complete(context.Background(), streamingConfig(api), userMessage, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var replay struct {
+		Fields struct {
+			Details []struct{ Text string } `json:"reasoning_details"`
+		} `json:"fields"`
+	}
+	if json.Unmarshal(result.Message.Replay, &replay) != nil || len(replay.Fields.Details) != 2 || replay.Fields.Details[0].Text != "a" || replay.Fields.Details[1].Text != "b" {
+		t.Fatalf("reasoning details %s", result.Message.Replay)
 	}
 }

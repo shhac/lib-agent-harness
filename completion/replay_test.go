@@ -60,6 +60,21 @@ func TestProviderStateTravelsBackToItsEndpointOnly(t *testing.T) {
 	if _, err := Complete(context.Background(), cli, history, lookupTool); !hasCode(err, "replay_mismatch") {
 		t.Fatalf("a CLI engine was handed the replay: %v", err)
 	}
+	// A replay bound to this endpoint still carries only the fields the
+	// endpoint needs back: its binding is a digest anyone can compute.
+	for _, fields := range []string{`{"extra_content":{"x":1}}`, `{"tool_choice":"required"}`} {
+		bound := append([]Message(nil), history...)
+		bound[1].Replay = json.RawMessage(`{"for":"` + replayBinding(apiConfig(api)) + `","fields":` + fields + `}`)
+		if _, err := Complete(context.Background(), apiConfig(api), bound, lookupTool); !hasCode(err, "replay_mismatch") {
+			t.Fatalf("a field outside the allowlist was sent: %s %v", fields, err)
+		}
+	}
+	// A thought signature on a call alone is still refused to a CLI engine.
+	callOnly := append([]Message(nil), history...)
+	callOnly[1].Replay = nil
+	if _, err := Complete(context.Background(), cli, callOnly, lookupTool); !hasCode(err, "replay_mismatch") {
+		t.Fatalf("a CLI engine was handed a call's replay: %v", err)
+	}
 	// A replay the caller built is not one this library made.
 	forged := append([]Message(nil), history...)
 	forged[1].Replay = json.RawMessage(`{"for":"x","fields":{"reasoning_content":"y"}}`)
