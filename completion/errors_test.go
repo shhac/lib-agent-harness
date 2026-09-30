@@ -260,7 +260,7 @@ func TestProcessDiagnosticsDoNotBorrowRetryPermission(t *testing.T) {
 }
 
 func TestCodexPreflightModelDiagnostic(t *testing.T) {
-	_, err := restrictedCatalog([]byte(`{"models":[]}`), "secret-model-name", "high")
+	_, _, err := restrictedCatalog([]byte(`{"models":[]}`), "secret-model-name", "high")
 	var failure *RequestError
 	if !errors.As(err, &failure) || failure.Cause != harness.CauseModelUnavailable || failure.Code != "model_not_in_catalog" || failure.Engine != "codex" || failure.Phase != PhasePreflight || failure.Retryable() {
 		t.Fatalf("%#v", failure)

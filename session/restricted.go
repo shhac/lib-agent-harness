@@ -256,15 +256,15 @@ func codexOverrides(settings []string) []string {
 // are kept: removing the tools is the restriction, and a session's scoped task
 // instructions are added through the ordinary instruction parameters rather
 // than by replacing the base prompt.
-func restrictedCatalogFor(catalog []byte, model, effort string) ([]byte, error) {
+func restrictedCatalogFor(catalog []byte, model, effort string) ([]byte, string, error) {
 	if len(catalog) == 0 {
-		return nil, &CapabilityError{Engine: harness.Codex, Code: CapabilityCatalogUnavailable, Phase: BeforeLaunch}
+		return nil, "", &CapabilityError{Engine: harness.Codex, Code: CapabilityCatalogUnavailable, Phase: BeforeLaunch}
 	}
-	out, err := restrict.CodexCatalog(catalog, model, effort, nil)
+	out, chosen, err := restrict.CodexCatalog(catalog, model, effort, nil)
 	if err != nil {
-		return nil, &CapabilityError{Engine: harness.Codex, Code: CapabilityCatalogRestriction, Phase: BeforeLaunch, Tools: reasonOf(err)}
+		return nil, "", &CapabilityError{Engine: harness.Codex, Code: CapabilityCatalogRestriction, Phase: BeforeLaunch, Tools: reasonOf(err)}
 	}
-	return out, nil
+	return out, chosen, nil
 }
 
 // reasonOf surfaces the shared package's fixed reason code so an operator can

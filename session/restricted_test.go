@@ -379,7 +379,7 @@ func TestFailedPreparationReleasesTheToolChannel(t *testing.T) {
 
 func TestNormalizedCatalogKeepsTheHarnessCodingInstructions(t *testing.T) {
 	catalog := []byte(`{"models":[{"slug":"picked","supported_reasoning_levels":[{"effort":"high"}],"base_instructions":"native coding instructions","shell_type":"local"}]}`)
-	raw, err := restrictedCatalogFor(catalog, "picked", "high")
+	raw, _, err := restrictedCatalogFor(catalog, "picked", "high")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -389,10 +389,10 @@ func TestNormalizedCatalogKeepsTheHarnessCodingInstructions(t *testing.T) {
 	if !strings.Contains(string(raw), `"shell_type":"disabled"`) {
 		t.Error("the native shell surface was not removed")
 	}
-	if _, err = restrictedCatalogFor(nil, "picked", "high"); err == nil {
+	if _, _, err = restrictedCatalogFor(nil, "picked", "high"); err == nil {
 		t.Error("an absent catalog was accepted")
 	}
-	_, err = restrictedCatalogFor(catalog, "absent", "high")
+	_, _, err = restrictedCatalogFor(catalog, "absent", "high")
 	var failure *CapabilityError
 	if !errors.As(err, &failure) || failure.Code != CapabilityCatalogRestriction || len(failure.Tools) != 1 {
 		t.Fatalf("an unknown model did not produce an actionable reason: %v", err)

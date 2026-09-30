@@ -23,11 +23,11 @@ const testCatalog = `{"models":[{"slug":"test-model","supported_reasoning_levels
 
 func TestCodexModelEffortAndIsolation(t *testing.T) {
 	for _, tc := range []struct{ model, effort string }{{"missing", "high"}, {"test-model", "ultra"}} {
-		if _, err := restrictedCatalog([]byte(testCatalog), tc.model, tc.effort); err == nil {
+		if _, _, err := restrictedCatalog([]byte(testCatalog), tc.model, tc.effort); err == nil {
 			t.Fatalf("accepted unsupported selection: %+v", tc)
 		}
 	}
-	data, err := restrictedCatalog([]byte(testCatalog), "test-model", "high")
+	data, _, err := restrictedCatalog([]byte(testCatalog), "test-model", "high")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestInstalledCodexCapabilityProbe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	restricted, err := restrictedCatalog(catalog, cfg.Model, cfg.Effort)
+	restricted, _, err := restrictedCatalog(catalog, cfg.Model, cfg.Effort)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +234,7 @@ func TestInstalledCodexStructuredResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	restricted, err := restrictedCatalog(catalog, cfg.Model, cfg.Effort)
+	restricted, _, err := restrictedCatalog(catalog, cfg.Model, cfg.Effort)
 	if err != nil {
 		t.Fatal(err)
 	}

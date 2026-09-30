@@ -23,6 +23,10 @@ const (
 	UnsupportedEffort  = "unsupported_effort"
 	ModelNotInCatalog  = "model_not_in_catalog"
 	InvalidInstruction = "invalid_base_instructions"
+	// DefaultUnlisted: no effort was chosen, and the catalog's default for the
+	// model is missing or is not among the efforts it lists. The fault is the
+	// catalog's, not the caller's.
+	DefaultUnlisted = "default_effort_unlisted"
 )
 
 // CodexFeatures names every native surface disabled by configuration. Adding a
@@ -51,16 +55,19 @@ func CodexSettings() []string {
 // its native execution surfaces removed. The model's identity, capabilities and
 // effort levels are preserved exactly: no substitution and no fallback.
 //
+// An empty effort selects the model's catalog default, and the effort used is
+// returned, so the launch and the proof of it agree on one value.
+//
 // baseInstructions replaces the model's default prompt when non-nil. A
 // restricted session leaves it nil, because removing the tools is the
 // restriction and the native coding instructions remain the right starting
 // point for a session whose tools arrive from its caller instead.
-func CodexCatalog(data []byte, model, effort string, baseInstructions *string) ([]byte, error) {
+func CodexCatalog(data []byte, model, effort string, baseInstructions *string) ([]byte, string, error) {
 	var catalog struct {
 		Models []map[string]json.RawMessage `json:"models"`
 	}
 	if json.Unmarshal(data, &catalog) != nil {
-		return nil, &Error{InvalidCatalog}
+		return nil, "", &Error{InvalidCatalog}
 	}
 	for _, m := range catalog.Models {
 		var slug string
@@ -72,16 +79,23 @@ func CodexCatalog(data []byte, model, effort string, baseInstructions *string) (
 			Effort string `json:"effort"`
 		}
 		if json.Unmarshal(m["supported_reasoning_levels"], &levels) != nil {
-			return nil, &Error{MissingEffort}
+			return nil, "", &Error{MissingEffort}
+		}
+		chosen := effort
+		if chosen == "" {
+			_ = json.Unmarshal(m["default_reasoning_level"], &chosen)
 		}
 		supported := false
 		for _, level := range levels {
-			if level.Effort == effort {
+			if level.Effort == chosen && chosen != "" {
 				supported = true
 			}
 		}
-		if !supported {
-			return nil, &Error{UnsupportedEffort}
+		switch {
+		case !supported && effort == "":
+			return nil, "", &Error{DefaultUnlisted}
+		case !supported:
+			return nil, "", &Error{UnsupportedEffort}
 		}
 		m["shell_type"] = json.RawMessage(`"disabled"`)
 		m["apply_patch_tool_type"] = json.RawMessage(`null`)
@@ -93,27 +107,8 @@ func CodexCatalog(data []byte, model, effort string, baseInstructions *string) (
 			// escapes that JSON does not have.
 			m["base_instructions"], _ = json.Marshal(*baseInstructions)
 		}
-		return json.Marshal(map[string]any{"models": []map[string]json.RawMessage{m}})
+		out, err := json.Marshal(map[string]any{"models": []map[string]json.RawMessage{m}})
+		return out, chosen, err
 	}
-	return nil, &Error{ModelNotInCatalog}
-}
-
-// CodexCatalogEffort reports the catalog's default reasoning level for a model,
-// or an empty string when the catalog does not describe one.
-func CodexCatalogEffort(data []byte, model string) string {
-	var catalog struct {
-		Models []struct {
-			Slug    string `json:"slug"`
-			Default string `json:"default_reasoning_level"`
-		} `json:"models"`
-	}
-	if json.Unmarshal(data, &catalog) != nil {
-		return ""
-	}
-	for _, m := range catalog.Models {
-		if m.Slug == model {
-			return m.Default
-		}
-	}
-	return ""
+	return nil, "", &Error{ModelNotInCatalog}
 }

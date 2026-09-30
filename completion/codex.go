@@ -84,13 +84,11 @@ func codexComplete(ctx context.Context, cfg Config, messages []Message, tools []
 		}
 		return empty, preflightFailure(harness.Codex, "catalog_read_failed")
 	}
-	if cfg.Effort == "" {
-		cfg.Effort = restrict.CodexCatalogEffort(catalog, cfg.Model)
-	}
-	restricted, err := restrictedCatalog(catalog, cfg.Model, cfg.Effort)
+	restricted, effort, err := restrictedCatalog(catalog, cfg.Model, cfg.Effort)
 	if err != nil {
 		return empty, err
 	}
+	cfg.Effort = effort
 	catalogPath := filepath.Join(dir, "models.json")
 	schemaPath := filepath.Join(dir, "response-schema.json")
 	instructionsPath := filepath.Join(dir, "instructions.txt")
@@ -164,20 +162,20 @@ func codexArgs(cfg Config, dir, catalogPath, schemaPath, instructionsPath string
 // restrictedCatalog keeps completion's own failure vocabulary while the catalog
 // mechanics stay shared with restricted sessions. A missing model remains a
 // model-availability failure rather than a generic preflight one.
-func restrictedCatalog(data []byte, model, effort string) ([]byte, error) {
+func restrictedCatalog(data []byte, model, effort string) ([]byte, string, error) {
 	instructions := codexInstructions
-	out, err := restrict.CodexCatalog(data, model, effort, &instructions)
+	out, chosen, err := restrict.CodexCatalog(data, model, effort, &instructions)
 	if err == nil {
-		return out, nil
+		return out, chosen, nil
 	}
 	var reason *restrict.Error
 	if !errors.As(err, &reason) {
-		return nil, preflightFailure(harness.Codex, "invalid_model_catalog")
+		return nil, "", preflightFailure(harness.Codex, "invalid_model_catalog")
 	}
 	if reason.Code == restrict.ModelNotInCatalog {
-		return nil, &RequestError{Cause: harness.CauseModelUnavailable, Engine: harness.Codex, Phase: PhasePreflight, Code: reason.Code}
+		return nil, "", &RequestError{Cause: harness.CauseModelUnavailable, Engine: harness.Codex, Phase: PhasePreflight, Code: reason.Code}
 	}
-	return nil, preflightFailure(harness.Codex, reason.Code)
+	return nil, "", preflightFailure(harness.Codex, reason.Code)
 }
 
 // toolCatalog is the single rule for an application tool catalog, whichever

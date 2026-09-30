@@ -14,7 +14,6 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
-	"github.com/shhac/lib-agent-harness/internal/restrict"
 )
 
 // prepareLaunch builds a restricted session's runtime and proves it before any
@@ -55,13 +54,11 @@ func prepareLaunch(ctx context.Context, o Options, lease *os.File) (*launch, err
 		if readErr != nil {
 			return fail(readErr)
 		}
-		if o.Effort == "" {
-			o.Effort = restrict.CodexCatalogEffort(catalog, o.Model)
-		}
-		restricted, restrictErr := restrictedCatalogFor(catalog, o.Model, o.Effort)
+		restricted, effort, restrictErr := restrictedCatalogFor(catalog, o.Model, o.Effort)
 		if restrictErr != nil {
 			return fail(restrictErr)
 		}
+		o.Effort = effort
 		catalogFile := catalogPath(host.cfg.Dir)
 		if err = writePrivate(catalogFile, restricted); err != nil {
 			return fail(err)

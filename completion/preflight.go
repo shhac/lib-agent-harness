@@ -146,6 +146,8 @@ func (e *RequestError) diagnosticDetail() string {
 		return "Codex model has no reasoning-effort catalog; choose a model advertised by the installed CLI"
 	case "unsupported_effort":
 		return "Codex model does not advertise the selected reasoning effort; choose an effort from its model catalog"
+	case "default_effort_unlisted":
+		return "Codex model catalog names no listed default reasoning effort; choose an effort from its model catalog"
 	case "catalog_timeout":
 		return "Codex bundled model catalog read timed out; check CLI startup and retry (no account inference was attempted)"
 	case "catalog_read_failed":

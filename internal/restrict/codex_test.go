@@ -10,7 +10,7 @@ import (
 const catalog = `{"models":[
  {"slug":"other","supported_reasoning_levels":[{"effort":"low"}]},
  {"slug":"picked","default_reasoning_level":"medium","context_window":400000,
-  "supported_reasoning_levels":[{"effort":"low"},{"effort":"high"}],
+  "supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"}],
   "shell_type":"local","apply_patch_tool_type":"freeform",
   "experimental_supported_tools":["shell","browser"],"tool_mode":"experimental",
   "node_repl_disabled":false,"base_instructions":"native coding instructions"}]}`
@@ -27,7 +27,7 @@ func selected(t *testing.T, raw []byte) map[string]json.RawMessage {
 }
 
 func TestCodexCatalogRemovesNativeToolSurfaces(t *testing.T) {
-	raw, err := CodexCatalog([]byte(catalog), "picked", "high", nil)
+	raw, _, err := CodexCatalog([]byte(catalog), "picked", "high", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestCodexCatalogRemovesNativeToolSurfaces(t *testing.T) {
 // A restricted session keeps the CLI's own coding instructions: removing the
 // tools is the restriction, and replacing the prompt is a separate decision.
 func TestCodexCatalogKeepsBaseInstructionsUnlessReplaced(t *testing.T) {
-	raw, err := CodexCatalog([]byte(catalog), "picked", "low", nil)
+	raw, _, err := CodexCatalog([]byte(catalog), "picked", "low", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestCodexCatalogKeepsBaseInstructionsUnlessReplaced(t *testing.T) {
 		t.Errorf("base instructions changed: %s", raw)
 	}
 	replacement := "application reasoning engine"
-	raw, err = CodexCatalog([]byte(catalog), "picked", "low", &replacement)
+	raw, _, err = CodexCatalog([]byte(catalog), "picked", "low", &replacement)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestCodexCatalogKeepsBaseInstructionsUnlessReplaced(t *testing.T) {
 	// The catalog is JSON, so the replacement has to be JSON-encoded: Go quoting
 	// would write escapes such as \a that no JSON reader accepts.
 	awkward := "bell\a vtab\v \"quoted\" \U0001F600 \u2028"
-	raw, err = CodexCatalog([]byte(catalog), "picked", "low", &awkward)
+	raw, _, err = CodexCatalog([]byte(catalog), "picked", "low", &awkward)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestCodexCatalogRejections(t *testing.T) {
 		"no effort catalog": {`{"models":[{"slug":"picked"}]}`, "picked", "low", MissingEffort},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := CodexCatalog([]byte(tc.data), tc.model, tc.effort, nil)
+			_, _, err := CodexCatalog([]byte(tc.data), tc.model, tc.effort, nil)
 			var reason *Error
 			if !errors.As(err, &reason) || reason.Code != tc.code {
 				t.Fatalf("got %v, want %s", err, tc.code)
@@ -100,15 +100,23 @@ func TestCodexCatalogRejections(t *testing.T) {
 	}
 }
 
-func TestCodexCatalogEffortReadsDefault(t *testing.T) {
-	if got := CodexCatalogEffort([]byte(catalog), "picked"); got != "medium" {
-		t.Errorf("default effort = %q", got)
+func TestCodexCatalogChoosesTheListedDefault(t *testing.T) {
+	if _, effort, err := CodexCatalog([]byte(catalog), "picked", "", nil); err != nil || effort != "medium" {
+		t.Errorf("default effort = %q (%v)", effort, err)
 	}
-	if got := CodexCatalogEffort([]byte(catalog), "absent"); got != "" {
-		t.Errorf("unknown model reported effort %q", got)
+	if _, effort, err := CodexCatalog([]byte(catalog), "picked", "low", nil); err != nil || effort != "low" {
+		t.Errorf("chosen effort = %q (%v)", effort, err)
 	}
-	if got := CodexCatalogEffort([]byte("not json"), "picked"); got != "" {
-		t.Errorf("unparsable catalog reported effort %q", got)
+	// A default the catalog does not list is the catalog's fault; a caller who
+	// chose nothing must not be told their effort is unsupported.
+	for name, data := range map[string]string{
+		"unlisted default": `{"models":[{"slug":"picked","default_reasoning_level":"ultra","supported_reasoning_levels":[{"effort":"low"}]}]}`,
+		"no default":       `{"models":[{"slug":"picked","supported_reasoning_levels":[{"effort":"low"}]}]}`,
+	} {
+		var reason *Error
+		if _, _, err := CodexCatalog([]byte(data), "picked", "", nil); !errors.As(err, &reason) || reason.Code != DefaultUnlisted {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }
 
