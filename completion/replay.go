@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"github.com/shhac/lib-agent-harness/internal/rawjson"
+	"slices"
 )
 
 // Some reasoning endpoints return state beside an assistant message that they
@@ -62,11 +63,7 @@ func openReplay(value json.RawMessage, binding string, names []string) (map[stri
 		return nil, false
 	}
 	for name := range r.Fields {
-		allowed := false
-		for _, known := range names {
-			allowed = allowed || name == known
-		}
-		if !allowed {
+		if !slices.Contains(names, name) {
 			return nil, false
 		}
 	}

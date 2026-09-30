@@ -9,7 +9,10 @@
 // verify the result against the installed CLI before trusting it.
 package restrict
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"slices"
+)
 
 // Error carries a fixed reason code. Provider text never enters it.
 type Error struct{ Code string }
@@ -28,6 +31,11 @@ const (
 	// catalog's, not the caller's.
 	DefaultUnlisted = "default_effort_unlisted"
 )
+
+// codexLevel is one reasoning level a catalog model lists.
+type codexLevel struct {
+	Effort string `json:"effort"`
+}
 
 // CodexFeatures names every native surface disabled by configuration. Adding a
 // value here restricts completion and sessions together.
@@ -75,9 +83,7 @@ func CodexCatalog(data []byte, model, effort string, baseInstructions *string) (
 		if slug != model {
 			continue
 		}
-		var levels []struct {
-			Effort string `json:"effort"`
-		}
+		var levels []codexLevel
 		if json.Unmarshal(m["supported_reasoning_levels"], &levels) != nil {
 			return nil, "", &Error{MissingEffort}
 		}
@@ -85,12 +91,7 @@ func CodexCatalog(data []byte, model, effort string, baseInstructions *string) (
 		if chosen == "" {
 			_ = json.Unmarshal(m["default_reasoning_level"], &chosen)
 		}
-		supported := false
-		for _, level := range levels {
-			if level.Effort == chosen && chosen != "" {
-				supported = true
-			}
-		}
+		supported := chosen != "" && slices.Contains(levels, codexLevel{chosen})
 		switch {
 		case !supported && effort == "":
 			return nil, "", &Error{DefaultUnlisted}
