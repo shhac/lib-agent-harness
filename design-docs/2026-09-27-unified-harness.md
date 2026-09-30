@@ -305,7 +305,9 @@ releasable.
      library writes every request itself, so the restricted tool surface holds
      by construction rather than by probe. `Support` says `RestrictTools` is
      composed and `Sandbox` unsupported: there are no native tools to
-     sandbox.
+     sandbox. ([The API workbench design](2026-09-29-api-workbench.md)
+     supersedes this for sessions given its workspace tools: stage 2's
+     command tool runs in a sandbox the library proves before launch.)
    - **State:** each session keeps an append-only transcript under
      `RuntimeHome`, locked while a process has it open. The transcript holds
      messages, each tool call before it runs, each result after it returns, and

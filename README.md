@@ -295,6 +295,32 @@ s, opened, err := session.Open(ctx, session.Options{
   Steering is composed.
 - **Not offered yet:** compaction, streamed text deltas, quota and account.
 
+**Planned: the API workbench.** A
+[design](design-docs/2026-09-29-api-workbench.md) gives these sessions
+library-provided workspace tools confined to `WorkDir`. It comes in two stages:
+
+- **Stage 1:** reading, listing and searching files, with no shell, on every
+  platform.
+- **Stage 2:** editing files, and running commands in a sandbox the library
+  proves before launch. On Linux the command sandbox will require bubblewrap
+  (`bwrap`) 0.8.0 or later on the host, and a session is refused with a typed
+  error when it is missing or older. Ubuntu 22.04's package is older. Commands will read only a pinned set of system directories,
+  `WorkDir` and the directories you list, so a toolchain or cache elsewhere
+  (such as `~/go/pkg/mod`) has to be named. Windows gets the file tools but not
+  commands.
+
+None of this is available yet. `harness.Support` will report each stage when
+it ships. The design also covers OpenRouter
+(`https://openrouter.ai/api/v1`). Through a gateway like that, prompts and
+every tool result, including file contents, go to third-party model providers
+under their own data policies, and some free endpoints may log or train on
+inputs. Keep the workspace free of secrets, of hard links to files outside it,
+and of file systems mounted inside it. The file tools will refuse
+multiply-linked files and will not cross a mount. Sandboxed commands, however,
+match paths rather than files, so they cannot tell such a link or mount from
+the workspace's own files. The workspace and the session's `RuntimeHome` must
+not contain one another.
+
 ## Long-lived conversations: Open and caller context
 
 `session.Open(ctx, options, ref)` is for a caller that keeps one conversation
