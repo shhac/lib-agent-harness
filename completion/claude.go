@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/shhac/lib-agent-harness"
@@ -20,33 +19,20 @@ import (
 // Custom instructions are disabled by --safe-mode, so existing CLAUDE.md files
 // do not require copying credentials to a second account directory.
 func ValidateClaudeHome(home string) error {
-	if home == "" {
-		return nil
-	}
-	if !filepath.IsAbs(home) || strings.ContainsRune(home, '\x00') {
-		return preflightFailure(harness.Claude, "claude_home_invalid")
-	}
-	if stat, err := os.Stat(home); err == nil && !stat.IsDir() {
-		return preflightFailure(harness.Claude, "claude_home_not_directory")
-	} else if err != nil && !os.IsNotExist(err) {
-		return preflightFailure(harness.Claude, "claude_home_unavailable")
+	if code := nativecli.ClaudeHomeProblem(home); code != "" {
+		return preflightFailure(harness.Claude, code)
 	}
 	return nil
 }
 
+// ClaudeEnvironment is the environment every Claude launch gets: the
+// operating environment and the selected login home, and never an API key,
+// integration secret or process-wide model override.
 func ClaudeEnvironment(home string) ([]string, error) {
-	if err := ValidateClaudeHome(home); err != nil {
-		return nil, err
+	env, code := nativecli.ClaudeEnvironment(home)
+	if code != "" {
+		return nil, preflightFailure(harness.Claude, code)
 	}
-	// USER is part of native OS context: Claude needs it for macOS keychain
-	// lookup. Windows native login/cache directories are retained explicitly too.
-	env := append(nativecli.Native(), "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1", "DISABLE_AUTOUPDATER=1", "DISABLE_TELEMETRY=1", "MAX_RETRIES=0")
-	nativeHome, _ := os.UserHomeDir()
-	if home != "" && filepath.Clean(home) != filepath.Join(nativeHome, ".claude") {
-		env = append(env, "CLAUDE_CONFIG_DIR="+home)
-	}
-	// Auth is resolved natively by Claude (including keychain refresh). Never
-	// forward API keys, integration secrets, or process-wide model overrides.
 	return env, nil
 }
 

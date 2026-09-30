@@ -9,11 +9,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/shhac/lib-agent-harness"
-	"github.com/shhac/lib-agent-harness/completion"
 	"github.com/shhac/lib-agent-harness/internal/nativecli"
 	"github.com/shhac/lib-agent-harness/internal/restrict"
 	"github.com/shhac/lib-agent-harness/process"
@@ -40,17 +38,17 @@ type catalogReader func(io.Reader, io.Writer) ([]Model, error)
 // cliEngine is how one engine's catalog is read.
 type cliEngine struct {
 	args        func() []string
-	environment func(home string) ([]string, error)
+	environment func(home string) ([]string, string)
 	read        catalogReader
 }
 
 var cliEngines = map[harness.Engine]cliEngine{
-	harness.Codex: {codexArgs, completion.CodexEnvironment, readCodexCatalog},
+	harness.Codex: {codexArgs, nativecli.CodexEnvironment, readCodexCatalog},
 	harness.Claude: {func() []string {
 		return append(nativecli.ClaudeRestrictedArgs(), "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose")
-	}, completion.ClaudeEnvironment, readClaudeCatalog},
+	}, nativecli.ClaudeEnvironment, readClaudeCatalog},
 	// --no-leader keeps this process from serving other Grok clients.
-	harness.Grok: {func() []string { return []string{"agent", "--no-leader", "stdio"} }, grokEnvironment, readGrokCatalog},
+	harness.Grok: {func() []string { return []string{"agent", "--no-leader", "stdio"} }, nativecli.GrokEnvironment, readGrokCatalog},
 }
 
 // codexArgs creates no thread, and disables tool-discovery features during
@@ -74,39 +72,11 @@ func cliCatalog(p harness.Provider) (invocation, catalogReader, error) {
 	if err != nil {
 		return invocation{}, nil, err
 	}
-	env, err := engine.environment(p.CLI.Home)
-	if err != nil {
-		return invocation{}, nil, environmentFailure(err)
+	env, code := engine.environment(p.CLI.Home)
+	if code != "" {
+		return invocation{}, nil, preflightFailure(code)
 	}
 	return invocation{bin: bin, args: engine.args(), env: env}, engine.read, nil
-}
-
-// environmentFailure keeps only the fixed code of a login-home refusal.
-func environmentFailure(err error) error {
-	if facts, ok := harness.ErrorFacts(err); ok && facts.Code != "" {
-		return preflightFailure(facts.Code)
-	}
-	return preflightFailure("environment_unavailable")
-}
-
-// grokEnvironment is the allowlisted operating environment, the selected
-// GROK_HOME, and the reduced-telemetry overrides. An empty home keeps an
-// ambient GROK_HOME, as Codex keeps CODEX_HOME, and otherwise Grok's default.
-func grokEnvironment(home string) ([]string, error) {
-	env := nativecli.Native()
-	if home == "" {
-		home = os.Getenv("GROK_HOME")
-		if !filepath.IsAbs(home) {
-			home = ""
-		}
-	}
-	if home != "" {
-		if !filepath.IsAbs(home) || strings.ContainsRune(home, '\x00') {
-			return nil, preflightFailure("grok_home_invalid")
-		}
-		env = nativecli.Override(env, "GROK_HOME="+filepath.Clean(home))
-	}
-	return nativecli.Override(env, nativecli.GrokReducedTelemetry...), nil
 }
 
 func resolveBinary(configured string, engine harness.Engine) (string, error) {

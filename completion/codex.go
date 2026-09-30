@@ -221,20 +221,11 @@ func ValidateCodexHome(selectedHome string) error {
 }
 
 func resolveCodexHome(home string) (string, error) {
-	if home == "" {
-		home = os.Getenv("CODEX_HOME")
+	selected, code := nativecli.CodexHome(home)
+	if code != "" {
+		return "", preflightFailure(harness.Codex, code)
 	}
-	if home == "" {
-		userHome, err := os.UserHomeDir()
-		if err != nil {
-			return "", preflightFailure(harness.Codex, "codex_home_unresolved")
-		}
-		home = filepath.Join(userHome, ".codex")
-	}
-	if !filepath.IsAbs(home) {
-		return "", preflightFailure(harness.Codex, "codex_home_invalid")
-	}
-	return filepath.Clean(home), nil
+	return selected, nil
 }
 
 func validateSelectedCodexHome(home string) error {
@@ -263,13 +254,10 @@ func validateSelectedCodexHome(home string) error {
 // no process-wide environment or credential store is changed. Empty home retains
 // the legacy CODEX_HOME/HOME fallback for direct engine callers.
 func CodexEnvironment(home string) ([]string, error) {
-	selected, err := resolveCodexHome(home)
-	if err != nil {
-		return nil, err
+	env, code := nativecli.CodexEnvironment(home)
+	if code != "" {
+		return nil, preflightFailure(harness.Codex, code)
 	}
-	env := append(nativecli.Native(), "CODEX_HOME="+selected)
-	// Codex resolves its own login store. Provider API keys and application
-	// integration credentials must never reach this subprocess.
 	return env, nil
 }
 
