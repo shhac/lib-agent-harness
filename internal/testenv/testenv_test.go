@@ -50,7 +50,7 @@ func TestRequireSkipsOnlyARefusal(t *testing.T) {
 		{name: "eperm", err: &Refusal{Op: "listen", Err: syscall.EPERM}, skip: "environment refuses a thing: listen: operation not permitted"},
 		{name: "eacces", err: &Refusal{Op: "connect", Err: syscall.EACCES}, skip: "environment refuses a thing: connect: permission denied"},
 		{name: "wrapped", err: fmt.Errorf("start: %w", &os.PathError{Op: "fork/exec", Path: "/bin/sh", Err: syscall.EPERM}), skip: "environment refuses a thing"},
-		{name: "enoent", err: &Refusal{Op: "start", Err: syscall.ENOENT}, failure: "probing a thing failed: start: no such file or directory"},
+		{name: "enoent", err: &Refusal{Op: "start", Err: syscall.ENOENT}, failure: "probing a thing failed: start: " + syscall.ENOENT.Error()},
 		{name: "other", err: errors.New("ps reported nothing"), failure: "probing a thing failed: ps reported nothing"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
