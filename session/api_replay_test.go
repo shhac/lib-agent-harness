@@ -52,3 +52,34 @@ func TestAPISessionSendsProviderStateBackAcrossAResume(t *testing.T) {
 		}
 	}
 }
+
+// sse replies with a server-sent event stream.
+func sse(events ...string) endpointReply {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, e := range events {
+			_, _ = w.Write([]byte("data: " + e + "\n\n"))
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		}
+	}
+}
+
+// A session over a streaming endpoint runs its loop on assembled responses,
+// the same as over one that answers whole.
+func TestAPISessionOverAStreamingEndpoint(t *testing.T) {
+	e := newEndpoint(t,
+		sse(`{"choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}`, `{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`, `[DONE]`),
+		sse(`{"choices":[{"index":0,"delta":{"content":"Read it."},"finish_reason":"stop"}]}`, `{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`, `[DONE]`),
+	)
+	var mu sync.Mutex
+	var calls []ToolCall
+	o := apiOptions(t, e.url, echo(&calls, &mu))
+	o.Provider.API.Streaming = true
+	s := startAPI(t, o)
+	done := runAPITurnToEnd(t, s, "Read the file.")
+	if done.err != nil || done.result.Text != "Read it." || len(calls) != 1 || !done.result.Usage.Known || done.result.Usage.Input != 20 {
+		t.Fatalf("%+v %v %d", done.result, done.err, len(calls))
+	}
+}

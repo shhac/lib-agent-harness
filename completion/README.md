@@ -29,9 +29,18 @@ Effort requires `API.EffortParameter` (`harness.EffortReasoningEffort` or
 `harness.EffortReasoningObject`), because compatible endpoints read it from
 different fields. It rejects redirects, arbitrary headers and vendor fields, and does not
 retry. Responses must have one complete terminal choice; usage is known only
-when the response supplies consistent token counts. Streaming, structured
-output and remote sessions are currently refused rather than silently
-approximated.
+when the response supplies consistent token counts. Structured output is
+currently refused rather than silently approximated.
+
+`API.Streaming` asks for the response as server-sent events. It is bounded by
+`API.IdleTimeout` between events (keepalive comments count; zero means five
+minutes, because a reasoning model can be silent while it thinks) as well as by
+`Config.Timeout`, whose default rises to thirty minutes for a streaming
+endpoint. Usage comes only from the terminal chunk
+(`stream_options.include_usage`). The stream is assembled into the shape of a
+whole response and judged by the same terminal rules; a stream that ends
+without `[DONE]` is `stream_incomplete`, a stalled one `stream_idle`, and an
+endpoint that answers with one JSON body anyway is read as one.
 
 Reasoning endpoints can return state they need back with the history:
 DeepSeek and Kimi thinking modes refuse a tool-call history without its

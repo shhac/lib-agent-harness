@@ -190,7 +190,7 @@ local-CLI semantics.
 | Text completion | native, from a verified terminal response | |
 | Caller-hosted tool proposals | native, complete arguments only | |
 | Usage | measured when the terminal response reports it; otherwise unknown | |
-| Streaming | unsupported | increment 3 |
+| Streaming | unsupported | increment 3 (done: `API.Streaming`, idle-bounded) |
 | Model discovery | unsupported (refused before any request) | increment 2 |
 | Structured output | unsupported | increment 4 |
 | Reasoning effort | native, via a typed `EffortParameter`; refused without one | |
@@ -258,7 +258,8 @@ a caller that requires a verified native sandbox or restricted tool surface.
    `http.RoundTripper` only; nothing contacts a network.
 2. Authenticated `GET /models` discovery with bounded parsing, pagination
    limits, cancellation and credential-redaction tests.
-3. Streaming Server-Sent Events for the same dialect, with a pinned parser that
+3. **Done.** Streaming Server-Sent Events for the same dialect, opt-in through
+   `API.Streaming` and bounded by `API.IdleTimeout` between events, with a pinned parser that
    rejects incomplete tool arguments, malformed events, a missing `[DONE]` or
    final chunk, and ambiguous terminal state, and that reads usage only from the
    terminal chunk (`stream_options.include_usage`). The non-streaming terminal

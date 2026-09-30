@@ -49,7 +49,9 @@ type Loop struct {
 	// more than 64 MiB is refused. A turn whose history outgrows it fails with
 	// cause context_limit.
 	MaxRequestBytes int
-	// RequestTimeout bounds one model request. Zero means five minutes.
+	// RequestTimeout bounds one model request. Zero means five minutes, or
+	// thirty for an endpoint with API.Streaming, whose IdleTimeout catches a
+	// stall.
 	RequestTimeout time.Duration
 	// MaxOutputTokens caps the tokens each model response may produce, sent as
 	// max_completion_tokens. Zero means no cap. A response the cap cuts short
@@ -274,6 +276,9 @@ func normalizeLoop(o Options) (Options, error) {
 	}
 	if l.RequestTimeout == 0 {
 		l.RequestTimeout = 5 * time.Minute
+		if o.Provider.API.Streaming {
+			l.RequestTimeout = 30 * time.Minute
+		}
 	}
 	if l.MaxSteps < 1 || l.MaxSteps > maxLoopSteps || l.MaxRequestBytes < 1024 || l.MaxRequestBytes > maxLoopRequestBytes || l.RequestTimeout < 0 || l.MaxOutputTokens < 0 {
 		return o, refuse(o, "loop", RefusedLimit, "a loop bound is out of range")

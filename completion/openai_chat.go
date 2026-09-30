@@ -20,6 +20,13 @@ type chatRequest struct {
 	// max_tokens is not sent: OpenAI's reasoning models do not accept it.
 	MaxCompletionTokens int  `json:"max_completion_tokens,omitempty"`
 	Stream              bool `json:"stream"`
+	// StreamOptions asks for usage in the terminal chunk, the only place a
+	// streamed response reports it.
+	StreamOptions *chatStreamOptions `json:"stream_options,omitempty"`
+}
+
+type chatStreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
 }
 
 type chatReasoning struct {
@@ -71,6 +78,9 @@ func chatRequestBody(cfg Config, messages []Message, tools []Tool) ([]byte, erro
 		return nil, preflightFailure(harness.OpenAICompatible, code)
 	}
 	request := chatRequest{Model: cfg.Model, Messages: wire, MaxCompletionTokens: cfg.MaxOutputTokens}
+	if cfg.Provider.API.Streaming {
+		request.Stream, request.StreamOptions = true, &chatStreamOptions{IncludeUsage: true}
+	}
 	switch cfg.Provider.API.EffortParameter {
 	case harness.EffortReasoningEffort:
 		request.ReasoningEffort = cfg.Effort

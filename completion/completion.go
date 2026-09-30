@@ -38,7 +38,10 @@ type Config struct {
 	// refuse it with max_output_tokens_unsupported rather than drop it. A
 	// reply cut off at the cap is a failure, never a proposal.
 	MaxOutputTokens int
-	Timeout         time.Duration
+	// Timeout bounds the whole request. Zero means five minutes, or thirty for
+	// an endpoint with API.Streaming, where API.IdleTimeout catches a stall and
+	// the deadline need only bound a response that keeps making progress.
+	Timeout time.Duration
 	// BeforeRequest runs after non-billable probes and before inference.
 	BeforeRequest func(context.Context) error
 	// Skills are made available to the model through the library's skill
@@ -135,6 +138,9 @@ func Complete(ctx context.Context, cfg Config, messages []Message, tools []Tool)
 	}
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 5 * time.Minute
+		if cfg.Provider.API.Streaming {
+			cfg.Timeout = 30 * time.Minute
+		}
 	}
 	if cfg.MaxContextBytes < 1024 || cfg.Timeout <= 0 || cfg.MaxOutputTokens < 0 {
 		return Result{}, preflightFailure(engine, "invalid_limits")

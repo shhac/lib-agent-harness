@@ -48,7 +48,7 @@ func openAIComplete(ctx context.Context, cfg Config, messages []Message, tools [
 	if err != nil {
 		return Result{}, apiFailure(err)
 	}
-	data, err := apihttp.Do(ctx, apihttp.Request{Method: http.MethodPost, URL: endpoint, Body: body, Token: token, Transport: cfg.transport, Limit: apiResponseLimit})
+	data, err := exchange(ctx, api, apihttp.Request{Method: http.MethodPost, URL: endpoint, Body: body, Token: token, Transport: cfg.transport, Limit: apiResponseLimit})
 	if err != nil {
 		return Result{}, apiFailure(err)
 	}
@@ -64,6 +64,24 @@ func openAIComplete(ctx context.Context, cfg Config, messages []Message, tools [
 		return Result{Usage: result.Usage}, apiResponseFailure("credential_echoed")
 	}
 	return result, nil
+}
+
+// exchange sends the request and returns the response body, assembling a
+// streamed response into the shape of one that was not.
+func exchange(ctx context.Context, api harness.API, r apihttp.Request) ([]byte, error) {
+	if !api.Streaming {
+		return apihttp.Do(ctx, r)
+	}
+	var stream chatStream
+	whole, err := apihttp.Stream(ctx, r, api.IdleTimeout, stream.add)
+	if len(stream.failure) > 0 {
+		// The provider said why it stopped; that outranks how the stream ended.
+		return stream.response(), nil
+	}
+	if err != nil || whole != nil {
+		return whole, err
+	}
+	return stream.response(), nil
 }
 
 // apiFailure gives a shared API failure this package's typed error;

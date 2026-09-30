@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // Engine names the harness that executes a request. Its spelling is persisted
@@ -102,10 +103,21 @@ type API struct {
 	// EffortParameter is required when an effort is requested; the effort is
 	// sent there and nowhere else.
 	EffortParameter EffortParameter
+	// Streaming asks for each response as server-sent events. A response is
+	// then bounded by IdleTimeout between events as well as by the request's
+	// own deadline, so a long reasoning response can be given a generous
+	// deadline while a stalled one is still caught. The assembled response
+	// must meet the same terminal rules as one that was not streamed.
+	Streaming bool
+	// IdleTimeout bounds the silence between streamed events, keepalive
+	// comments included. Zero means five minutes: a reasoning model can send
+	// nothing while it thinks. It is refused without Streaming, where there
+	// are no events to be silent between.
+	IdleTimeout time.Duration
 }
 
 func (a API) zero() bool {
-	return a.BaseURL == "" && a.Dialect == "" && a.Credentials == nil && !a.Unauthenticated && a.EffortParameter == ""
+	return a.BaseURL == "" && a.Dialect == "" && a.Credentials == nil && !a.Unauthenticated && a.EffortParameter == "" && !a.Streaming && a.IdleTimeout == 0
 }
 
 // Problem returns a fixed code naming what is wrong with the provider, or ""
@@ -147,6 +159,12 @@ func (a API) problem() string {
 		return "api_credentials_conflict"
 	case a.Unauthenticated && !loopback:
 		return "api_unauthenticated_remote"
+	}
+	switch {
+	case a.IdleTimeout < 0:
+		return "api_idle_timeout_invalid"
+	case a.IdleTimeout > 0 && !a.Streaming:
+		return "api_idle_timeout_without_streaming"
 	}
 	switch a.EffortParameter {
 	case "", EffortReasoningEffort, EffortReasoningObject:
