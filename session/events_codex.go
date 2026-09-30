@@ -233,79 +233,64 @@ func (s *Session) codexTurnCompleted(t *Turn, p map[string]json.RawMessage) {
 	t.finish(turn.Status, err)
 }
 
-// codexErrorCauses is the app-server's CodexErrorInfo vocabulary (codex-cli
-// 0.159.0, codex app-server generate-ts) for the variants that are plain
-// strings. The error's message is provider prose and is never read.
-var codexErrorCauses = map[string]harness.Cause{
-	"contextWindowExceeded":       harness.CauseContextLimit,
-	"sessionBudgetExceeded":       harness.CauseUnknown,
-	"usageLimitExceeded":          harness.CauseQuotaExhausted,
-	"rateLimitExceeded":           harness.CauseRateLimited,
-	"flexUnavailable":             harness.CauseUnavailable,
-	"serverOverloaded":            harness.CauseOverloaded,
-	"cyberPolicy":                 harness.CauseContentFiltered,
-	"misalignmentPolicyViolation": harness.CauseContentFiltered,
-	"tooManyDenials":              harness.CauseUnknown,
-	"internalServerError":         harness.CauseUnavailable,
-	"unauthorized":                harness.CauseAuthentication,
-	"badRequest":                  harness.CauseUnknown,
-	"threadRollbackFailed":        harness.CauseUnknown,
-	"sandboxError":                harness.CauseUnknown,
-	"other":                       harness.CauseUnknown,
-}
-
-// codexHTTPErrors are the variants that carry the status of the provider
-// request that failed, which is what explains them.
-var codexHTTPErrors = map[string]bool{
-	"httpConnectionFailed":           true,
-	"responseStreamConnectionFailed": true,
-	"responseStreamDisconnected":     true,
-	"responseTooManyFailedAttempts":  true,
+// codexErrors is the app-server's CodexErrorInfo vocabulary (codex-cli
+// 0.159.0, codex app-server generate-ts): the code each kind is published as,
+// and its cause. A kind that carries the status of the provider request that
+// failed is explained by that status instead. The error's message is provider
+// prose and is never read. An internal server error is a 500, which may follow
+// the upstream having acted, so it is not called unavailable (see
+// apihttp.StatusCause).
+var codexErrors = map[string]struct {
+	code   string
+	cause  harness.Cause
+	status bool
+}{
+	"contextWindowExceeded":          {"context_window_exceeded", harness.CauseContextLimit, false},
+	"sessionBudgetExceeded":          {"session_budget_exceeded", harness.CauseUnknown, false},
+	"usageLimitExceeded":             {"usage_limit_exceeded", harness.CauseQuotaExhausted, false},
+	"rateLimitExceeded":              {"rate_limit_exceeded", harness.CauseRateLimited, false},
+	"flexUnavailable":                {"flex_unavailable", harness.CauseUnavailable, false},
+	"serverOverloaded":               {"server_overloaded", harness.CauseOverloaded, false},
+	"cyberPolicy":                    {"cyber_policy", harness.CauseContentFiltered, false},
+	"misalignmentPolicyViolation":    {"misalignment_policy_violation", harness.CauseContentFiltered, false},
+	"tooManyDenials":                 {"too_many_denials", harness.CauseUnknown, false},
+	"internalServerError":            {"internal_server_error", harness.CauseUnknown, false},
+	"unauthorized":                   {"unauthorized", harness.CauseAuthentication, false},
+	"badRequest":                     {"bad_request", harness.CauseUnknown, false},
+	"threadRollbackFailed":           {"thread_rollback_failed", harness.CauseUnknown, false},
+	"sandboxError":                   {"sandbox_error", harness.CauseUnknown, false},
+	"other":                          {"other", harness.CauseUnknown, false},
+	"httpConnectionFailed":           {"http_connection_failed", harness.CauseUnknown, true},
+	"responseStreamConnectionFailed": {"response_stream_connection_failed", harness.CauseUnknown, true},
+	"responseStreamDisconnected":     {"response_stream_disconnected", harness.CauseUnknown, true},
+	"responseTooManyFailedAttempts":  {"response_too_many_failed_attempts", harness.CauseUnknown, true},
 }
 
 // codexTurnFailure reads a failed turn's CodexErrorInfo, or is nil when it
-// names nothing this library knows.
+// names nothing this library knows. A plain kind is a string; a kind carrying
+// a status is an object with that kind as its one key.
 func codexTurnFailure(info json.RawMessage) *TurnError {
 	var name string
-	if json.Unmarshal(info, &name) == nil {
-		cause, ok := codexErrorCauses[name]
-		if !ok {
-			return nil
-		}
-		return &TurnError{Engine: harness.Codex, Code: snakeCase(name), Cause: cause}
-	}
 	var variant map[string]struct {
 		Status *int `json:"httpStatusCode"`
 	}
-	if json.Unmarshal(info, &variant) != nil || len(variant) != 1 {
-		return nil
-	}
-	for name, detail := range variant {
-		if !codexHTTPErrors[name] {
+	if json.Unmarshal(info, &name) != nil {
+		if json.Unmarshal(info, &variant) != nil || len(variant) != 1 {
 			return nil
 		}
-		cause := harness.CauseUnknown
-		if detail.Status != nil {
-			cause = apihttp.StatusCause(*detail.Status)
+		for key := range variant {
+			name = key
 		}
-		return &TurnError{Engine: harness.Codex, Code: snakeCase(name), Cause: cause}
 	}
-	return nil
-}
-
-// snakeCase spells an allowlisted camelCase enum in the library's code style.
-func snakeCase(name string) string {
-	var b strings.Builder
-	for i, r := range name {
-		if r >= 'A' && r <= 'Z' {
-			if i > 0 {
-				b.WriteByte('_')
-			}
-			r += 'a' - 'A'
-		}
-		b.WriteRune(r)
+	kind, known := codexErrors[name]
+	if !known || kind.status != (variant != nil) {
+		return nil
 	}
-	return b.String()
+	cause := kind.cause
+	if status := variant[name].Status; status != nil {
+		cause = apihttp.StatusCause(*status)
+	}
+	return &TurnError{Engine: harness.Codex, Code: kind.code, Cause: cause}
 }
 
 type codexUsage struct {
