@@ -338,3 +338,20 @@ func TestWorkbenchCapabilityClaims(t *testing.T) {
 		}
 	}
 }
+
+// Which engines admit the browser in a sandboxed session, as the session
+// package refuses it: Claude does, Codex doesn't, and an engine without a
+// browser doesn't either.
+func TestSandboxedBrowserClaims(t *testing.T) {
+	if c := Support(Claude, Session, SandboxedBrowser); c.Availability != Native || c.Reason == "" {
+		t.Fatalf("claude: %+v", c)
+	}
+	for _, e := range []Engine{Codex, Grok, OpenAICompatible} {
+		if c := Support(e, Session, SandboxedBrowser); c.Usable() || c.Reason == "" {
+			t.Fatalf("%s: %+v", e, c)
+		}
+	}
+	if Support(Claude, Run, SandboxedBrowser).Usable() {
+		t.Fatal("a native run has no sandbox to admit the browser in")
+	}
+}

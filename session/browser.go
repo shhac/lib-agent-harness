@@ -48,8 +48,10 @@ func normalizeBrowser(o Options) error {
 	if o.Restriction != nil {
 		return refuse(o, "browser", RefusedConflict, "a restricted session's tools are exactly the caller's; leave Browser unset or use an ordinary native session")
 	}
-	if o.Provider.Engine == harness.Codex && o.Sandbox != nil {
-		return refuse(o, "browser", RefusedConflict, "a sandboxed Codex session cannot inherit the owner's browser bridge safely; leave Browser unset or use an ordinary native session")
+	if o.Sandbox != nil {
+		if c := harness.Support(o.Provider.Engine, harness.Session, harness.SandboxedBrowser); !c.Usable() {
+			return refuse(o, "browser", RefusedConflict, c.Reason+"; leave Browser unset or use an ordinary native session")
+		}
 	}
 	return nil
 }

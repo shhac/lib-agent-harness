@@ -95,6 +95,10 @@ const (
 	// Browser: the browser integration the harness itself ships, switched on
 	// for this invocation. Off unless asked for.
 	Browser Feature = "browser"
+	// SandboxedBrowser: Browser is admitted in a session that also sets
+	// Sandbox. A caller that runs every session sandboxed asks this before
+	// offering the browser at all.
+	SandboxedBrowser Feature = "sandboxed_browser"
 	// Background: the harness and everything it starts run at background
 	// priority, so agent work yields to the machine's interactive use.
 	Background Feature = "background"
@@ -305,27 +309,29 @@ var supportTable = map[supportKey]Capability{
 	{OpenAICompatible, Session, ToolActivity}:        {Composed, "the library reports the model's call arguments and the handler's result as it ran them"},
 	{OpenAICompatible, Account, Available}:           {Unsupported, "API endpoints expose no account inspection"},
 
-	{Claude, Session, Loopback}:   {Unknown, "Claude Code's sandbox allowLocalBinding, which admits this machine's own addresses; proved before each launch by a canary that must reach and bind loopback and be refused an off-machine address"},
-	{Codex, Session, Loopback}:    {Unsupported, "codex-cli 0.156.1's sandbox network is all or nothing: allow_local_binding has no effect while the network is off, and turning it on opens every address"},
-	{Grok, Session, Loopback}:     {Unsupported, "Grok sessions have no proven OS sandbox"},
-	{Codex, Run, Loopback}:        {Unsupported, "a native run has no library-proven sandbox to scope networking in"},
-	{Claude, Run, Loopback}:       {Unsupported, "a native run has no library-proven sandbox to scope networking in"},
-	{Grok, Run, Loopback}:         {Unsupported, "a native run has no library-proven sandbox to scope networking in"},
-	{Claude, Session, Background}: background,
-	{Codex, Session, Background}:  background,
-	{Grok, Session, Background}:   background,
-	{Claude, Run, Background}:     background,
-	{Codex, Run, Background}:      background,
-	{Grok, Run, Background}:       background,
-	{Claude, Session, ToolImages}: {Native, "image blocks in Claude Code's tool results, checked with a claude-in-chrome screenshot"},
-	{Codex, Session, ToolImages}:  {Native, "generated images in codex-cli 0.159.2's imageGeneration results, checked through a native session; MCP image content as the app-server protocol declares it"},
-	{Grok, Session, ToolImages}:   {Unknown, "image content blocks in an ACP tool call update, as the protocol declares them; not seen from a real tool"},
-	{Claude, Session, Browser}:    claudeBrowser,
-	{Claude, Run, Browser}:        claudeBrowser,
-	{Codex, Session, Browser}:     codexBrowser,
-	{Codex, Run, Browser}:         codexBrowser,
-	{Grok, Session, Browser}:      {Unsupported, "Grok 1.0.41 ships no browser integration"},
-	{Grok, Run, Browser}:          {Unsupported, "Grok 1.0.41 ships no browser integration"},
+	{Claude, Session, Loopback}:         {Unknown, "Claude Code's sandbox allowLocalBinding, which admits this machine's own addresses; proved before each launch by a canary that must reach and bind loopback and be refused an off-machine address"},
+	{Codex, Session, Loopback}:          {Unsupported, "codex-cli 0.156.1's sandbox network is all or nothing: allow_local_binding has no effect while the network is off, and turning it on opens every address"},
+	{Grok, Session, Loopback}:           {Unsupported, "Grok sessions have no proven OS sandbox"},
+	{Codex, Run, Loopback}:              {Unsupported, "a native run has no library-proven sandbox to scope networking in"},
+	{Claude, Run, Loopback}:             {Unsupported, "a native run has no library-proven sandbox to scope networking in"},
+	{Grok, Run, Loopback}:               {Unsupported, "a native run has no library-proven sandbox to scope networking in"},
+	{Claude, Session, Background}:       background,
+	{Codex, Session, Background}:        background,
+	{Grok, Session, Background}:         background,
+	{Claude, Run, Background}:           background,
+	{Codex, Run, Background}:            background,
+	{Grok, Run, Background}:             background,
+	{Claude, Session, ToolImages}:       {Native, "image blocks in Claude Code's tool results, checked with a claude-in-chrome screenshot"},
+	{Codex, Session, ToolImages}:        {Native, "generated images in codex-cli 0.159.2's imageGeneration results, checked through a native session; MCP image content as the app-server protocol declares it"},
+	{Grok, Session, ToolImages}:         {Unknown, "image content blocks in an ACP tool call update, as the protocol declares them; not seen from a real tool"},
+	{Claude, Session, Browser}:          claudeBrowser,
+	{Claude, Run, Browser}:              claudeBrowser,
+	{Codex, Session, Browser}:           codexBrowser,
+	{Codex, Run, Browser}:               codexBrowser,
+	{Grok, Session, Browser}:            {Unsupported, "Grok 1.0.41 ships no browser integration"},
+	{Claude, Session, SandboxedBrowser}: {Native, "a sandboxed Claude session admits the browser's tools beside its own, except those that would read local files or start another agent; the browser itself runs outside the sandbox"},
+	{Codex, Session, SandboxedBrowser}:  {Unsupported, "a sandboxed Codex session cannot inherit the owner's browser bridge safely"},
+	{Grok, Run, Browser}:                {Unsupported, "Grok 1.0.41 ships no browser integration"},
 
 	{Codex, Account, Available}:  unverified,
 	{Codex, Account, Login}:      unverified,

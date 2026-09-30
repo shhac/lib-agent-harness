@@ -784,7 +784,9 @@ browser control; it does not establish a video recording API or hidden-window
 capture. Grok 1.0.41, API sessions and restricted sessions are refused.
 Sandboxed Codex sessions are also refused: their isolated home cannot inherit
 the owner's browser bridge safely. Use an ordinary native Codex session, or
-leave `Browser` unset.
+leave `Browser` unset. `harness.Support(e, Session, SandboxedBrowser)` says
+which engines admit the browser in a sandboxed session, for a caller that
+sandboxes every session and must decide before offering the browser.
 
 Before any prompt, Codex sessions check that `node_repl` advertises its `js`
 and `js_reset` tools, including deferred tools. Claude sessions check that
