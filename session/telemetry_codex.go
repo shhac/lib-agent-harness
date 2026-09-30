@@ -82,7 +82,7 @@ func parseCodexQuota(raw json.RawMessage) (harness.QuotaSnapshot, error) {
 	if r.Buckets == nil && r.Legacy == nil {
 		return harness.QuotaSnapshot{}, ErrProtocol
 	}
-	q := harness.QuotaSnapshot{Observation: observation("account/rateLimits/read", harness.Measured), Complete: true, LimitReached: codexLimitReached(r)}
+	q := harness.QuotaSnapshot{Observation: observation("account/rateLimits/read", harness.Measured), Complete: true, LimitReached: codexLimitReached(r), LimitReason: codexLimitReason(r)}
 	if len(r.Buckets) == 0 && r.Legacy != nil {
 		id := r.Legacy.ID
 		if id == "" {
@@ -154,6 +154,19 @@ func codexLimitReached(r codexRateLimits) *bool {
 	}
 	reached := true
 	return &reached
+}
+
+// codexLimitReason is the single-bucket view's named limit, such as
+// workspace_owner_credits_depleted, which tells waiting from buying credits.
+func codexLimitReason(r codexRateLimits) string {
+	if r.Legacy == nil {
+		return ""
+	}
+	var reason *string
+	if json.Unmarshal(r.Legacy.Reached, &reason) != nil {
+		return ""
+	}
+	return providerCode(reason)
 }
 
 // parseCodexCredits reads the credit balance, spend control and early-reset

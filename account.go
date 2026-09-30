@@ -101,6 +101,10 @@ type QuotaWindow struct {
 	WindowMinutes *int64     `json:"window_minutes,omitempty"`
 	ResetsAt      *time.Time `json:"resets_at,omitempty"`
 	Allowance     *Allowance `json:"allowance,omitempty"`
+	// LimitReached is the provider's statement that this window is the one
+	// refusing use; nil when it said nothing about this window. A limit on one
+	// model's window leaves the others usable.
+	LimitReached *bool `json:"limit_reached,omitempty"`
 }
 
 // RemainingPercent clamps only the derived remainder. UsedPercent preserves
@@ -125,6 +129,10 @@ type QuotaSnapshot struct {
 	// currently blocks ordinary use. Nil means it did not say; it is never
 	// inferred from percentages or reset times.
 	LimitReached *bool `json:"limit_reached,omitempty"`
+	// LimitReason is the provider's enumerated reason a limit was reached,
+	// such as Codex's workspace_owner_credits_depleted, which says the remedy
+	// is buying credits rather than waiting; empty when it did not say.
+	LimitReason string `json:"limit_reason,omitempty"`
 }
 
 // Amount is an exact decimal as the provider reported it, such as "37.50", in

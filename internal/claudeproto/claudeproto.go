@@ -92,12 +92,19 @@ func Rejection(info json.RawMessage, now time.Time) (Limit, bool) {
 	}
 	limit := Limit{Rejected: true}
 	if r.ResetsAt != nil {
-		when := time.Unix(*r.ResetsAt, 0).UTC()
-		if !when.Before(now.Add(-time.Minute)) && !when.After(now.Add(resetHorizon)) {
-			limit.ResetsAt = &when
-		}
+		limit.ResetsAt = Reset(*r.ResetsAt, now)
 	}
 	return limit, true
+}
+
+// Reset is a stated reset time in Unix seconds, or nil when it is already
+// past or further away than any limit Claude reports.
+func Reset(unix int64, now time.Time) *time.Time {
+	when := time.Unix(unix, 0).UTC()
+	if when.Before(now.Add(-time.Minute)) || when.After(now.Add(resetHorizon)) {
+		return nil
+	}
+	return &when
 }
 
 // Explains reports whether this limit is the reason for an assistant error: a

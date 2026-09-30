@@ -3,6 +3,7 @@ package session
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -217,6 +218,53 @@ func TestClaudeStreamLimitReached(t *testing.T) {
 	q, _ = parseClaudeQuotaEvent(json.RawMessage(`{"status":"allowed_warning","rateLimitType":"five_hour","utilization":0.9}`))
 	if *q.LimitReached || q.Windows[0].Kind != harness.QuotaSession {
 		t.Fatalf("warning mistaken for limit: %+v", q)
+	}
+}
+
+// A rejection names the window that refused: an exhausted Opus week leaves the
+// shared windows usable, and a caller should not switch login over it.
+func TestClaudeRejectionNamesItsWindow(t *testing.T) {
+	reset := time.Now().Add(2 * time.Hour).Unix()
+	q, err := parseClaudeQuotaEvent(json.RawMessage(fmt.Sprintf(`{"status":"rejected","rateLimitType":"seven_day_opus","resetsAt":%d,"unifiedWindows":{"five_hour":{"utilization":0.2,"resetsAt":%d},"seven_day_opus":{"utilization":1,"resetsAt":%d},"seven_day":{"utilization":0.5,"resetsAt":4102444800}}}`, reset, reset, reset)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range q.Windows {
+		switch w.ID {
+		case "seven_day_opus":
+			if w.LimitReached == nil || !*w.LimitReached || w.ResetsAt == nil {
+				t.Fatalf("the refusing window was not named: %+v", w)
+			}
+		case "seven_day":
+			// Past any limit Claude reports, so not a time a caller should wait for.
+			if w.LimitReached != nil || w.ResetsAt != nil {
+				t.Fatalf("an unstated window was judged: %+v", w)
+			}
+		default:
+			if w.LimitReached != nil {
+				t.Fatalf("an unstated window was judged: %+v", w)
+			}
+		}
+	}
+	q, _ = parseClaudeQuotaEvent(json.RawMessage(`{"status":"allowed","rateLimitType":"five_hour","unifiedWindows":{"five_hour":{"utilization":0.1}}}`))
+	if w := q.Windows[0]; w.LimitReached == nil || *w.LimitReached {
+		t.Fatalf("an allowed window was not cleared: %+v", w)
+	}
+}
+
+// Codex says why its limit was reached, which separates waiting for a reset
+// from a workspace owner buying credits.
+func TestCodexLimitReason(t *testing.T) {
+	for raw, want := range map[string]string{
+		`{"rateLimits":{"rateLimitReachedType":"workspace_owner_credits_depleted"}}`: "workspace_owner_credits_depleted",
+		`{"rateLimits":{"rateLimitReachedType":"rate_limit_reached"}}`:               "rate_limit_reached",
+		`{"rateLimits":{"rateLimitReachedType":null}}`:                               "",
+		`{"rateLimits":{"rateLimitReachedType":"Secret Prose"}}`:                     "",
+	} {
+		q, err := parseCodexQuota(json.RawMessage(raw))
+		if err != nil || q.LimitReason != want {
+			t.Fatalf("%s: %q %v", raw, q.LimitReason, err)
+		}
 	}
 }
 

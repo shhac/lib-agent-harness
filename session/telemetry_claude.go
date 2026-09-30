@@ -8,6 +8,7 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/claudeproto"
 )
 
 func parseClaudeAccount(raw json.RawMessage) (harness.AccountSnapshot, error) {
@@ -405,6 +406,14 @@ func parseClaudeQuotaEvent(raw json.RawMessage) (harness.QuotaSnapshot, error) {
 		}
 		kind, model := claudeQuotaKind(id)
 		n := harness.QuotaWindow{Observation: q.Observation, ID: id, Kind: kind, Model: model, Scope: id, WindowMinutes: claudeWindowMinutes(kind)}
+		// A rejection names the window that refused; while use is allowed, no
+		// window in the event is refusing it.
+		switch {
+		case r.Status == "rejected" && id == r.Type:
+			n.LimitReached = cloneValue(&reached)
+		case r.Status != "rejected":
+			n.LimitReached = cloneValue(&reached)
+		}
 		if w.Utilization != nil {
 			pct := *w.Utilization * 100
 			if !nonnegative(&pct) {
@@ -413,8 +422,7 @@ func parseClaudeQuotaEvent(raw json.RawMessage) (harness.QuotaSnapshot, error) {
 			n.UsedPercent = &pct
 		}
 		if w.Reset != nil {
-			when := time.Unix(*w.Reset, 0).UTC()
-			n.ResetsAt = &when
+			n.ResetsAt = claudeproto.Reset(*w.Reset, time.Now())
 		}
 		q.Windows = append(q.Windows, n)
 	}
