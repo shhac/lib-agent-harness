@@ -350,5 +350,5 @@ func parseCodexUsage(raw json.RawMessage) (codexUsage, bool) {
 // normalized is already the shared shape: Codex's inputTokens counts every
 // prompt token, cached ones included, and its cached figure is always reported.
 func (u codexUsage) normalized() Usage {
-	return Usage{Usage: harness.Usage{Known: true, Input: u.Input, Output: u.Output, CacheRead: u.CacheRead, CacheWrite: u.CacheWrite, Reasoning: u.Reasoning, CacheKnown: true}}
+	return Usage{Usage: harness.Usage{Known: true, Input: u.Input, Output: u.Output, CacheRead: u.CacheRead, CacheWrite: u.CacheWrite, Reasoning: u.Reasoning, CacheKnown: true, ReasoningKnown: true}}
 }

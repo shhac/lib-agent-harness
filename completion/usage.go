@@ -20,6 +20,10 @@ type tokenReport struct {
 	// and output_tokens.
 	CachedInput     *int64 `json:"cached_input_tokens"`
 	ReasoningOutput *int64 `json:"reasoning_output_tokens"`
+	// Claude's thinking, reported as a part of output_tokens.
+	OutputDetails *struct {
+		Thinking *int64 `json:"thinking_tokens"`
+	} `json:"output_tokens_details"`
 }
 
 // terminalAccounting is the single definition of what a CLI stream establishes
@@ -97,7 +101,7 @@ func claudeUsage(report *tokenReport) harness.Usage {
 	if _, ok := sumTokens(input, *report.Output); !ok {
 		return harness.Usage{}
 	}
-	return harness.Usage{
+	usage := harness.Usage{
 		Known:      true,
 		Input:      input,
 		Output:     *report.Output,
@@ -105,6 +109,10 @@ func claudeUsage(report *tokenReport) harness.Usage {
 		CacheWrite: cacheWrite,
 		CacheKnown: report.CacheRead != nil && report.CacheWrite != nil,
 	}
+	if details := report.OutputDetails; details != nil && details.Thinking != nil && *details.Thinking >= 0 && *details.Thinking <= usage.Output {
+		usage.Reasoning, usage.ReasoningKnown = *details.Thinking, true
+	}
+	return usage
 }
 
 // codexUsage reads a turn.completed report. Codex's input_tokens already
@@ -129,7 +137,7 @@ func codexUsage(report *tokenReport) harness.Usage {
 		if *reasoning < 0 || *reasoning > usage.Output {
 			return harness.Usage{}
 		}
-		usage.Reasoning = *reasoning
+		usage.Reasoning, usage.ReasoningKnown = *reasoning, true
 	}
 	return usage
 }

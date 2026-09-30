@@ -76,14 +76,17 @@ type codexUsage struct {
 	InputTokens           int64  `json:"input_tokens"`
 	CachedInputTokens     *int64 `json:"cached_input_tokens"`
 	OutputTokens          int64  `json:"output_tokens"`
-	ReasoningOutputTokens int64  `json:"reasoning_output_tokens"`
+	ReasoningOutputTokens *int64 `json:"reasoning_output_tokens"`
 }
 
 // usage maps codex's report onto the shared shape. codex has no explicit cache
 // write (its caching is implicit), so CacheWrite stays 0; a report without a
 // cached figure leaves the split unknown rather than claiming nothing was cached.
 func (u codexUsage) usage() harness.Usage {
-	out := harness.Usage{Input: u.InputTokens, Output: u.OutputTokens, Reasoning: u.ReasoningOutputTokens}
+	out := harness.Usage{Input: u.InputTokens, Output: u.OutputTokens}
+	if u.ReasoningOutputTokens != nil {
+		out.Reasoning, out.ReasoningKnown = *u.ReasoningOutputTokens, true
+	}
 	if u.CachedInputTokens != nil {
 		out.CacheRead = *u.CachedInputTokens
 		out.CacheKnown = true

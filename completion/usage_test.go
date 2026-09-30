@@ -54,6 +54,14 @@ func TestTerminalUsageIsReadFromAuthoritativeReportsOnly(t *testing.T) {
 		{"claude one cache field absent", harness.Claude,
 			claudeResult("success", false, `{"input_tokens":10,"output_tokens":4,"cache_read_input_tokens":6}`),
 			harness.Usage{Known: true, Input: 16, Output: 4, CacheRead: 6}},
+		// claude 2.1.285 states its thinking as a part of output_tokens; a figure
+		// larger than its whole is not trusted as one.
+		{"claude thinking", harness.Claude,
+			claudeResult("success", false, `{"input_tokens":10,"output_tokens":4,"output_tokens_details":{"thinking_tokens":3}}`),
+			harness.Usage{Known: true, Input: 10, Output: 4, Reasoning: 3, ReasoningKnown: true}},
+		{"claude thinking beyond output", harness.Claude,
+			claudeResult("success", false, `{"input_tokens":10,"output_tokens":4,"output_tokens_details":{"thinking_tokens":5}}`),
+			harness.Usage{Known: true, Input: 10, Output: 4}},
 		// An explicit zero is a measurement, and stays one.
 		{"explicit zero is known", harness.Claude,
 			claudeResult("success", false, `{"input_tokens":0,"output_tokens":0}`),
@@ -65,7 +73,7 @@ func TestTerminalUsageIsReadFromAuthoritativeReportsOnly(t *testing.T) {
 		// output_tokens its reasoning.
 		{"codex cached input and reasoning", harness.Codex,
 			codexTurn(`{"input_tokens":30,"cached_input_tokens":20,"output_tokens":5,"reasoning_output_tokens":2}`),
-			harness.Usage{Known: true, Input: 30, Output: 5, CacheRead: 20, Reasoning: 2, CacheKnown: true}},
+			harness.Usage{Known: true, Input: 30, Output: 5, CacheRead: 20, Reasoning: 2, CacheKnown: true, ReasoningKnown: true}},
 		{"codex explicit zero cached input", harness.Codex,
 			codexTurn(`{"input_tokens":30,"cached_input_tokens":0,"output_tokens":5}`),
 			harness.Usage{Known: true, Input: 30, Output: 5, CacheKnown: true}},
@@ -351,7 +359,7 @@ func TestCodexContextWindowIsUnknown(t *testing.T) {
 		`{"type":"item.completed","item":{"type":"agent_message","text":"{\"content\":\"done\",\"tool_calls\":[]}"}}` + "\n" +
 		`{"type":"turn.completed","usage":{"input_tokens":30,"cached_input_tokens":20,"output_tokens":5,"reasoning_output_tokens":2},"modelUsage":{"gpt-5":{"contextWindow":272000}}}`
 	got := terminalAccounting(harness.Codex, []byte(stream))
-	if got.Usage != (harness.Usage{Known: true, Input: 30, Output: 5, CacheRead: 20, Reasoning: 2, CacheKnown: true}) || got.ContextWindow != 0 || got.Cost.Known {
+	if got.Usage != (harness.Usage{Known: true, Input: 30, Output: 5, CacheRead: 20, Reasoning: 2, CacheKnown: true, ReasoningKnown: true}) || got.ContextWindow != 0 || got.Cost.Known {
 		t.Fatalf("got %+v", got)
 	}
 }

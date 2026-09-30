@@ -210,7 +210,7 @@ func TestOpenAIChatUsageIsMeasuredOnlyFromCompleteReports(t *testing.T) {
 	}{
 		{"complete with cached detail", `"usage":{"prompt_tokens":12,"completion_tokens":3,"total_tokens":15,"prompt_tokens_details":{"cached_tokens":4}}`, harness.Usage{Known: true, Input: 12, Output: 3, CacheRead: 4, CacheKnown: true}},
 		{"explicit zero cached detail", `"usage":{"prompt_tokens":12,"completion_tokens":3,"prompt_tokens_details":{"cached_tokens":0}}`, harness.Usage{Known: true, Input: 12, Output: 3, CacheKnown: true}},
-		{"reasoning detail", `"usage":{"prompt_tokens":12,"completion_tokens":9,"total_tokens":21,"completion_tokens_details":{"reasoning_tokens":6}}`, harness.Usage{Known: true, Input: 12, Output: 9, Reasoning: 6}},
+		{"reasoning detail", `"usage":{"prompt_tokens":12,"completion_tokens":9,"total_tokens":21,"completion_tokens_details":{"reasoning_tokens":6}}`, harness.Usage{Known: true, Input: 12, Output: 9, Reasoning: 6, ReasoningKnown: true}},
 		// Many gateways omit the split; zero cache figures must then read as
 		// unreported, not uncached.
 		{"total absent", `"usage":{"prompt_tokens":5,"completion_tokens":2}`, harness.Usage{Known: true, Input: 5, Output: 2}},

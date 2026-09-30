@@ -57,16 +57,24 @@ type streamUsage struct {
 	OutputTokens             int64 `json:"output_tokens"`
 	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+	// Thinking is the part of OutputTokens that was reasoning, where reported.
+	Details *struct {
+		Thinking *int64 `json:"thinking_tokens"`
+	} `json:"output_tokens_details"`
 }
 
 func (u streamUsage) usage() harness.Usage {
-	return harness.Usage{
+	out := harness.Usage{
 		Input:      u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens,
 		Output:     u.OutputTokens,
 		CacheRead:  u.CacheReadInputTokens,
 		CacheWrite: u.CacheCreationInputTokens,
 		CacheKnown: true,
 	}
+	if d := u.Details; d != nil && d.Thinking != nil && *d.Thinking >= 0 && *d.Thinking <= u.OutputTokens {
+		out.Reasoning, out.ReasoningKnown = *d.Thinking, true
+	}
+	return out
 }
 
 // addUsage folds one invocation's usage into the run's running total.
@@ -79,13 +87,17 @@ func (u streamUsage) usage() harness.Usage {
 // Summing is correct for claude specifically and wrong for codex, whose
 // turn.completed reports the session total every time; see
 // codexTranscoder.recordUsage.
-func addUsage(acc, u harness.Usage) harness.Usage {
+//
+// The reasoning split stays known only while every invocation reported it;
+// first says acc holds nothing yet.
+func addUsage(acc, u harness.Usage, first bool) harness.Usage {
 	acc.Input += u.Input
 	acc.Output += u.Output
 	acc.CacheRead += u.CacheRead
 	acc.CacheWrite += u.CacheWrite
 	acc.Reasoning += u.Reasoning
 	acc.CacheKnown = u.CacheKnown
+	acc.ReasoningKnown = u.ReasoningKnown && (first || acc.ReasoningKnown)
 	return acc
 }
 
@@ -321,8 +333,8 @@ func (t *streamTranscoder) recordResult(ev streamEvent, rawLine []byte) (bool, s
 		}
 	}
 	if usageUsable {
+		t.usage = addUsage(t.usage, ev.Usage.usage(), !t.sawUsage)
 		t.sawUsage = true
-		t.usage = addUsage(t.usage, ev.Usage.usage())
 	} else {
 		t.usageIncomplete = true
 	}

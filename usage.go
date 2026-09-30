@@ -15,6 +15,10 @@ type Usage struct {
 	CacheWrite int64 `json:"cache_write"` // part of Input
 	Reasoning  int64 `json:"reasoning"`   // part of Output; never added to a total
 	CacheKnown bool  `json:"cache_known"`
+	// ReasoningKnown says the provider reported how much of Output was
+	// reasoning. Many do not, and a zero Reasoning then means unreported, not
+	// that the model did no reasoning.
+	ReasoningKnown bool `json:"reasoning_known"`
 }
 
 // Fresh is the input neither read from nor written to the cache. It is

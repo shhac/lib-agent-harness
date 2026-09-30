@@ -247,7 +247,7 @@ func TestGrokStreamSuccessAndAccounting(t *testing.T) {
 	if failure != nil {
 		t.Fatal(failure)
 	}
-	want := harness.Usage{Known: true, Input: 15, Output: 6, CacheRead: 4, CacheWrite: 1, Reasoning: 2, CacheKnown: true}
+	want := harness.Usage{Known: true, Input: 15, Output: 6, CacheRead: 4, CacheWrite: 1, Reasoning: 2, CacheKnown: true, ReasoningKnown: true}
 	if result.Usage != want {
 		t.Fatalf("usage %+v", result.Usage)
 	}

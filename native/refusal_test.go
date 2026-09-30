@@ -210,13 +210,13 @@ func TestCacheMapsOntoTheSharedInput(t *testing.T) {
 		fresh  int64
 	}{
 		"codex with cache": {harness.Codex, `{"type":"turn.completed","usage":{"input_tokens":42000,"cached_input_tokens":30000,"output_tokens":800,"reasoning_output_tokens":120}}`,
-			harness.Usage{Known: true, Input: 42000, CacheRead: 30000, Output: 800, Reasoning: 120, CacheKnown: true}, 12000},
+			harness.Usage{Known: true, Input: 42000, CacheRead: 30000, Output: 800, Reasoning: 120, CacheKnown: true, ReasoningKnown: true}, 12000},
 		"codex without cache": {harness.Codex, `{"type":"turn.completed","usage":{"input_tokens":20,"output_tokens":3}}`,
 			harness.Usage{Known: true, Input: 20, Output: 3}, -1},
 		"claude": {harness.Claude, `{"type":"result","result":"ok","usage":{"input_tokens":12000,"output_tokens":800,"cache_read_input_tokens":30000,"cache_creation_input_tokens":500}}`,
 			harness.Usage{Known: true, Input: 42500, CacheRead: 30000, CacheWrite: 500, Output: 800, CacheKnown: true}, 12000},
 		"grok": {harness.Grok, `{"type":"end","stopReason":"end_turn","usage":{"input_tokens":10,"cache_read_input_tokens":5,"cache_creation_input_tokens":2,"output_tokens":3,"reasoning_tokens":1}}`,
-			harness.Usage{Known: true, Input: 17, CacheRead: 5, CacheWrite: 2, Output: 3, Reasoning: 1, CacheKnown: true}, 10},
+			harness.Usage{Known: true, Input: 17, CacheRead: 5, CacheWrite: 2, Output: 3, Reasoning: 1, CacheKnown: true, ReasoningKnown: true}, 10},
 	} {
 		s, _ := NewStream(tc.engine, nil, StreamOptions{})
 		s.UserPrompt("p")

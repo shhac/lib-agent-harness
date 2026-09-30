@@ -227,6 +227,9 @@ func parseClaudeUsage(raw json.RawMessage) Usage {
 		Output     int64  `json:"output_tokens"`
 		CacheRead  *int64 `json:"cache_read_input_tokens"`
 		CacheWrite *int64 `json:"cache_creation_input_tokens"`
+		Details    *struct {
+			Thinking *int64 `json:"thinking_tokens"`
+		} `json:"output_tokens_details"`
 	}
 	if json.Unmarshal(raw, &counts) != nil {
 		return Usage{}
@@ -241,7 +244,7 @@ func parseClaudeUsage(raw json.RawMessage) Usage {
 	if counts.Input > maxInt64-read || counts.Input+read > maxInt64-write {
 		return Usage{}
 	}
-	return Usage{Usage: harness.Usage{
+	usage := Usage{Usage: harness.Usage{
 		Known:      true,
 		Input:      counts.Input + read + write,
 		Output:     counts.Output,
@@ -249,6 +252,11 @@ func parseClaudeUsage(raw json.RawMessage) Usage {
 		CacheWrite: write,
 		CacheKnown: counts.CacheRead != nil && counts.CacheWrite != nil,
 	}}
+	// Claude reports its thinking as a part of output_tokens.
+	if d := counts.Details; d != nil && d.Thinking != nil && *d.Thinking >= 0 && *d.Thinking <= counts.Output {
+		usage.Reasoning, usage.ReasoningKnown = *d.Thinking, true
+	}
+	return usage
 }
 
 func validClaudeUsage(raw json.RawMessage) bool {

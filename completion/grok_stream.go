@@ -257,7 +257,7 @@ func grokUsage(report *grokUsageReport) harness.Usage {
 		if *reasoning < 0 {
 			return harness.Usage{}
 		}
-		usage.Reasoning = *reasoning
+		usage.Reasoning, usage.ReasoningKnown = *reasoning, true
 	}
 	return usage
 }

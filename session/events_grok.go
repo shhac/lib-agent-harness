@@ -312,7 +312,7 @@ func parseGrokTurnUsage(raw json.RawMessage) Usage {
 	if input < 0 || output < 0 || read < 0 || write < 0 || reasoning < 0 || read > input || write > input-read || reasoning > output {
 		return Usage{}
 	}
-	return Usage{Usage: harness.Usage{Known: true, Input: input, Output: output, CacheRead: read, CacheWrite: write, Reasoning: reasoning, CacheKnown: c.Read != nil && c.Write != nil}}
+	return Usage{Usage: harness.Usage{Known: true, Input: input, Output: output, CacheRead: read, CacheWrite: write, Reasoning: reasoning, CacheKnown: c.Read != nil && c.Write != nil, ReasoningKnown: c.Reasoning != nil}}
 }
 
 // parseGrokResponseUsage reads one response's figures, whose input_tokens
@@ -334,7 +334,7 @@ func parseGrokResponseUsage(raw json.RawMessage) Usage {
 	if input < 0 || output < 0 || read < 0 || write < 0 || reasoning < 0 || reasoning > output || input > maxInt64-read || input+read > maxInt64-write {
 		return Usage{}
 	}
-	return Usage{Usage: harness.Usage{Known: true, Input: input + read + write, Output: output, CacheRead: read, CacheWrite: write, Reasoning: reasoning, CacheKnown: c.Read != nil && c.Write != nil}}
+	return Usage{Usage: harness.Usage{Known: true, Input: input + read + write, Output: output, CacheRead: read, CacheWrite: write, Reasoning: reasoning, CacheKnown: c.Read != nil && c.Write != nil, ReasoningKnown: c.Reasoning != nil}}
 }
 
 func valueOr(p *int64) int64 {

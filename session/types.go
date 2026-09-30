@@ -329,6 +329,8 @@ func (u Usage) add(next Usage) Usage {
 		CacheWrite: u.CacheWrite + next.CacheWrite,
 		Reasoning:  u.Reasoning + next.Reasoning,
 		CacheKnown: (!u.Known || u.CacheKnown) && next.CacheKnown,
+		// Known only while every response reported it, as the cache split is.
+		ReasoningKnown: (!u.Known || u.ReasoningKnown) && next.ReasoningKnown,
 	}}
 }
 

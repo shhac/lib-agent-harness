@@ -108,7 +108,7 @@ func TestGrokStreamReadsTheLiveWireFormat(t *testing.T) {
 		t.Fatalf("report must be the final response only: %+v", r)
 	}
 	// Grok's input_tokens is uncached; the shared Input adds the cache back.
-	if r.Usage != (harness.Usage{Known: true, Input: 14, Output: 3, CacheRead: 2, Reasoning: 1, CacheKnown: true}) {
+	if r.Usage != (harness.Usage{Known: true, Input: 14, Output: 3, CacheRead: 2, Reasoning: 1, CacheKnown: true, ReasoningKnown: true}) {
 		t.Fatalf("per-response usage lines must not be summed with end: %+v", r)
 	}
 	if fresh, ok := r.Usage.Fresh(); !ok || fresh != 12 {

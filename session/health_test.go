@@ -201,6 +201,18 @@ func TestUsageIsReportedInTheSharedShape(t *testing.T) {
 	if got := (Usage{}).add(split).add(unsplit); got.CacheKnown || got.Input != 10 {
 		t.Errorf("an accumulation with an unsplit response kept a known split: %+v", got)
 	}
+	thought := Usage{Usage: harness.Usage{Known: true, Output: 5, Reasoning: 2, ReasoningKnown: true}}
+	silent := Usage{Usage: harness.Usage{Known: true, Output: 5}}
+	if got := (Usage{}).add(thought).add(thought); !got.ReasoningKnown || got.Reasoning != 4 {
+		t.Errorf("reasoning reported by every response was lost: %+v", got)
+	}
+	if got := (Usage{}).add(thought).add(silent); got.ReasoningKnown {
+		t.Errorf("a response that did not report reasoning left it known: %+v", got)
+	}
+	thinking := parseClaudeUsage(json.RawMessage(`{"input_tokens":3,"output_tokens":9,"output_tokens_details":{"thinking_tokens":4}}`))
+	if !thinking.ReasoningKnown || thinking.Reasoning != 4 {
+		t.Errorf("Claude's thinking was not read as reasoning: %+v", thinking)
+	}
 }
 
 func TestUsageAccumulationRefusesToWrap(t *testing.T) {

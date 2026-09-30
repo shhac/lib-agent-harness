@@ -252,7 +252,7 @@ func chatUsage(data []byte) harness.Usage {
 		if reasoning < 0 || reasoning > usage.Output {
 			return harness.Usage{}
 		}
-		usage.Reasoning = reasoning
+		usage.Reasoning, usage.ReasoningKnown = reasoning, true
 	}
 	return usage
 }
