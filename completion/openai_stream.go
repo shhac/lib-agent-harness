@@ -41,21 +41,25 @@ type chatChunk struct {
 			ReasoningContent *string           `json:"reasoning_content"`
 			ReasoningDetails []json.RawMessage `json:"reasoning_details"`
 			Refusal          *string           `json:"refusal"`
-			ToolCalls        []struct {
-				Index    *int   `json:"index"`
-				ID       string `json:"id"`
-				Type     string `json:"type"`
-				Function struct {
-					Name      string `json:"name"`
-					Arguments string `json:"arguments"`
-				} `json:"function"`
-				ExtraContent json.RawMessage `json:"extra_content"`
-			} `json:"tool_calls"`
+			ToolCalls        []chatCallDelta   `json:"tool_calls"`
 		} `json:"delta"`
 		FinishReason *string `json:"finish_reason"`
 	} `json:"choices"`
 	Usage json.RawMessage `json:"usage"`
 	Error json.RawMessage `json:"error"`
+}
+
+// chatCallDelta is one fragment of a streamed tool call: the first names it,
+// and the rest carry pieces of its arguments.
+type chatCallDelta struct {
+	Index    *int   `json:"index"`
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+	ExtraContent json.RawMessage `json:"extra_content"`
 }
 
 // add folds one event in. A chunk this library cannot read ends the stream as
@@ -94,19 +98,8 @@ func (s *chatStream) add(data []byte) error {
 		}
 		s.details = append(s.details, delta.ReasoningDetails...)
 		for _, fragment := range delta.ToolCalls {
-			if fragment.Index == nil || *fragment.Index < 0 || *fragment.Index >= maxStreamedCalls {
-				return apihttp.ResponseFailure("invalid_tool_call")
-			}
-			for len(s.calls) <= *fragment.Index {
-				s.calls = append(s.calls, &streamedCall{})
-			}
-			call := s.calls[*fragment.Index]
-			call.id += fragment.ID
-			call.kind += fragment.Type
-			call.name += fragment.Function.Name
-			call.arguments.WriteString(fragment.Function.Arguments)
-			if len(fragment.ExtraContent) > 0 && string(fragment.ExtraContent) != "null" {
-				call.extra = fragment.ExtraContent
+			if err := s.addCall(fragment); err != nil {
+				return err
 			}
 		}
 		if choice.FinishReason != nil {
@@ -119,49 +112,60 @@ func (s *chatStream) add(data []byte) error {
 	return nil
 }
 
+// addCall merges one fragment into the call its index names.
+func (s *chatStream) addCall(fragment chatCallDelta) error {
+	if fragment.Index == nil || *fragment.Index < 0 || *fragment.Index >= maxStreamedCalls {
+		return apihttp.ResponseFailure("invalid_tool_call")
+	}
+	for len(s.calls) <= *fragment.Index {
+		s.calls = append(s.calls, &streamedCall{})
+	}
+	call := s.calls[*fragment.Index]
+	call.id += fragment.ID
+	call.kind += fragment.Type
+	call.name += fragment.Function.Name
+	call.arguments.WriteString(fragment.Function.Arguments)
+	if len(fragment.ExtraContent) > 0 && string(fragment.ExtraContent) != "null" {
+		call.extra = fragment.ExtraContent
+	}
+	return nil
+}
+
 // response is the stream as one Chat Completions response.
 func (s *chatStream) response() []byte {
-	out := map[string]any{}
-	if len(s.failure) > 0 {
-		out["error"] = s.failure
+	out := chatCompletionResponse{Error: s.failure, Usage: s.usage}
+	if s.sawChoice {
+		out.Choices = []chatResponseChoice{{FinishReason: s.finish, Message: s.reply()}}
 	}
-	if len(s.usage) > 0 {
-		out["usage"] = s.usage
-	}
-	if !s.sawChoice {
-		out["choices"] = []any{}
-		data, _ := json.Marshal(out)
-		return data
-	}
-	message := map[string]any{"role": "assistant", "content": nil}
+	data, _ := json.Marshal(out)
+	return data
+}
+
+// reply is the assembled message. What never arrived stays null, as it would
+// in a whole response.
+func (s *chatStream) reply() *chatReply {
+	reply := &chatReply{Role: "assistant"}
 	if s.sawContent {
-		message["content"] = s.content.String()
+		reply.Content = rawJSON(s.content.String())
 	}
 	if s.sawReasoning {
-		message["reasoning_content"] = s.reasoning.String()
+		reply.ReasoningContent = rawJSON(s.reasoning.String())
 	}
 	if s.sawRefusal {
-		message["refusal"] = s.refusal.String()
+		refusal := s.refusal.String()
+		reply.Refusal = &refusal
 	}
 	if len(s.details) > 0 {
-		message["reasoning_details"] = s.details
+		reply.ReasoningDetails = rawJSON(s.details)
 	}
-	if len(s.calls) > 0 {
-		calls := make([]any, 0, len(s.calls))
-		for _, call := range s.calls {
-			wire := map[string]any{"id": call.id, "type": call.kind, "function": map[string]any{"name": call.name, "arguments": call.arguments.String()}}
-			if len(call.extra) > 0 {
-				wire["extra_content"] = call.extra
-			}
-			calls = append(calls, wire)
-		}
-		message["tool_calls"] = calls
+	for _, call := range s.calls {
+		reply.ToolCalls = append(reply.ToolCalls, chatReplyCall{ID: call.id, Type: call.kind, Function: &chatReplyFunction{Name: call.name, Arguments: call.arguments.String()}, ExtraContent: call.extra})
 	}
-	choice := map[string]any{"index": 0, "message": message}
-	if s.finish != nil {
-		choice["finish_reason"] = *s.finish
-	}
-	out["choices"] = []any{choice}
-	data, _ := json.Marshal(out)
+	return reply
+}
+
+// rawJSON encodes a value that always has a JSON form.
+func rawJSON(value any) json.RawMessage {
+	data, _ := json.Marshal(value)
 	return data
 }

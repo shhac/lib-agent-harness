@@ -155,29 +155,40 @@ func chatMessages(messages []Message, binding string) ([]chatMessage, string) {
 	return wire, ""
 }
 
+// chatCompletionResponse is a whole Chat Completions response, as an endpoint
+// sends one or as a stream is assembled into one (see openai_stream.go).
 type chatCompletionResponse struct {
 	// Error is a failure some gateways report inside a 200 response.
 	Error   json.RawMessage `json:"error"`
-	Choices []struct {
-		FinishReason *string `json:"finish_reason"`
-		Message      *struct {
-			Role      string          `json:"role"`
-			Content   json.RawMessage `json:"content"`
-			Refusal   *string         `json:"refusal"`
-			ToolCalls []struct {
-				ID       string `json:"id"`
-				Type     string `json:"type"`
-				Function *struct {
-					Name      string `json:"name"`
-					Arguments string `json:"arguments"`
-				} `json:"function"`
-				ExtraContent json.RawMessage `json:"extra_content"`
-			} `json:"tool_calls"`
-			ReasoningContent json.RawMessage `json:"reasoning_content"`
-			ReasoningDetails json.RawMessage `json:"reasoning_details"`
-		} `json:"message"`
-	} `json:"choices"`
-	Usage json.RawMessage `json:"usage"`
+	Choices []chatResponseChoice    `json:"choices"`
+	Usage   json.RawMessage `json:"usage"`
+}
+
+type chatResponseChoice struct {
+	FinishReason *string    `json:"finish_reason"`
+	Message      *chatReply `json:"message"`
+}
+
+type chatReply struct {
+	Role             string          `json:"role"`
+	Content          json.RawMessage `json:"content"`
+	Refusal          *string         `json:"refusal"`
+	ToolCalls        []chatReplyCall `json:"tool_calls"`
+	ReasoningContent json.RawMessage `json:"reasoning_content"`
+	ReasoningDetails json.RawMessage `json:"reasoning_details"`
+}
+
+type chatReplyCall struct {
+	ID       string             `json:"id"`
+	Type     string             `json:"type"`
+	Function *chatReplyFunction `json:"function"`
+	// ExtraContent is provider state attached to the call (see replay.go).
+	ExtraContent json.RawMessage `json:"extra_content"`
+}
+
+type chatReplyFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
 }
 
 // parseChatCompletion accepts only an unambiguous terminal response. Anything
