@@ -29,8 +29,12 @@ const (
 
 // The test binary doubles as each CLI, speaking only the inspection protocol.
 // Any other method, including Grok's session/new, ends it with a failure.
+//
+// Grok launches with an allowlisted environment, so the test's variables
+// never reach it: its fixture is recognized by its argv, which no go test
+// command line contains, and reads its mode from the home it was given.
 func init() {
-	if os.Getenv("LIB_HARNESS_ACCOUNT_FIXTURE") != "1" {
+	if os.Getenv("LIB_HARNESS_ACCOUNT_FIXTURE") != "1" && !slices.Equal(os.Args[1:], []string{"agent", "--no-leader", "stdio"}) {
 		return
 	}
 	os.Exit(fixture())
@@ -54,6 +58,9 @@ func grokFixture() int {
 	if home == "" {
 		return 10
 	}
+	if os.Getenv("XAI_API_KEY") != "" || os.Getenv("LIB_HARNESS_ACCOUNT_FIXTURE") != "" {
+		return 14 // the parent's environment reached the launch
+	}
 	for _, entry := range nativecli.GrokReducedTelemetry {
 		key, value, _ := strings.Cut(entry, "=")
 		if os.Getenv(key) != value {
@@ -63,7 +70,8 @@ func grokFixture() int {
 	if cwd, _ := os.Getwd(); !strings.Contains(cwd, "agent-harness-account-") {
 		return 12
 	}
-	mode := os.Getenv("LIB_HARNESS_ACCOUNT_MODE")
+	written, _ := os.ReadFile(filepath.Join(home, "mode"))
+	mode := string(written)
 	if mode == "exit" {
 		return 3
 	}
@@ -170,11 +178,16 @@ func fixtureProvider(t *testing.T, engine harness.Engine, mode string) harness.P
 	t.Helper()
 	t.Setenv("LIB_HARNESS_ACCOUNT_FIXTURE", "1")
 	t.Setenv("LIB_HARNESS_ACCOUNT_MODE", mode)
+	t.Setenv("XAI_API_KEY", "synthetic-key-must-not-reach-grok")
 	bin, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return harness.Provider{Engine: engine, CLI: harness.CLI{Binary: bin, Home: t.TempDir()}}
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "mode"), []byte(mode), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return harness.Provider{Engine: engine, CLI: harness.CLI{Binary: bin, Home: home}}
 }
 
 func testContext(t *testing.T) context.Context {

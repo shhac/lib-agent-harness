@@ -34,12 +34,18 @@ func inspectGrok(ctx context.Context, p harness.Provider, binary string) (harnes
 	report := unknownReport(p.Engine, "not inspected")
 	report.Quota.Reason = "Grok exposes no subscription quota windows"
 	report.Credits.Reason = "Grok exposes no credit balance"
+	// The same allowlisted environment as every other Grok launch: nothing
+	// from the parent but its operating context, so no ambient key reaches it.
+	env, code := nativecli.GrokEnvironment(p.CLI.Home)
+	if code != "" {
+		return report, &Error{Engine: p.Engine, Code: code, Family: harness.FailurePreflight}
+	}
 	dir, err := os.MkdirTemp("", "agent-harness-account-")
 	if err != nil {
 		return report, &Error{Engine: p.Engine, Code: CodeTransport, Family: harness.FailureProcess}
 	}
 	defer os.RemoveAll(dir)
-	raw, err := grokExchange(ctx, binary, dir, grokEnvironment(p.CLI.Home))
+	raw, err := grokExchange(ctx, binary, dir, env)
 	if err != nil {
 		if ctx.Err() != nil {
 			return report, ctx.Err()
@@ -52,14 +58,6 @@ func inspectGrok(ctx context.Context, p harness.Provider, binary string) (harnes
 	}
 	report.Account = account
 	return report, nil
-}
-
-func grokEnvironment(home string) []string {
-	env := os.Environ()
-	if home != "" {
-		env = nativecli.Override(env, "GROK_HOME="+home)
-	}
-	return nativecli.Override(env, nativecli.GrokReducedTelemetry...)
 }
 
 // grokExchange runs the contained agent for one handshake and one request,
