@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/jsonschema"
 )
 
 type chatRequest struct {
@@ -66,7 +67,11 @@ func chatRequestBody(cfg Config, messages []Message, tools []Tool) ([]byte, erro
 	for _, tool := range tools {
 		function := chatFunction{Name: tool.Function.Name, Description: tool.Function.Description, Strict: tool.Function.Strict}
 		if tool.Function.Parameters != nil {
-			function.Parameters = schemaValue(tool.Function.Parameters)
+			parameters, err := jsonschema.Object(tool.Function.Parameters)
+			if err != nil {
+				return nil, preflightFailure(harness.OpenAICompatible, "invalid_tool_catalog")
+			}
+			function.Parameters = parameters
 		}
 		request.Tools = append(request.Tools, chatTool{Type: "function", Function: function})
 	}
@@ -250,32 +255,4 @@ func chatUsage(data []byte) harness.Usage {
 		usage.Reasoning = reasoning
 	}
 	return usage
-}
-
-// schemaValue copies a caller's parameter schema as valid JSON Schema. Go
-// marshals a nil slice as null, and a schema keyword is never null: a tool
-// with no required arguments would otherwise send "required": null, which
-// strict endpoints reject for the whole request.
-func schemaValue(value any) any {
-	switch typed := value.(type) {
-	case map[string]any:
-		out := make(map[string]any, len(typed))
-		for key, nested := range typed {
-			if nested == nil {
-				continue
-			}
-			out[key] = schemaValue(nested)
-		}
-		return out
-	case []any:
-		out := make([]any, 0, len(typed))
-		for _, nested := range typed {
-			out = append(out, schemaValue(nested))
-		}
-		return out
-	case []string:
-		return append([]string{}, typed...)
-	default:
-		return value
-	}
 }

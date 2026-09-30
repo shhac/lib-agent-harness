@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/jsonschema"
 	"github.com/shhac/lib-agent-harness/internal/nativecli"
 )
 
@@ -351,43 +352,18 @@ func sandboxToolServer(s *Sandbox) string {
 // definitions and may reuse or edit them between launches; a session that held
 // references into them could have its tool surface changed underneath it after
 // the check that approved it, and two concurrent launches could edit each
-// other's.
+// other's. The copy is also what reaches the harness, so it is the schema as
+// jsonschema.Object prepares it. A schema that cannot be prepared is left as
+// the caller's, for validation to refuse.
 func freezeTools(tools []ToolDefinition) []ToolDefinition {
 	out := make([]ToolDefinition, 0, len(tools))
 	for _, tool := range tools {
-		tool.Schema = freezeValue(tool.Schema).(map[string]any)
+		if schema, err := jsonschema.Object(tool.Schema); err == nil {
+			tool.Schema = schema
+		}
 		out = append(out, tool)
 	}
 	return out
-}
-
-// freezeValue also makes the copy a valid JSON Schema. Go marshals a nil
-// slice as null, and a schema keyword is never null: Claude Code 2.1.283
-// rejects a whole tools/list that carries one ("required": null from a tool
-// with no required arguments), retries, and then starts with no hosted tools.
-// So a nil slice becomes an empty array and a null keyword is left out.
-func freezeValue(value any) any {
-	switch typed := value.(type) {
-	case map[string]any:
-		out := make(map[string]any, len(typed))
-		for key, nested := range typed {
-			if nested == nil {
-				continue
-			}
-			out[key] = freezeValue(nested)
-		}
-		return out
-	case []any:
-		out := make([]any, 0, len(typed))
-		for _, nested := range typed {
-			out = append(out, freezeValue(nested))
-		}
-		return out
-	case []string:
-		return append([]string{}, typed...)
-	default:
-		return value
-	}
 }
 func compatible(o Options, r Ref) bool {
 	if o.Provider.Engine.Transport() == harness.APITransport && !validSessionID(r.ID) {

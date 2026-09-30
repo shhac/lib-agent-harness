@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/shhac/lib-agent-harness/internal/jsonschema"
 )
 
 // Tool hosting lets a caller give a native session a tool surface it implements
@@ -159,6 +161,9 @@ func (h ToolHost) validateTools() error {
 		}
 		if t.Schema == nil {
 			return errors.New("tool host requires an argument schema for every tool")
+		}
+		if _, err := jsonschema.Object(t.Schema); err != nil {
+			return err
 		}
 		seen[t.Name] = true
 	}

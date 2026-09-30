@@ -40,3 +40,12 @@ func TestHostedSchemasNeverCarryNull(t *testing.T) {
 		t.Fatalf("required arguments were lost: %s", wire)
 	}
 }
+
+// A hosted tool's arguments are always an object; a harness would refuse, or
+// never call, a tool whose schema says otherwise, so the host refuses it first.
+func TestHostedSchemaMustDescribeAnObject(t *testing.T) {
+	host := ToolHost{Server: "app", Handler: ToolHandlerFunc(nil), Tools: []ToolDefinition{{Name: "list", Schema: map[string]any{"type": "array"}}}}
+	if err := host.validateTools(); err == nil || !strings.Contains(err.Error(), "object") {
+		t.Fatalf("%v", err)
+	}
+}

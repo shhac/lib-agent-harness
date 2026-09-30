@@ -111,6 +111,10 @@ func TestOpenAIChatPreflightRefusals(t *testing.T) {
 		{"unencodable parameters", func(_ *Config, _ *[]Message, tools *[]Tool) {
 			*tools = []Tool{{Type: "function", Function: Function{Name: "lookup", Parameters: map[string]any{"x": func() {}}}}}
 		}, "invalid_tool_catalog"},
+		// Arguments are always an object; an endpoint would refuse the request.
+		{"non-object parameters", func(_ *Config, _ *[]Message, tools *[]Tool) {
+			*tools = []Tool{{Type: "function", Function: Function{Name: "lookup", Parameters: map[string]any{"type": "array"}}}}
+		}, "invalid_tool_catalog"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			api := respondWith(200, chatBody(chatChoice(`"stop"`, `{"content":"ok"}`)))
