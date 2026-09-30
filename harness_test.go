@@ -170,6 +170,13 @@ func TestOpenAICompatibleSessionClaims(t *testing.T) {
 	if Support(OpenAICompatible, Session, Effort).Availability != Native || Support(OpenAICompatible, Account, Quota).Usable() {
 		t.Fatal("API session effort or quota claims changed")
 	}
+	// Every CLI session passes the caller's effort to its harness; a matrix
+	// that said otherwise would hide a working option from callers that ask.
+	for _, engine := range []Engine{Codex, Claude, Grok} {
+		if c := Support(engine, Session, Effort); c.Availability != Native {
+			t.Fatalf("%s session effort: %+v", engine, c)
+		}
+	}
 }
 
 // Every session engine reports what its tools were asked and what they
