@@ -182,27 +182,15 @@ func StatusFailure(response *http.Response) *Failure {
 		failure.Code = "redirect_refused"
 		return failure
 	}
-	code := errorCode(response.Body)
-	switch {
-	case status == http.StatusUnauthorized:
-		failure.Cause = harness.CauseAuthentication
-	case status == http.StatusForbidden:
-		failure.Cause = harness.CausePermissionDenied
+	failure.Cause = StatusCause(status)
+	switch code := errorCode(response.Body); {
 	case status == http.StatusNotFound && code == "model_not_found":
 		failure.Cause, failure.Code = harness.CauseModelUnavailable, code
 	case status == http.StatusBadRequest && code == "context_length_exceeded":
 		failure.Cause, failure.Code = harness.CauseContextLimit, code
-	case status == http.StatusRequestEntityTooLarge:
-		failure.Cause = harness.CauseContextLimit
 	// Quota exhaustion shares 429 with rate limiting but will not clear by waiting.
 	case status == http.StatusTooManyRequests && code == "insufficient_quota":
 		failure.Cause, failure.Code = harness.CauseQuotaExhausted, code
-	case status == http.StatusTooManyRequests:
-		failure.Cause = harness.CauseRateLimited
-	case status == http.StatusServiceUnavailable:
-		failure.Cause = harness.CauseUnavailable
-	case status == 529:
-		failure.Cause = harness.CauseOverloaded
 	}
 	if failure.Retryable() {
 		failure.RetryAfter = retryAfter(response.Header.Get("Retry-After"))
@@ -225,6 +213,29 @@ func EmbeddedFailure(errorObject json.RawMessage) *Failure {
 		failure.Cause, failure.Code = harness.CauseQuotaExhausted, code
 	}
 	return failure
+}
+
+// StatusCause is what a provider's HTTP status alone says about a failure,
+// the one table every mode reads a status through. It says only what the
+// status says unambiguously: a 500, 502 or 504 may come after the upstream
+// already acted, so it is not called unavailable, and a 429 may equally be an
+// exhausted plan, which only the provider's own code tells apart.
+func StatusCause(status int) harness.Cause {
+	switch status {
+	case http.StatusUnauthorized:
+		return harness.CauseAuthentication
+	case http.StatusForbidden:
+		return harness.CausePermissionDenied
+	case http.StatusRequestEntityTooLarge:
+		return harness.CauseContextLimit
+	case http.StatusTooManyRequests:
+		return harness.CauseRateLimited
+	case http.StatusServiceUnavailable:
+		return harness.CauseUnavailable
+	case 529:
+		return harness.CauseOverloaded
+	}
+	return harness.CauseUnknown
 }
 
 func errorCode(body io.Reader) string {

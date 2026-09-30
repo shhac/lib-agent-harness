@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/apihttp"
 	"github.com/shhac/lib-agent-harness/process"
 )
 
@@ -144,20 +145,7 @@ func grokErrorClass(message string) (harness.Cause, string) {
 	if json.Unmarshal([]byte(body), &envelope) != nil || envelope.Status == nil || *envelope.Status < 100 || *envelope.Status > 599 {
 		return harness.CauseUnknown, "grok_error"
 	}
-	code := "http_" + strconv.Itoa(*envelope.Status)
-	switch *envelope.Status {
-	case 401:
-		return harness.CauseAuthentication, code
-	case 403:
-		return harness.CausePermissionDenied, code
-	case 429:
-		return harness.CauseRateLimited, code
-	case 503:
-		return harness.CauseUnavailable, code
-	case 529:
-		return harness.CauseOverloaded, code
-	}
-	return harness.CauseUnknown, code
+	return apihttp.StatusCause(*envelope.Status), "http_" + strconv.Itoa(*envelope.Status)
 }
 
 // result settles the stream. Accounting comes from the single `end` (or an

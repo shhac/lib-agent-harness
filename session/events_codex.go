@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/apihttp"
 )
 
 // Codex's app-server dialect. Kept apart from Claude's because the two
@@ -285,32 +286,11 @@ func codexTurnFailure(info json.RawMessage) *TurnError {
 		}
 		cause := harness.CauseUnknown
 		if detail.Status != nil {
-			cause = httpStatusCause(*detail.Status)
+			cause = apihttp.StatusCause(*detail.Status)
 		}
 		return &TurnError{Engine: harness.Codex, Code: snakeCase(name), Cause: cause}
 	}
 	return nil
-}
-
-// httpStatusCause is what a provider's status says, and only what it says
-// unambiguously: a 429 may equally be an exhausted plan, but Codex reports
-// that as usageLimitExceeded instead.
-func httpStatusCause(status int) harness.Cause {
-	switch status {
-	case 401:
-		return harness.CauseAuthentication
-	case 403:
-		return harness.CausePermissionDenied
-	case 413:
-		return harness.CauseContextLimit
-	case 429:
-		return harness.CauseRateLimited
-	case 500, 502, 503, 504:
-		return harness.CauseUnavailable
-	case 529:
-		return harness.CauseOverloaded
-	}
-	return harness.CauseUnknown
 }
 
 // snakeCase spells an allowlisted camelCase enum in the library's code style.

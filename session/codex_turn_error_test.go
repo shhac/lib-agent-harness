@@ -22,6 +22,9 @@ func TestCodexFailedTurnSaysWhy(t *testing.T) {
 		{"refresh token reused", `"unauthorized"`, "unauthorized", harness.CauseAuthentication},
 		{"rate limited", `{"responseTooManyFailedAttempts":{"httpStatusCode":429}}`, "response_too_many_failed_attempts", harness.CauseRateLimited},
 		{"expired token", `{"httpConnectionFailed":{"httpStatusCode":401}}`, "http_connection_failed", harness.CauseAuthentication},
+		// A gateway error may follow the upstream having acted; it is not
+		// called unavailable here any more than for an API endpoint.
+		{"bad gateway", `{"responseStreamDisconnected":{"httpStatusCode":502}}`, "response_stream_disconnected", harness.CauseUnknown},
 		{"no status", `{"responseStreamDisconnected":{"httpStatusCode":null}}`, "response_stream_disconnected", harness.CauseUnknown},
 		{"context", `"contextWindowExceeded"`, "context_window_exceeded", harness.CauseContextLimit},
 		{"unrecognized", `"secretNewKind"`, "", ""},

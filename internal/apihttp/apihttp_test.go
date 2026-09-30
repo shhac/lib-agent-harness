@@ -111,3 +111,17 @@ func TestEchoes(t *testing.T) {
 		t.Fatal("echo detection")
 	}
 }
+
+// One table for every mode: a status that may follow an upstream having acted
+// is not called unavailable, wherever it is read.
+func TestStatusCauseSaysOnlyWhatAStatusSays(t *testing.T) {
+	for status, want := range map[int]harness.Cause{
+		401: harness.CauseAuthentication, 403: harness.CausePermissionDenied, 413: harness.CauseContextLimit,
+		429: harness.CauseRateLimited, 503: harness.CauseUnavailable, 529: harness.CauseOverloaded,
+		400: harness.CauseUnknown, 404: harness.CauseUnknown, 500: harness.CauseUnknown, 502: harness.CauseUnknown, 504: harness.CauseUnknown,
+	} {
+		if got := StatusCause(status); got != want {
+			t.Errorf("%d: %s, want %s", status, got, want)
+		}
+	}
+}
