@@ -13,9 +13,11 @@ package session
 import (
 	"encoding/base64"
 	"encoding/json"
-	"github.com/shhac/lib-agent-harness/internal/rawjson"
+	"net/http"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/shhac/lib-agent-harness/internal/rawjson"
 )
 
 // MaxToolPayloadBytes bounds Event.Input and Event.Output, each, on one
@@ -141,8 +143,42 @@ func (c *toolImages) add(b toolContentBlock) {
 	if b.Source.Type == "base64" {
 		mediaType, data = b.Source.MediaType, b.Source.Data
 	}
+	decoded, ok := decodeToolImage(data)
+	if !ok {
+		c.omitted++
+		return
+	}
+	c.addDecoded(mediaType, decoded)
+}
+
+// Generated images have base64 bytes but no declared MIME type. Detect it
+// from the payload, retaining only the same image types as other tool results.
+func (c *toolImages) addGenerated(data string) {
+	decoded, ok := decodeToolImage(data)
+	if !ok {
+		c.omitted++
+		return
+	}
+	c.addDecoded(http.DetectContentType(decoded), decoded)
+}
+
+func decodeToolImage(data string) ([]byte, bool) {
+	// Match DecodeString's acceptance of MIME base64 line breaks when estimating
+	// the allocation. Other non-base64 characters still fail decoding.
+	if strings.ContainsAny(data, "\r\n") {
+		data = strings.ReplaceAll(strings.ReplaceAll(data, "\r", ""), "\n", "")
+	}
+	// DecodedLen can overestimate by two padding bytes. Check before allocating
+	// as well as afterwards to avoid allocating an unbounded image payload.
+	if base64.StdEncoding.DecodedLen(len(data)) > MaxToolImageBytes+2 {
+		return nil, false
+	}
 	decoded, err := base64.StdEncoding.DecodeString(data)
-	if err != nil || !toolImageTypes[mediaType] || len(decoded) > MaxToolImageBytes || len(c.images) >= MaxToolImages {
+	return decoded, err == nil && len(decoded) <= MaxToolImageBytes
+}
+
+func (c *toolImages) addDecoded(mediaType string, decoded []byte) {
+	if !toolImageTypes[mediaType] || len(c.images) >= MaxToolImages {
 		c.omitted++
 		return
 	}

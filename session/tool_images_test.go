@@ -41,6 +41,23 @@ func TestToolResultTakesImagesOutOfTheText(t *testing.T) {
 	}
 }
 
+func TestToolImageBoundAllowsBase64LineBreaks(t *testing.T) {
+	data := bytes.Repeat([]byte("x"), MaxToolImageBytes)
+	encoded := b64(data)
+	var wrapped strings.Builder
+	for len(encoded) > 76 {
+		wrapped.WriteString(encoded[:76])
+		wrapped.WriteString("\r\n")
+		encoded = encoded[76:]
+	}
+	wrapped.WriteString(encoded)
+	var images toolImages
+	images.add(toolContentBlock{Type: "image", MimeType: "image/png", Data: wrapped.String()})
+	if images.omitted != 0 || len(images.images) != 1 || !bytes.Equal(images.images[0].Data, data) {
+		t.Fatal("a valid image at the decoded bound was lost because of line breaks")
+	}
+}
+
 // The shape is Claude Code 2.1.283's, from a claude-in-chrome screenshot.
 func TestClaudeToolEventsCarryImages(t *testing.T) {
 	s, _ := fakeSession(t, harness.Claude)

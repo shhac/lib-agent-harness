@@ -268,12 +268,20 @@ head of the original text. Payloads are passed through unredacted apart from
 the library's own tool-channel credential: they can contain private data, and
 applications apply their own visibility rules.
 
-Images a tool returns, such as a browser screenshot, are taken out of the text
-and carried on `tool_completed` as `Images`, decoded (`MediaType` and `Data`):
+Images a tool returns, such as a browser screenshot or a generated image, are
+taken out of the text and carried on `tool_completed` as `Images`, decoded
+(`MediaType` and raw `Data []byte`):
 at most `session.MaxToolImages` (4), each at most `session.MaxToolImageBytes`
 (4 MiB), PNG, JPEG, GIF or WebP, with `ImagesOmitted` counting the rest.
-Claude's image blocks are checked live (a claude-in-chrome screenshot); Codex
-MCP results and Grok content are read as their protocols declare them, and
+Claude's image blocks are checked live (a claude-in-chrome screenshot), as are
+Codex's native generated images (Codex 0.159.2). A Codex `imageGeneration`
+completion carries the CLI's `savedPath` in `Output` and decodes its base64
+`result` into `Images`; base64 never enters the text payload. The library does
+not open the reported path. Go callers receive bytes directly; JSON-serializing
+an event encodes its byte fields as base64. Oversized, malformed or unsupported
+image payloads increment `ImagesOmitted`, while the path remains available under the normal
+text bound. Failed generations retain their native status and carry no image.
+Codex MCP results and Grok content are read as their protocols declare them, and
 `harness.Support(e, Session, ToolImages)` says which.
 
 `Health` reports `running`, `active`, `quiet`, `idle`, `exited` or `failed` from

@@ -291,7 +291,9 @@ type Event struct {
 	// restates the call (Codex items, Grok updates carrying rawInput).
 	Input json.RawMessage `json:"input,omitempty"`
 	// Output is a tool's result text on tool_completed: its aggregated output,
-	// result content or error message.
+	// result content or error message. For Codex imageGeneration, it is the
+	// generated file's savedPath, as reported by the CLI; the library does not
+	// open that path. Image bytes are carried separately in Images.
 	Output string `json:"output,omitempty"`
 	// ExitCode is a command's exit status, where the harness reports one.
 	ExitCode *int `json:"exit_code,omitempty"`
@@ -302,7 +304,7 @@ type Event struct {
 	InputTruncated  bool `json:"input_truncated,omitempty"`
 	OutputTruncated bool `json:"output_truncated,omitempty"`
 	// Images are the images a tool returned, on tool_completed, such as a
-	// browser screenshot: at most MaxToolImages, each at most
+	// browser screenshot or a generated image: at most MaxToolImages, each at most
 	// MaxToolImageBytes decoded, PNG, JPEG, GIF or WebP. ImagesOmitted counts
 	// the ones left out for their number, size or type.
 	Images        []Image                  `json:"images,omitempty"`

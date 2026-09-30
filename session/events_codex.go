@@ -93,8 +93,18 @@ func (s *Session) codexItem(t *Turn, completed bool, p map[string]json.RawMessag
 	}
 }
 
-// codexToolImages are the image content of an MCP tool call's result.
+// codexToolImages reads generated image bytes and MCP image content. Paths are
+// reported separately; never open a provider-supplied path to obtain an image.
 func codexToolImages(typ string, item map[string]json.RawMessage) toolImages {
+	if typ == "imageGeneration" {
+		var images toolImages
+		if str(item, "status") == "completed" {
+			if data := str(item, "result"); data != "" {
+				images.addGenerated(data)
+			}
+		}
+		return images
+	}
 	if typ != "mcpToolCall" {
 		return toolImages{}
 	}
@@ -107,7 +117,7 @@ func codexToolImages(typ string, item map[string]json.RawMessage) toolImages {
 }
 
 // codexToolActivity reads what an item was asked to do and what it produced,
-// from the ThreadItem shapes codex-cli 0.156.1's app-server protocol declares
+// from the ThreadItem shapes codex-cli 0.159.2's app-server protocol declares
 // (codex app-server generate-ts). A completed item restates the call, so its
 // input is reported again on completion.
 func codexToolActivity(typ string, item map[string]json.RawMessage) (json.RawMessage, string, *int) {
@@ -146,6 +156,8 @@ func codexToolActivity(typ string, item map[string]json.RawMessage) (json.RawMes
 			output = string(item["results"])
 		}
 		return pickFields(item, "query", "action"), output, nil
+	case "imageGeneration":
+		return nil, str(item, "savedPath"), nil
 	case "imageView":
 		return pickFields(item, "path"), "", nil
 	case "collabAgentToolCall":

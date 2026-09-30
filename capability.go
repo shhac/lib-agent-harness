@@ -318,7 +318,7 @@ var supportTable = map[supportKey]Capability{
 	{Codex, Run, Background}:      background,
 	{Grok, Run, Background}:       background,
 	{Claude, Session, ToolImages}: {Native, "image blocks in Claude Code's tool results, checked with a claude-in-chrome screenshot"},
-	{Codex, Session, ToolImages}:  {Unknown, "image content in an MCP tool call's result, as the app-server protocol declares it; not seen from a real tool"},
+	{Codex, Session, ToolImages}:  {Native, "generated images in codex-cli 0.159.2's imageGeneration results, checked through a native session; MCP image content as the app-server protocol declares it"},
 	{Grok, Session, ToolImages}:   {Unknown, "image content blocks in an ACP tool call update, as the protocol declares them; not seen from a real tool"},
 	{Claude, Session, Browser}:    claudeBrowser,
 	{Claude, Run, Browser}:        claudeBrowser,

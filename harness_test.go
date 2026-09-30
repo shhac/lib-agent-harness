@@ -312,7 +312,7 @@ func TestBackgroundAndToolImageClaims(t *testing.T) {
 	if Support(OpenAICompatible, Session, Background).Usable() || Support(Claude, Complete, Background).Usable() {
 		t.Error("background claimed where nothing is launched for it")
 	}
-	if Support(Claude, Session, ToolImages).Availability != Native || Support(Codex, Session, ToolImages).Availability != Unknown || Support(Grok, Session, ToolImages).Availability != Unknown {
+	if Support(Claude, Session, ToolImages).Availability != Native || Support(Codex, Session, ToolImages).Availability != Native || Support(Grok, Session, ToolImages).Availability != Unknown {
 		t.Error("tool image claims changed")
 	}
 }
