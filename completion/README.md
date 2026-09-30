@@ -28,7 +28,11 @@ optional output cap (`max_completion_tokens`, see below).
 Effort requires `API.EffortParameter` (`harness.EffortReasoningEffort` or
 `harness.EffortReasoningObject`), because compatible endpoints read it from
 different fields. It rejects redirects, arbitrary headers and vendor fields, and does not
-retry. Responses must have one complete terminal choice; usage is known only
+retry. The one vendor object it sends is OpenRouter's typed routing,
+`API.OpenRouter`, as `provider` (`require_parameters`, `data_collection`); the
+same option reads an error object inside a 200 response by its integer `code`
+as an HTTP status, whole or streamed. Without it such an object is classified
+only by an allowlisted string code, and is otherwise `provider_error`. Responses must have one complete terminal choice; usage is known only
 when the response supplies consistent token counts. Structured output is
 currently refused rather than silently approximated.
 
@@ -310,7 +314,7 @@ retry budgets and scheduling; no request is retried here. Classification does
 not establish that the failed request consumed no quota. `RetryAfter` is zero
 when the CLI supplies no trustworthy delay (currently both completion adapters).
 An exhausted quota (`quota_exhausted`: an API endpoint's `insufficient_quota`,
-Claude's `billing_error`, or a Claude subscription window that refused the
+a 402 as `insufficient_credits`, Claude's `billing_error`, or a Claude subscription window that refused the
 request) carries `ResetsAt` when the provider stated when it resets.
 
 Claude classification requires a typed assistant error and terminal failed

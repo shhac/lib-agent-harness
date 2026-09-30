@@ -114,10 +114,28 @@ type API struct {
 	// nothing while it thinks. It is refused without Streaming, where there
 	// are no events to be silent between.
 	IdleTimeout time.Duration
+	// OpenRouter is the caller's statement that the endpoint is OpenRouter, or
+	// follows its documented request and error shapes; it is never inferred
+	// from BaseURL. Its routing is sent as the request's provider object, and
+	// an error object inside a 200 response is read by its integer code as an
+	// HTTP status, so an embedded 429 is rate_limited like a real one.
+	OpenRouter *OpenRouterRouting
+}
+
+// OpenRouterRouting is OpenRouter's provider routing, one field per documented
+// key; a zero field is not sent.
+type OpenRouterRouting struct {
+	// RequireParameters routes only to providers that honour every parameter
+	// the request sends, tools included.
+	RequireParameters bool
+	// DataCollection is "allow", "deny" or empty. "deny" routes only to
+	// providers that do not store or train on prompts, which may leave a free
+	// model with no endpoint.
+	DataCollection string
 }
 
 func (a API) zero() bool {
-	return a.BaseURL == "" && a.Dialect == "" && a.Credentials == nil && !a.Unauthenticated && a.EffortParameter == "" && !a.Streaming && a.IdleTimeout == 0
+	return a.BaseURL == "" && a.Dialect == "" && a.Credentials == nil && !a.Unauthenticated && a.EffortParameter == "" && !a.Streaming && a.IdleTimeout == 0 && a.OpenRouter == nil
 }
 
 // Problem returns a fixed code naming what is wrong with the provider, or ""
@@ -165,6 +183,13 @@ func (a API) problem() string {
 		return "api_idle_timeout_invalid"
 	case a.IdleTimeout > 0 && !a.Streaming:
 		return "api_idle_timeout_without_streaming"
+	}
+	if a.OpenRouter != nil {
+		switch a.OpenRouter.DataCollection {
+		case "", "allow", "deny":
+		default:
+			return "api_openrouter_data_collection_invalid"
+		}
 	}
 	switch a.EffortParameter {
 	case "", EffortReasoningEffort, EffortReasoningObject:

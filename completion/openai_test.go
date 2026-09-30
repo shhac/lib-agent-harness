@@ -150,6 +150,8 @@ func TestOpenAIChatHTTPFailuresAreClassifiedWithoutProviderText(t *testing.T) {
 		{"context length", 400, errorBody("context_length_exceeded", "invalid_request_error"), nil, harness.CauseContextLimit, "context_length_exceeded", 0},
 		{"bad request", 400, errorBody("secret_code", "invalid_request_error"), nil, harness.CauseUnknown, "http_400", 0},
 		{"too large", 413, ``, nil, harness.CauseContextLimit, "http_413", 0},
+		// A used-up balance does not clear by waiting, whatever the endpoint says.
+		{"insufficient credits", 402, `{"error":{"code":402,"message":"secret"}}`, []string{"Retry-After", "30"}, harness.CauseQuotaExhausted, "insufficient_credits", 0},
 		{"rate limited", 429, errorBody("rate_limit_exceeded", "requests"), []string{"Retry-After", "7"}, harness.CauseRateLimited, "http_429", 7 * time.Second},
 		{"rate limited unreadable body", 429, `secret`, nil, harness.CauseRateLimited, "http_429", 0},
 		{"rate limited date delay", 429, ``, []string{"Retry-After", "Wed, 21 Oct 2015 07:28:00 GMT"}, harness.CauseRateLimited, "http_429", 0},

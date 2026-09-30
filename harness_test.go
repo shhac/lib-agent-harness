@@ -43,6 +43,25 @@ func TestProviderRefusesTheOtherTransportsHalf(t *testing.T) {
 		{"unauthenticated loopback", Provider{Engine: OpenAICompatible, API: API{BaseURL: "http://127.0.0.1:11434/v1", Dialect: OpenAIChatCompletions, Unauthenticated: true}}, ""},
 		{"both credentials", Provider{Engine: OpenAICompatible, API: API{BaseURL: "http://localhost/v1", Dialect: OpenAIChatCompletions, Credentials: token, Unauthenticated: true}}, "api_credentials_conflict"},
 		{"unknown effort parameter", Provider{Engine: OpenAICompatible, API: API{BaseURL: api.BaseURL, Dialect: OpenAIChatCompletions, Credentials: token, EffortParameter: "x"}}, "api_effort_parameter_unsupported"},
+		{"cli with openrouter routing", Provider{Engine: Codex, API: API{OpenRouter: &OpenRouterRouting{}}}, "api_config_for_cli_engine"},
+	} {
+		if got := tc.p.Problem(); got != tc.code {
+			t.Errorf("%s: problem %q want %q", tc.name, got, tc.code)
+		}
+	}
+	for collection, code := range map[string]string{"": "", "allow": "", "deny": "", "maybe": "api_openrouter_data_collection_invalid", "DENY": "api_openrouter_data_collection_invalid"} {
+		routed := api
+		routed.OpenRouter = &OpenRouterRouting{RequireParameters: true, DataCollection: collection}
+		if got := (Provider{Engine: OpenAICompatible, API: routed}).Problem(); got != code {
+			t.Errorf("data collection %q: problem %q want %q", collection, got, code)
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		p    Provider
+		code string
+	}{
+		{"zero routing", Provider{Engine: OpenAICompatible, API: API{BaseURL: api.BaseURL, Dialect: OpenAIChatCompletions, Credentials: token, OpenRouter: &OpenRouterRouting{}}}, ""},
 	} {
 		if got := tc.p.Problem(); got != tc.code {
 			t.Errorf("%s: problem %q want %q", tc.name, got, tc.code)

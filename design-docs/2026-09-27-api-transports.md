@@ -166,14 +166,26 @@ failures before a response status is known.
 | other 404 | unknown | `http_404` | no |
 | 400 with `context_length_exceeded`, or 413 | context limit | that code / `http_413` | no |
 | 429 | rate limited | `http_429` | yes |
-| 429 with `insufficient_quota` | unknown | `insufficient_quota` | no |
+| 402 | quota exhausted | `insufficient_credits` | no |
+| 429 with `insufficient_quota` | quota exhausted | `insufficient_quota` | no |
 | 503 / 529 | unavailable / overloaded | `http_503` / `http_529` | yes |
 | other status (including 500, 502, 504) | unknown | `http_<status>` | no |
+| 200 with an `error` object and an allowlisted string code | as that code above | that code | no |
+| 200 with an `error` object whose `code` is an integer 400–599, under `API.OpenRouter` | as that status above | as that status above | as that status above |
+| any other 200 with an `error` object | unknown | `provider_error` | no |
 
 A 500, 502 or 504 is not retryable: the gateway or upstream may still have
 served, and billed, the request. `RetryAfter` is taken only from a
-delta-seconds `Retry-After` header on a retryable status, bounded to one hour.
-The library never retries.
+delta-seconds `Retry-After` header on a retryable status, bounded to one hour;
+an error inside a 200 response has no headers to take one from, so its
+`RetryAfter` is zero. A 402 means a used-up prepaid balance to every
+compatible endpoint and is never retryable, even where the endpoint sends a
+`Retry-After`. An error object's integer `code` is read as a status only under
+`API.OpenRouter`, the caller's statement that the endpoint documents it as
+one; a float, a digit string or a code outside 400–599 is `provider_error`.
+A 200 body that reflects the credential, an embedded error included, is
+`credential_echoed` before any of this classification. The library never
+retries.
 
 Deferred from increment 1, each refused rather than approximated: streaming,
 model discovery (`DiscoverModels` keeps refusing non-CLI engines),

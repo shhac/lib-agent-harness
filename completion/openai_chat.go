@@ -24,6 +24,13 @@ type chatRequest struct {
 	// StreamOptions asks for usage in the terminal chunk, the only place a
 	// streamed response reports it.
 	StreamOptions *chatStreamOptions `json:"stream_options,omitempty"`
+	// Provider is OpenRouter's routing, sent only under API.OpenRouter.
+	Provider *chatProvider `json:"provider,omitempty"`
+}
+
+type chatProvider struct {
+	RequireParameters bool   `json:"require_parameters,omitempty"`
+	DataCollection    string `json:"data_collection,omitempty"`
 }
 
 type chatStreamOptions struct {
@@ -89,6 +96,9 @@ func chatRequestBody(cfg Config, messages []Message, tools []Tool) ([]byte, erro
 		if cfg.Effort != "" {
 			request.Reasoning = &chatReasoning{Effort: cfg.Effort}
 		}
+	}
+	if routing := cfg.Provider.API.OpenRouter; routing != nil && *routing != (harness.OpenRouterRouting{}) {
+		request.Provider = &chatProvider{RequireParameters: routing.RequireParameters, DataCollection: routing.DataCollection}
 	}
 	for _, tool := range tools {
 		function := chatFunction{Name: tool.Function.Name, Description: tool.Function.Description, Strict: tool.Function.Strict}
@@ -196,8 +206,9 @@ type chatReplyFunction struct {
 // else returns no reply, alongside the usage the response reported.
 //
 // binding names the endpoint and model, for the provider state the reply
-// carries back (see replay.go).
-func parseChatCompletion(data []byte, tools []Tool, binding string) (Result, error) {
+// carries back (see replay.go). numericStatus reads an embedded error's
+// integer code as an HTTP status (see apihttp.EmbeddedFailure).
+func parseChatCompletion(data []byte, tools []Tool, binding string, numericStatus bool) (Result, error) {
 	accounting := Result{Usage: chatUsage(data)}
 	var response chatCompletionResponse
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -205,7 +216,7 @@ func parseChatCompletion(data []byte, tools []Tool, binding string) (Result, err
 		return accounting, apiResponseFailure("malformed_response")
 	}
 	if !rawjson.Absent(response.Error) {
-		return accounting, apiFailure(apihttp.EmbeddedFailure(response.Error))
+		return accounting, apiFailure(apihttp.EmbeddedFailure(response.Error, numericStatus))
 	}
 	if len(response.Choices) != 1 {
 		return accounting, apiResponseFailure("unexpected_choice_count")

@@ -193,13 +193,26 @@ func jsonMediaType(value string) bool {
 // delay; the body's prose is never read into an error.
 func StatusFailure(response *http.Response) *Failure {
 	status := response.StatusCode
-	failure := ResponseFailure("http_" + strconv.Itoa(status))
 	if status >= 300 && status < 400 {
-		failure.Code = "redirect_refused"
-		return failure
+		return ResponseFailure("redirect_refused")
 	}
+	failure := statusFailure(status, errorCode(response.Body))
+	if failure.Retryable() {
+		failure.RetryAfter = retryAfter(response.Header.Get("Retry-After"))
+	}
+	return failure
+}
+
+// statusFailure is the table a status is read through, whether it came on the
+// response or, from an endpoint that documents it, inside an error object.
+// code is an allowlisted provider code, or "".
+func statusFailure(status int, code string) *Failure {
+	failure := ResponseFailure("http_" + strconv.Itoa(status))
 	failure.Cause = StatusCause(status)
-	switch code := errorCode(response.Body); {
+	switch {
+	// A used-up prepaid balance does not clear by waiting.
+	case status == http.StatusPaymentRequired:
+		failure.Cause, failure.Code = harness.CauseQuotaExhausted, "insufficient_credits"
 	case status == http.StatusNotFound && code == "model_not_found":
 		failure.Cause, failure.Code = harness.CauseModelUnavailable, code
 	case status == http.StatusBadRequest && code == "context_length_exceeded":
@@ -208,19 +221,25 @@ func StatusFailure(response *http.Response) *Failure {
 	case status == http.StatusTooManyRequests && code == "insufficient_quota":
 		failure.Cause, failure.Code = harness.CauseQuotaExhausted, code
 	}
-	if failure.Retryable() {
-		failure.RetryAfter = retryAfter(response.Header.Get("Retry-After"))
-	}
 	return failure
 }
 
 // EmbeddedFailure classifies an error object a provider returned inside a
-// successful HTTP response, as some gateways do. There is no status to trust,
-// so only an allowlisted string code classifies it, and nothing makes it
-// retryable: a numeric code there is not an HTTP status.
-func EmbeddedFailure(errorObject json.RawMessage) *Failure {
+// successful HTTP response, as some gateways do. An allowlisted string code
+// classifies it first. A numeric code is an HTTP status only where the caller
+// said the endpoint documents it as one (numericStatus, set by API.OpenRouter):
+// then a JSON integer from 400 to 599 is read through the status table, with
+// no RetryAfter because there are no headers to take one from. Otherwise
+// nothing makes it retryable. The message and metadata are never read.
+func EmbeddedFailure(errorObject json.RawMessage, numericStatus bool) *Failure {
 	failure := ResponseFailure("provider_error")
-	switch code := allowlistedCode(errorObject); code {
+	code := allowlistedCode(errorObject)
+	if code == "" && numericStatus {
+		if status, ok := embeddedStatus(errorObject); ok {
+			return statusFailure(status, "")
+		}
+	}
+	switch code {
 	case "model_not_found":
 		failure.Cause, failure.Code = harness.CauseModelUnavailable, code
 	case "context_length_exceeded":
@@ -286,6 +305,27 @@ func allowlistedCode(errorObject json.RawMessage) string {
 		}
 	}
 	return ""
+}
+
+// embeddedStatus reads an error object's code as an HTTP error status: a JSON
+// integer, written as plain digits, from 400 to 599. A float, a string or
+// anything outside that range is not one.
+func embeddedStatus(errorObject json.RawMessage) (int, bool) {
+	var fields struct {
+		Code json.RawMessage `json:"code"`
+	}
+	if json.Unmarshal(errorObject, &fields) != nil {
+		return 0, false
+	}
+	digits := string(fields.Code)
+	if len(digits) != 3 || strings.Trim(digits, "0123456789") != "" {
+		return 0, false
+	}
+	status, err := strconv.Atoi(digits)
+	if err != nil || status < 400 || status > 599 {
+		return 0, false
+	}
+	return status, true
 }
 
 // retryAfter trusts only delta-seconds; a date depends on clocks agreeing.

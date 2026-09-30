@@ -110,6 +110,23 @@ OpenRouter). A local model server that takes no credential sets
 `API.Unauthenticated` instead of `Credentials`; that is refused for any
 non-loopback URL.
 
+For OpenRouter (`BaseURL: "https://openrouter.ai/api/v1"`), set
+`API.OpenRouter` to a `*harness.OpenRouterRouting`. It is never inferred from
+the URL. Its `RequireParameters` routes only to providers that honour every
+parameter sent, tools included, and `DataCollection` (`"allow"` or `"deny"`;
+anything else is refused as `api_openrouter_data_collection_invalid`) is sent
+as the request's `provider.data_collection`; unset fields are not sent. The
+option also says the endpoint follows OpenRouter's error shape, so an error
+object inside a 200 response is classified by its integer `code` as that HTTP
+status: an embedded 429 is `rate_limited` like a real one. A 429, including a
+`:free` model's per-minute or per-day limit, is `rate_limited` and retryable,
+with `RetryAfter` set only when the response sent a delta-seconds
+`Retry-After` of at most an hour (never for an embedded one). The library does
+not retry or back off; the caller does, and a daily limit may answer the retry
+with another 429. A 402 from any endpoint is `insufficient_credits`
+(`quota_exhausted`), never retryable. Routing is not part of a session's
+`Ref`: resuming under different routing continues the same conversation.
+
 Grok completion uses the operator's Grok login and requires `WorkDirRoot`.
 Before the first credentialed launch per binary and configuration, the library
 runs Grok against a local server that refuses inference and checks the request

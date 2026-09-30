@@ -68,6 +68,11 @@ func TestDoBoundsAndClassifies(t *testing.T) {
 	if failure := requireCode(t, err, PhaseResponse, harness.CauseOverloaded, "http_529"); failure.RetryAfter != 3*time.Second {
 		t.Fatalf("%+v", failure)
 	}
+	// A used-up balance is not retryable, so its Retry-After is not read.
+	_, err = request(respond(402, "application/json", `{"error":{"code":402,"message":"secret"}}`, "Retry-After", "30"), 100)
+	if failure := requireCode(t, err, PhaseResponse, harness.CauseQuotaExhausted, "insufficient_credits"); failure.Retryable() || failure.RetryAfter != 0 {
+		t.Fatalf("%+v", failure)
+	}
 	_, err = request(roundTrip(func(*http.Request) (*http.Response, error) { return nil, errors.New("secret dial") }), 100)
 	requireCode(t, err, PhaseTransport, harness.CauseUnknown, "transport_failed")
 }
@@ -122,6 +127,37 @@ func TestStatusCauseSaysOnlyWhatAStatusSays(t *testing.T) {
 	} {
 		if got := StatusCause(status); got != want {
 			t.Errorf("%d: %s, want %s", status, got, want)
+		}
+	}
+}
+
+// An embedded integer code is a status only when the caller says so, and
+// only as a plain integer in the error range; the table is StatusFailure's.
+func TestEmbeddedFailureReadsANumericStatusOnlyWhenAsked(t *testing.T) {
+	for _, tc := range []struct {
+		object        string
+		numericStatus bool
+		cause         harness.Cause
+		code          string
+	}{
+		{`{"code":429,"message":"secret"}`, true, harness.CauseRateLimited, "http_429"},
+		{`{"code": 429 ,"message":"secret"}`, true, harness.CauseRateLimited, "http_429"},
+		{`{"code":402}`, true, harness.CauseQuotaExhausted, "insufficient_credits"},
+		{`{"code":503}`, true, harness.CauseUnavailable, "http_503"},
+		{`{"code":404}`, true, harness.CauseUnknown, "http_404"},
+		{`{"code":429}`, false, harness.CauseUnknown, "provider_error"},
+		{`{"code":"insufficient_quota"}`, false, harness.CauseQuotaExhausted, "insufficient_quota"},
+		{`{"code":429,"type":"insufficient_quota"}`, true, harness.CauseQuotaExhausted, "insufficient_quota"},
+		{`{"code":429.0}`, true, harness.CauseUnknown, "provider_error"},
+		{`{"code":"429"}`, true, harness.CauseUnknown, "provider_error"},
+		{`{"code":399}`, true, harness.CauseUnknown, "provider_error"},
+		{`{"code":600}`, true, harness.CauseUnknown, "provider_error"},
+		{`{"code":4290}`, true, harness.CauseUnknown, "provider_error"},
+		{`"secret"`, true, harness.CauseUnknown, "provider_error"},
+	} {
+		failure := EmbeddedFailure([]byte(tc.object), tc.numericStatus)
+		if failure.Phase != PhaseResponse || failure.Cause != tc.cause || failure.Code != tc.code || failure.RetryAfter != 0 {
+			t.Errorf("%s (%v): %+v", tc.object, tc.numericStatus, failure)
 		}
 	}
 }

@@ -1312,15 +1312,24 @@ Its own gaps are these:
      `provider_error` as today.
 
    A test covers both the non-streaming and the streamed path, so they cannot
-   diverge. Before building this, the live check must show that such responses
-   really occur and with this shape. If they do not, the change is dropped.
+   diverge. The condition for building it was confirmation of the shape. The
+   errors page, re-read on 2026-09-30, now documents both 200-status shapes
+   with integer codes (a whole response with only `error`, and a streamed
+   chunk carrying `error` beside `finish_reason: "error"`), so it was built
+   (task 1); the live check that they occur is still pending. A float, a
+   digit string or a code outside 400–599 stays `provider_error`.
 2. **402.** Today it is an untyped `http_402`. It becomes `insufficient_credits`
    with `CauseQuotaExhausted`, which main added for a used-up prepaid balance,
    and it is not retryable, because waiting does not fix it. This follows the
    precedent of `insufficient_quota`. A 402 means the same to every
    OpenAI-compatible endpoint, so this mapping applies to all of them, not only
    under the OpenRouter option. OpenRouter documents 402 even for free models
-   when the account's balance is negative.
+   when the account's balance is negative. **Known divergence:** its errors
+   page now also documents a 402 with `Retry-After` when
+   `metadata.limit_source` is `openrouter_in_flight_budget`, which would clear
+   by waiting. The library still types every 402 as not retryable with no
+   `RetryAfter`, because metadata is never read; telling that case apart is a
+   possible follow-up with the `X-RateLimit-*` work below.
 3. **Rate-limited free models.** `:free` variants have per-minute and per-day
    request limits. A 429 status already maps to `CauseRateLimited`, retryable,
    with a `RetryAfter` of at most one hour taken from a delta-seconds
@@ -1330,7 +1339,10 @@ Its own gaps are these:
    policy when that is zero). Across a composed session this reaches the caller
    as a `TurnError` through `apiTurnFailure`. The daily limit is also a 429, so
    the caller may see it again after waiting a short time. Whether OpenRouter
-   tells the two limits apart in headers needs a live check.
+   tells the two limits apart in headers needs a live check. Reading
+   `X-RateLimit-*` headers or `metadata` (`error_type`, `limit_source`) to
+   tell them apart, or to fill `ResetsAt`, is a possible follow-up; task 1
+   does not.
 4. **Models without tool calling.** A workbench, like every API session, sends
    `tools`, so a model without tool support cannot take part:
    - **Detected:** `catalog.Model` gains `Parameters []string` (with
@@ -1361,7 +1373,11 @@ Its own gaps are these:
    "allow"|"deny"}`. It is refused unless the value is valid. It is never
    inferred from the host name. It is not a pass-through: it has one field per
    documented key, each with a test. Zero data retention (`zdr`) and provider
-   order are left until a caller needs them.
+   order are left until a caller needs them. It is a request option, not a
+   capability, so `harness.Support` is unchanged. It is left out of a
+   session's `Ref` digest like `EffortParameter` and `Streaming`: resuming
+   under changed routing continues the same conversation. A session keeps its
+   own copy, so the caller changing theirs later does not reach a running loop.
 7. **The data-policy caveat.** Prompts and every tool result, including file
    contents the workbench reads, go to OpenRouter and on to the provider that
    serves the model. Many free endpoints are served by providers that may log or
@@ -1382,8 +1398,12 @@ dialect, `/api/v1/key` and `/api/v1/credits` as an `Account` implementation
 
 **Relied on from OpenRouter's documentation.** These pages were not re-fetched
 while writing this document, because the environment had no network. They
-reflect the documentation as known in mid-2026. Task 1 re-reads each page and
-corrects this list before any code depends on it.
+were re-read on 2026-09-30 while planning task 1, which found the list still
+right, with two additions to the errors page: it documents both 200-status
+error shapes with integer codes (see (1)), and a 402 with `Retry-After` for
+`limit_source: openrouter_in_flight_budget` (the divergence in (2)). The
+implementation environment had no network, so the pages were not re-fetched
+again there.
 
 - API reference (`/docs/api-reference/overview`): the Chat Completions request
   and response shape, `tools`/`tool_calls` in OpenAI form, `usage`, Bearer
@@ -1411,7 +1431,9 @@ corrects this list before any code depends on it.
 - Reasoning tokens (`/docs/use-cases/reasoning-tokens`): `reasoning.effort`.
 
 **Needs a live check with a real key.** This is manual and never run in CI,
-per `AGENTS.md`. The owner or task 1 runs it:
+per `AGENTS.md`. The owner runs it. **Status: pending.** Task 1 had no key and
+no network, so none of these has been run; the code follows the documented
+shapes, and the tests use synthetic responses in those shapes:
 
 - the headers on a free model's 429, whether `Retry-After` is present, and
   whether the per-minute and per-day limits can be told apart;
@@ -1444,6 +1466,12 @@ per `AGENTS.md`. The owner or task 1 runs it:
      endpoint.
 
    Record the live findings in this document.
+
+   **Done (2026-09-30), except the live checks.** `API.OpenRouter` routing,
+   the embedded integer code under that option (the documented shape stood in
+   for the live confirmation, see (1)), and 402 as `insufficient_credits` have
+   landed with tests on both paths and in a session. The documentation list
+   was re-read; the live checks above are still pending for want of a key.
 2. **Catalog tool support.** Add `catalog.Model.Parameters`/`ParametersKnown`
    from `supported_parameters`, and `SupportsTools`, with fixtures. Update the
    README's Models section.

@@ -37,8 +37,9 @@ type seenRequest struct {
 			Name string `json:"name"`
 		} `json:"function"`
 	} `json:"tools"`
-	ReasoningEffort     string `json:"reasoning_effort"`
-	MaxCompletionTokens int    `json:"max_completion_tokens"`
+	ReasoningEffort     string          `json:"reasoning_effort"`
+	MaxCompletionTokens int             `json:"max_completion_tokens"`
+	Provider            json.RawMessage `json:"provider"`
 	auth                string
 }
 
@@ -579,6 +580,79 @@ func TestAPISessionFailedRequestKeepsItsFacts(t *testing.T) {
 	}
 }
 
+// embedded answers 200 with only an error object, as OpenRouter does for a
+// failure after the request was accepted. Its prose carries no credential: a
+// 200 body that echoes one is credential_echoed before it is classified.
+func embedded(code int) endpointReply {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"code": code, "message": "provider prose"}})
+	}
+}
+
+// A free model's 429, whole or inside a 200 response, reaches the session's
+// caller as rate_limited with the delay the response gave; the session does
+// not retry. Routing reaches every request.
+func TestAPISessionOpenRouterFailuresAreTyped(t *testing.T) {
+	e := newEndpoint(t, status(http.StatusTooManyRequests, "Retry-After", "60"), embedded(http.StatusTooManyRequests), answer("Recovered."))
+	o := apiOptions(t, e.url, ToolHandlerFunc(func(context.Context, ToolCall) (ToolResult, error) { return ToolResult{}, nil }))
+	o.Model = "vendor/model:free"
+	o.Provider.API.OpenRouter = &harness.OpenRouterRouting{RequireParameters: true, DataCollection: "deny"}
+	s := startAPI(t, o)
+	for _, want := range []time.Duration{60 * time.Second, 0} {
+		done := runAPITurnToEnd(t, s, "Try.")
+		facts, ok := harness.ErrorFacts(done.err)
+		if done.result.Status != "failed" || !ok || facts.Family != harness.FailureTurn || facts.Cause != harness.CauseRateLimited || facts.RetryAfter != want {
+			t.Fatalf("%+v %+v %v", done.result, facts, done.err)
+		}
+		if strings.Contains(done.err.Error(), "prose") {
+			t.Fatalf("error %v", done.err)
+		}
+	}
+	if done := runAPITurnToEnd(t, s, "Again."); done.result.Status != "completed" {
+		t.Fatalf("%+v %v", done.result, done.err)
+	}
+	seen := e.seen()
+	if len(seen) != 3 {
+		t.Fatalf("%d requests; the session never retries on its own", len(seen))
+	}
+	for _, request := range seen {
+		if string(request.Provider) != `{"require_parameters":true,"data_collection":"deny"}` {
+			t.Fatalf("routing %s", request.Provider)
+		}
+	}
+}
+
+// The loop reads routing on every request, so it keeps its own copy: the
+// caller changing theirs afterwards changes nothing.
+func TestAPISessionFreezesOpenRouterRouting(t *testing.T) {
+	routing := &harness.OpenRouterRouting{DataCollection: "deny"}
+	var mu sync.Mutex
+	var sent []*harness.OpenRouterRouting
+	o := apiOptions(t, "https://openrouter.invalid/api/v1", ToolHandlerFunc(func(context.Context, ToolCall) (ToolResult, error) { return ToolResult{}, nil }))
+	o.Provider.API.OpenRouter = routing
+	o.complete = func(_ context.Context, cfg completion.Config, _ []completion.Message, _ []completion.Tool) (completion.Result, error) {
+		mu.Lock()
+		sent = append(sent, cfg.Provider.API.OpenRouter)
+		mu.Unlock()
+		return completion.Result{Message: completion.Message{Role: "assistant", Content: "Done."}}, nil
+	}
+	s := startAPI(t, o)
+	routing.DataCollection = "allow"
+	if done := runAPITurnToEnd(t, s, "Go."); done.result.Status != "completed" {
+		t.Fatalf("%+v %v", done.result, done.err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(sent) != 1 || sent[0] == routing || *sent[0] != (harness.OpenRouterRouting{DataCollection: "deny"}) {
+		t.Fatalf("routing %+v", sent)
+	}
+	o.Provider.API.OpenRouter = &harness.OpenRouterRouting{DataCollection: "never"}
+	if _, err := Start(context.Background(), o); err == nil {
+		t.Fatal("invalid routing started a session")
+	}
+}
+
 func TestAPISessionInterruptCancelsTheRequest(t *testing.T) {
 	e := newEndpoint(t)
 	arrived := make(chan struct{})
@@ -926,6 +1000,11 @@ func TestAPIRefIsStableAndCarriesNoCredential(t *testing.T) {
 		t.Fatal("credential in ref")
 	}
 	same := o
+	// Routing is how requests are sent, not what the conversation is.
+	same.Provider.API.OpenRouter = &harness.OpenRouterRouting{RequireParameters: true, DataCollection: "deny"}
+	if apiReference(same, "s1") != apiReference(o, "s1") {
+		t.Fatal("OpenRouter routing moved the digest")
+	}
 	same.Provider.API.Credentials = func(context.Context) (string, error) { return "other", nil }
 	same.Restriction = &Restriction{Tools: ToolHost{Server: "work", Tools: []ToolDefinition{readFile, {Name: "added", Schema: map[string]any{}}}}}
 	if apiReference(same, "s1") != apiReference(o, "s1") {

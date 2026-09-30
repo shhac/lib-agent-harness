@@ -194,6 +194,11 @@ func normalizeAPI(o Options) (Options, error) {
 	if code := o.Provider.API.EffortProblem(o.Effort); code != "" {
 		return o, refuse(o, "effort", code, "the effort cannot be sent to this endpoint as configured")
 	}
+	// The loop reads routing on every request; the caller's copy may change.
+	if routing := o.Provider.API.OpenRouter; routing != nil {
+		frozen := *routing
+		o.Provider.API.OpenRouter = &frozen
+	}
 	var err error
 	if o, err = normalizeLimits(o); err != nil {
 		return o, err
@@ -334,7 +339,9 @@ func normalizeAPISkills(o Options) (Options, error) {
 // different session wearing the same name. Ref.WorkDir is empty; an API
 // session has none. Like a restricted session's, the digest excludes the
 // tools themselves, so a release that edits a tool resumes the stored
-// conversation under the new surface.
+// conversation under the new surface. Like EffortParameter and Streaming,
+// OpenRouter routing is how requests are sent, not what the conversation is:
+// a resume under changed routing continues the same conversation.
 func apiReference(o Options, id string) Ref {
 	payload, _ := json.Marshal(struct {
 		Engine        harness.Engine
