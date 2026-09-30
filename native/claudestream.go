@@ -57,10 +57,8 @@ type streamUsage struct {
 	OutputTokens             int64 `json:"output_tokens"`
 	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
-	// Thinking is the part of OutputTokens that was reasoning, where reported.
-	Details *struct {
-		Thinking *int64 `json:"thinking_tokens"`
-	} `json:"output_tokens_details"`
+	// Details states the part of OutputTokens that was thinking.
+	Details *claudeproto.OutputDetails `json:"output_tokens_details"`
 }
 
 func (u streamUsage) usage() harness.Usage {
@@ -71,9 +69,7 @@ func (u streamUsage) usage() harness.Usage {
 		CacheWrite: u.CacheCreationInputTokens,
 		CacheKnown: true,
 	}
-	if d := u.Details; d != nil && d.Thinking != nil && *d.Thinking >= 0 && *d.Thinking <= u.OutputTokens {
-		out.Reasoning, out.ReasoningKnown = *d.Thinking, true
-	}
+	out.Reasoning, out.ReasoningKnown = u.Details.Reasoning(u.OutputTokens)
 	return out
 }
 
@@ -134,16 +130,15 @@ type streamTranscoder struct {
 	usageIncomplete bool
 	costIncomplete  bool
 	sessionID       string
-	usage           harness.Usage     // summed across every invocation
-	rawUsage        []json.RawMessage // every result event's usage, verbatim
-	costUSD         float64           // ditto; see renderResult for what this figure means
-	report          json.RawMessage   // structured_output of the most recent result message
-	failure         string            // the run's own account of why it ended without a report
-	promptSeen      bool              // the first text-bearing user message is the prompt, the rest are tool results
-	pending         []time.Time       // start times of tool calls awaiting a result, FIFO
-	suppressed      map[string]bool   // tool_use ids whose result must be dropped too
-	refusal         string            // the latest refused request's error enum, cleared by a response
-	limit           claudeproto.Limit // what the latest rate_limit_event said
+	usage           harness.Usage       // summed across every invocation
+	rawUsage        []json.RawMessage   // every result event's usage, verbatim
+	costUSD         float64             // ditto; see renderResult for what this figure means
+	report          json.RawMessage     // structured_output of the most recent result message
+	failure         string              // the run's own account of why it ended without a report
+	promptSeen      bool                // the first text-bearing user message is the prompt, the rest are tool results
+	pending         []time.Time         // start times of tool calls awaiting a result, FIFO
+	suppressed      map[string]bool     // tool_use ids whose result must be dropped too
+	refusal         claudeproto.Refusal // why the latest request was refused, cleared by a response
 
 	now func() time.Time // injectable clock so the rendered durations are testable
 }
@@ -171,7 +166,7 @@ func (t *streamTranscoder) beginTurn(prompt string) {
 	t.report = nil
 	t.failure = ""
 	t.completed = false
-	t.refusal, t.limit = "", claudeproto.Limit{}
+	t.refusal = claudeproto.Refusal{}
 	t.userPrompt(prompt)
 }
 
@@ -179,14 +174,8 @@ func (t *streamTranscoder) reachedTerminal() bool { return t.completed }
 
 // failureCause explains a failed turn from the refusal that preceded it.
 func (t *streamTranscoder) failureCause() (harness.Cause, *time.Time) {
-	if t.refusal == "" {
-		return "", nil
-	}
-	if t.limit.Explains(t.refusal) {
-		return harness.CauseQuotaExhausted, t.limit.ResetsAt
-	}
-	cause, _ := claudeproto.Cause(t.refusal)
-	return cause, nil
+	cause, resetsAt, _ := t.refusal.Cause()
+	return cause, resetsAt
 }
 
 // snapshot assembles claude's Result. Usage and cost count as known only for a
@@ -237,12 +226,10 @@ func (t *streamTranscoder) consume(line []byte) {
 	case "system":
 		t.renderSystem(ev)
 	case "assistant":
-		t.refusal = claudeproto.ErrorCode(ev.Error)
+		t.refusal.Assistant(ev.Error)
 		t.renderBlocks(ev, true)
 	case "rate_limit_event":
-		if limit, ok := claudeproto.Rejection(ev.RateLimit, t.now()); ok {
-			t.limit = limit
-		}
+		t.refusal.RateLimit(ev.RateLimit, t.now())
 	case "user":
 		t.renderBlocks(ev, false)
 	case "result":

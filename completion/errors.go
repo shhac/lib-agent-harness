@@ -108,14 +108,9 @@ func processRequestFailure(engine harness.Engine, data []byte, err error) error 
 	if errors.As(err, &exit) {
 		code := exit.ExitCode()
 		if code > 0 {
-			var terminal *RequestError
+			terminal := codexRequestFailure(data)
 			if engine == harness.Claude {
-				terminal = claudeRequestFailure(data)
-			} else {
-				terminal = codexRequestFailure(data)
-			}
-			if terminal == nil && engine == harness.Claude {
-				terminal = claudeTerminalDiagnostic(data)
+				terminal, _ = claudeFailure(data)
 			}
 			if terminal != nil {
 				failure = terminal
@@ -126,28 +121,16 @@ func processRequestFailure(engine harness.Engine, data []byte, err error) error 
 	return failure
 }
 
-// observeLimit reads a rate_limit_event frame into limit; false means it was
-// not one this library understands. A later frame replaces an earlier one.
-func observeLimit(limit *claudeproto.Limit, info json.RawMessage) bool {
-	observed, ok := claudeproto.Rejection(info, time.Now())
-	if ok {
-		*limit = observed
-	}
-	return ok
-}
-
 // claudeTerminalFailure classifies a failed result. Only causes that cannot
-// clear by waiting are set here; transient ones need the whole-stream check.
-func claudeTerminalFailure(subtype, reason, stop, assistantError string, limit claudeproto.Limit) *RequestError {
+// clear by waiting are set here; a transient one needs the whole stream to
+// have been nothing but a refusal (see claudeFailure).
+func claudeTerminalFailure(subtype, reason, stop string, refusal claudeproto.Refusal) *RequestError {
 	f := &RequestError{Cause: harness.CauseUnknown, Engine: harness.Claude, Phase: PhaseResponse, Code: claudeproto.ResultSubtype(subtype)}
-	if code := claudeproto.ErrorCode(assistantError); code != "" {
+	if code := refusal.Code(); code != "" {
 		f.Code = code
 	}
-	if cause, transient := claudeproto.Cause(assistantError); !transient {
-		f.Cause = cause
-	}
-	if limit.Explains(assistantError) {
-		f.Cause, f.ResetsAt = harness.CauseQuotaExhausted, limit.ResetsAt
+	if cause, resetsAt, transient := refusal.Cause(); cause != "" && !transient {
+		f.Cause, f.ResetsAt = cause, resetsAt
 	}
 	// These terminal facts take precedence over earlier assistant errors. None
 	// permit automatic retry even if a transient rejection occurred earlier.
@@ -161,46 +144,6 @@ func claudeTerminalFailure(subtype, reason, stop, assistantError string, limit c
 		}
 	}
 	return f
-}
-
-// A terminal diagnostic may follow partial output, so it deliberately cannot
-// classify transient rejections. Whole-stream checks for retry live separately.
-func claudeTerminalDiagnostic(data []byte) *RequestError {
-	var result *RequestError
-	var assistantError string
-	var limit claudeproto.Limit
-	for _, line := range bytes.Split(data, []byte("\n")) {
-		if len(bytes.TrimSpace(line)) == 0 {
-			continue
-		}
-		if result != nil {
-			return nil
-		}
-		var e struct {
-			Type, Subtype, Error string
-			IsError              bool            `json:"is_error"`
-			Reason               string          `json:"terminal_reason"`
-			Stop                 string          `json:"stop_reason"`
-			Info                 json.RawMessage `json:"rate_limit_info"`
-		}
-		if json.Unmarshal(line, &e) != nil {
-			return nil
-		}
-		switch e.Type {
-		case "assistant":
-			assistantError = claudeproto.ErrorCode(e.Error)
-		case "rate_limit_event":
-			observeLimit(&limit, e.Info)
-		case "result":
-			// The CLI reports a refused request as an errored result whose
-			// subtype is "success"; is_error is what marks it failed.
-			if !e.IsError {
-				return nil
-			}
-			result = claudeTerminalFailure(e.Subtype, e.Reason, e.Stop, assistantError, limit)
-		}
-	}
-	return result
 }
 
 // Retryable reports only explicit provider transient rejections with no partial
@@ -263,93 +206,112 @@ func capabilityCode(code string) bool {
 	return false
 }
 
-// Claude emits synthetic assistant error messages followed by an error result.
-// Require both, scan the ENTIRE output, and reject any successful/partial output.
-// Unknown result text, transport failures and malformed frames are not evidence
-// of an overload.
-func claudeRequestFailure(data []byte) *RequestError {
-	var assistantError, subtype, reason, stop string
-	var limit claudeproto.Limit
-	failed, marked := false, false
+// claudeFailure reads a Claude stream that ended in an errored result: the
+// failure, and whether the stream was nothing but a refusal. A failure may
+// follow partial output, so it names only causes that cannot clear by
+// waiting. Only a refusal-only stream (an init with no native tools, one
+// synthetic assistant error, rate-limit events and one errored result) says
+// no work happened, so only it may carry a transient cause and with it
+// permission to retry. Anything after the result, or a line that cannot be
+// read, and it is not a failure this library classifies.
+func claudeFailure(data []byte) (*RequestError, bool) {
+	var refusal claudeproto.Refusal
+	var failure *RequestError
+	var subtype, reason string
+	only, refused := true, false
 	for _, line := range bytes.Split(data, []byte("\n")) {
 		if len(bytes.TrimSpace(line)) == 0 {
 			continue
 		}
-		if failed {
-			return nil
+		if failure != nil {
+			return nil, false
 		}
 		var e struct {
 			Type, Subtype, Error string
-			Tools                []string `json:"tools"`
-			Message              struct {
-				Content []struct{ Type string } `json:"content"`
-			} `json:"message"`
-			Reason     string          `json:"terminal_reason"`
-			Stop       string          `json:"stop_reason"`
-			IsError    bool            `json:"is_error"`
-			Structured json.RawMessage `json:"structured_output"`
-			Info       json.RawMessage `json:"rate_limit_info"`
+			IsError              bool            `json:"is_error"`
+			Reason               string          `json:"terminal_reason"`
+			Stop                 string          `json:"stop_reason"`
+			Info                 json.RawMessage `json:"rate_limit_info"`
 		}
 		if json.Unmarshal(line, &e) != nil {
-			return nil
+			return nil, false
 		}
 		switch e.Type {
 		case "assistant":
-			for _, block := range e.Message.Content {
-				if block.Type != "text" {
-					return nil
-				}
-			}
-			if e.Error == "" {
-				return nil
-			}
-			if marked {
-				return nil
-			}
-			marked = true
-			assistantError = e.Error
+			refusal.Assistant(e.Error)
+			only = only && !refused && e.Error != "" && textOnly(line)
+			refused = true
 		case "rate_limit_event":
-			// Sent for a subscription login ahead of the refusal it explains.
-			// It is not output, so it neither grants nor removes retry permission.
-			if !observeLimit(&limit, e.Info) {
-				return nil
-			}
+			only = refusal.RateLimit(e.Info, time.Now()) && only
 		case "result":
-			if !e.IsError || len(e.Structured) > 0 {
-				return nil
+			// The CLI reports a refused request as an errored result whose
+			// subtype is "success"; is_error is what marks it failed.
+			if !e.IsError {
+				return nil, false
 			}
-			// A refused API request ends in an errored result that the CLI
-			// labels "success" with terminal_reason api_error; older CLIs
-			// labelled it error_during_execution.
-			if e.Subtype == "success" && e.Reason != "api_error" {
-				return nil
-			}
-			if failed {
-				return nil
-			}
-			failed = true
-			subtype, reason, stop = e.Subtype, e.Reason, e.Stop
+			failure = claudeTerminalFailure(e.Subtype, e.Reason, e.Stop, refusal)
+			subtype, reason = e.Subtype, e.Reason
+			only = only && refusedResult(line, e.Subtype, e.Reason)
 		case "system":
-			for _, tool := range e.Tools {
-				if tool != "StructuredOutput" {
-					return nil
-				}
-			}
-			if e.Subtype != "init" {
-				return nil
-			}
+			only = only && e.Subtype == "init" && structuredOnlyInit(line)
 		default:
-			return nil
+			only = false
 		}
 	}
-	if !failed || !marked {
-		return nil
+	if failure == nil {
+		return nil, false
 	}
-	failure := claudeTerminalFailure(subtype, reason, stop, assistantError, limit)
-	if cause, transient := claudeproto.Cause(assistantError); transient && failure.Cause == harness.CauseUnknown && (subtype == "error_during_execution" || reason == "api_error") {
+	only = only && refused
+	// Older CLIs labelled a refusal error_during_execution; current ones say
+	// success with terminal_reason api_error.
+	if cause, _, transient := refusal.Cause(); only && transient && failure.Cause == harness.CauseUnknown && (subtype == "error_during_execution" || reason == "api_error") {
 		failure.Cause = cause
 	}
-	return failure
+	return failure, only
+}
+
+// textOnly reports an assistant frame whose content is text: a tool call or
+// thinking is work, not a refusal.
+func textOnly(line []byte) bool {
+	var frame struct {
+		Message struct {
+			Content []struct{ Type string } `json:"content"`
+		} `json:"message"`
+	}
+	if json.Unmarshal(line, &frame) != nil {
+		return false
+	}
+	for _, block := range frame.Message.Content {
+		if block.Type != "text" {
+			return false
+		}
+	}
+	return true
+}
+
+// refusedResult reports an errored result that carries no report and says
+// the API refused the request.
+func refusedResult(line []byte, subtype, reason string) bool {
+	var frame struct {
+		Structured json.RawMessage `json:"structured_output"`
+	}
+	return json.Unmarshal(line, &frame) == nil && len(frame.Structured) == 0 && (subtype != "success" || reason == "api_error")
+}
+
+// structuredOnlyInit reports an init frame offering no native tool.
+func structuredOnlyInit(line []byte) bool {
+	var frame struct {
+		Tools []string `json:"tools"`
+	}
+	if json.Unmarshal(line, &frame) != nil {
+		return false
+	}
+	for _, tool := range frame.Tools {
+		if tool != "StructuredOutput" {
+			return false
+		}
+	}
+	return true
 }
 
 // Canonical Codex error formatting is defined by codex-rs/protocol/src/error.rs.

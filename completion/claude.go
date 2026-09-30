@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/claudeproto"
@@ -133,14 +134,13 @@ func claudeComplete(ctx context.Context, cfg Config, messages []Message, tools [
 
 func parseClaude(data []byte, tools []Tool) (Result, error) {
 	accounting := terminalAccounting(harness.Claude, data)
-	if failure := claudeRequestFailure(data); failure != nil {
+	if failure, refusalOnly := claudeFailure(data); refusalOnly {
 		return accounting, failure
 	}
 	var boundary claudeToolBoundary
 	var message Message
 	completed := false
-	assistantError := ""
-	var limit claudeproto.Limit
+	var refusal claudeproto.Refusal
 	for _, line := range bytes.Split(data, []byte("\n")) {
 		if len(bytes.TrimSpace(line)) == 0 {
 			continue
@@ -157,15 +157,15 @@ func parseClaude(data []byte, tools []Tool) (Result, error) {
 		}
 		switch event.Type {
 		case "assistant":
-			assistantError = claudeproto.ErrorCode(event.Error)
+			refusal.Assistant(event.Error)
 		case "rate_limit_event":
-			observeLimit(&limit, event.Info)
+			refusal.RateLimit(event.Info, time.Now())
 		}
 		if event.Type != "result" {
 			continue
 		}
 		if event.IsError || event.Subtype != "success" || completed {
-			return accounting, claudeTerminalFailure(event.Subtype, event.Reason, event.Stop, assistantError, limit)
+			return accounting, claudeTerminalFailure(event.Subtype, event.Reason, event.Stop, refusal)
 		}
 		completed = true
 		var err error

@@ -66,12 +66,12 @@ func TestClaudeFailureClassification(t *testing.T) {
 			t.Fatal("leaked provider data")
 		}
 		for _, partial := range []string{`{"type":"assistant","message":{"content":[{"type":"text","text":"partial"}]}}`, `{"type":"result","subtype":"success","is_error":false}`, `{"type":"stream_event"}`, `bad-json`} {
-			if claudeRequestFailure(append([]byte(partial+"\n"), data...)) != nil {
+			if refusalOnly(append([]byte(partial+"\n"), data...)) != nil {
 				t.Fatalf("partial accepted: %s", partial)
 			}
 		}
 	}
-	if claudeRequestFailure([]byte(`{"type":"assistant","error":"rate_limit"}`)) != nil {
+	if refusalOnly([]byte(`{"type":"assistant","error":"rate_limit"}`)) != nil {
 		t.Fatal("missing terminal result")
 	}
 }
@@ -124,10 +124,10 @@ func TestClaudeRefusalOnCurrentCLI(t *testing.T) {
 			// Output before the refusal withdraws retry permission, but the
 			// terminal diagnostic still names what it can without it.
 			partial := append([]byte(`{"type":"assistant","message":{"content":[{"type":"text","text":"partial"}]}}`+"\n"), data...)
-			if claudeRequestFailure(partial) != nil {
+			if refusalOnly(partial) != nil {
 				t.Fatal("partial output accepted as a clean refusal")
 			}
-			if diagnostic := claudeTerminalDiagnostic(partial); diagnostic == nil || diagnostic.Retryable() || diagnostic.Code != tc.error {
+			if diagnostic := terminalFailure(partial); diagnostic == nil || diagnostic.Retryable() || diagnostic.Code != tc.error {
 				t.Fatalf("diagnostic %+v", diagnostic)
 			}
 		})
@@ -135,7 +135,7 @@ func TestClaudeRefusalOnCurrentCLI(t *testing.T) {
 	// Only an API refusal is labelled this way; any other errored "success"
 	// is not evidence of a transient rejection.
 	other := strings.Replace(string(claudeRefusal("rate_limit", "")), `"terminal_reason":"api_error"`, `"terminal_reason":"max_turns"`, 1)
-	if claudeRequestFailure([]byte(other)) != nil {
+	if refusalOnly([]byte(other)) != nil {
 		t.Fatal("non-API errored result granted retry permission")
 	}
 	// Only a stream that did nothing but refuse lends retry permission.
@@ -147,7 +147,7 @@ func TestClaudeRefusalOnCurrentCLI(t *testing.T) {
 		"a second result":         refusal + lines[2] + "\n",
 		"a compaction":            strings.Join([]string{lines[0], `{"type":"system","subtype":"compact_boundary"}`, lines[1], lines[2]}, "\n"),
 	} {
-		if claudeRequestFailure([]byte(stream)) != nil {
+		if refusalOnly([]byte(stream)) != nil {
 			t.Fatalf("%s granted retry permission", name)
 		}
 	}
@@ -155,11 +155,11 @@ func TestClaudeRefusalOnCurrentCLI(t *testing.T) {
 	// nothing, and the refusal is an ordinary rate limit again.
 	reopened := claudeRefusal("rate_limit", fmt.Sprintf(`{"status":"rejected","resetsAt":%d}`, reset.Unix()))
 	reopened = []byte(strings.Replace(string(reopened), `{"type":"assistant"`, `{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning"}}`+"\n"+`{"type":"assistant"`, 1))
-	if failure := claudeRequestFailure(reopened); failure == nil || failure.Cause != harness.CauseRateLimited || failure.ResetsAt != nil || !failure.Retryable() {
+	if failure := refusalOnly(reopened); failure == nil || failure.Cause != harness.CauseRateLimited || failure.ResetsAt != nil || !failure.Retryable() {
 		t.Fatalf("a reopened window still explained the refusal: %+v", failure)
 	}
 	// A rate_limit_event this library cannot read is not skipped silently.
-	if claudeRequestFailure(claudeRefusal("rate_limit", `{"status":"surprise"}`)) != nil {
+	if refusalOnly(claudeRefusal("rate_limit", `{"status":"surprise"}`)) != nil {
 		t.Fatal("unknown rate limit status accepted")
 	}
 }
@@ -201,7 +201,7 @@ func TestFailedCLIClassificationAndTimeout(t *testing.T) {
 		if !errors.As(requestErr, &failure) || failure.ExitCode == nil || *failure.ExitCode != 1 || failure.Code != "overloaded" || failure.Phase != PhaseResponse {
 			t.Fatalf("lost process diagnostic: %#v", failure)
 		}
-		if failure := claudeRequestFailure(data); failure == nil || !failure.Retryable() {
+		if failure := refusalOnly(data); failure == nil || !failure.Retryable() {
 			t.Fatal("terminal CLI failure was lost")
 		}
 	}
@@ -244,7 +244,7 @@ func TestClaudeTerminalDiagnosticsStaySafeAndNonretryable(t *testing.T) {
 			if strings.Contains(string(encoded)+fmt.Sprintf("%#v", failure)+err.Error(), "secret") {
 				t.Fatal("diagnostic retained untrusted data")
 			}
-			if other := claudeTerminalDiagnostic(data); other == nil || other.Cause != failure.Cause || other.Code != failure.Code || other.Retryable() {
+			if other := terminalFailure(data); other == nil || other.Cause != failure.Cause || other.Code != failure.Code || other.Retryable() {
 				t.Fatalf("exit failure diagnostic differs: %#v", other)
 			}
 		})
@@ -403,4 +403,21 @@ func TestCompleteFailuresCarryFacts(t *testing.T) {
 	if strings.Contains(string(encoded), "secret") {
 		t.Fatal("facts retained provider text or credential")
 	}
+}
+
+// refusalOnly is the failure of a stream that did nothing but refuse, the only
+// kind that may lend retry permission; nil otherwise.
+func refusalOnly(data []byte) *RequestError {
+	failure, only := claudeFailure(data)
+	if !only {
+		return nil
+	}
+	return failure
+}
+
+// terminalFailure is the failure any errored stream reports, partial output
+// or not.
+func terminalFailure(data []byte) *RequestError {
+	failure, _ := claudeFailure(data)
+	return failure
 }

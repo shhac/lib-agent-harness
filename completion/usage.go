@@ -6,6 +6,7 @@ import (
 	"math"
 
 	"github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/claudeproto"
 )
 
 // tokenReport is every token field either CLI's terminal report may carry.
@@ -21,9 +22,7 @@ type tokenReport struct {
 	CachedInput     *int64 `json:"cached_input_tokens"`
 	ReasoningOutput *int64 `json:"reasoning_output_tokens"`
 	// Claude's thinking, reported as a part of output_tokens.
-	OutputDetails *struct {
-		Thinking *int64 `json:"thinking_tokens"`
-	} `json:"output_tokens_details"`
+	OutputDetails *claudeproto.OutputDetails `json:"output_tokens_details"`
 }
 
 // terminalAccounting is the single definition of what a CLI stream establishes
@@ -109,9 +108,7 @@ func claudeUsage(report *tokenReport) harness.Usage {
 		CacheWrite: cacheWrite,
 		CacheKnown: report.CacheRead != nil && report.CacheWrite != nil,
 	}
-	if details := report.OutputDetails; details != nil && details.Thinking != nil && *details.Thinking >= 0 && *details.Thinking <= usage.Output {
-		usage.Reasoning, usage.ReasoningKnown = *details.Thinking, true
-	}
+	usage.Reasoning, usage.ReasoningKnown = report.OutputDetails.Reasoning(usage.Output)
 	return usage
 }
 

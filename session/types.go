@@ -372,10 +372,9 @@ type Turn struct {
 	grokResponse int
 	// closeTools shuts the caller's tool channel when this turn ends.
 	closeTools func()
-	// claudeError and claudeLimit are why Claude refused this turn's latest
-	// request, kept for the errored result that follows.
-	claudeError string
-	claudeLimit claudeproto.Limit
+	// claudeRefusal is why Claude refused this turn's latest request, kept for
+	// the errored result that follows.
+	claudeRefusal claudeproto.Refusal
 }
 
 func (t *Turn) ID() string           { t.mu.Lock(); defer t.mu.Unlock(); return t.id }

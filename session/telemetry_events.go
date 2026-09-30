@@ -7,7 +7,6 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
-	"github.com/shhac/lib-agent-harness/internal/claudeproto"
 )
 
 // Account and quota updates can arrive while idle or after a turn's result.
@@ -66,11 +65,9 @@ func (s *Session) accountTelemetryEvent(m map[string]json.RawMessage, ref Ref, t
 			s.observeQuota(q, t)
 		}
 		if t != nil {
-			if limit, ok := claudeproto.Rejection(m["rate_limit_info"], time.Now()); ok {
-				t.mu.Lock()
-				t.claudeLimit = limit
-				t.mu.Unlock()
-			}
+			t.mu.Lock()
+			t.claudeRefusal.RateLimit(m["rate_limit_info"], time.Now())
+			t.mu.Unlock()
 		}
 		return true
 	}

@@ -77,17 +77,16 @@ func (s *Session) claudeAssistant(t *Turn, m map[string]json.RawMessage) {
 	// A refused request surfaces as a synthetic assistant message carrying the
 	// error's enum. It is the CLI's explanation, not a model response: its
 	// text is not the agent's reply and its zero usage was never measured.
-	if code := claudeproto.ErrorCode(str(m, "error")); code != "" || flag(m, "is_api_error_message") {
-		t.mu.Lock()
-		t.claudeError = code
-		t.mu.Unlock()
+	//
+	// An ordinary response after a refusal means the CLI recovered from it, and
+	// recording its absent error clears the refusal.
+	errorField := str(m, "error")
+	t.mu.Lock()
+	t.claudeRefusal.Assistant(errorField)
+	t.mu.Unlock()
+	if claudeproto.ErrorCode(errorField) != "" || flag(m, "is_api_error_message") {
 		return
 	}
-	// A response after a refusal means the CLI recovered from it; a later
-	// failure must not be explained by it.
-	t.mu.Lock()
-	t.claudeError = ""
-	t.mu.Unlock()
 	s.claudeMessageContext(t, m["message"])
 	// One completed model response. A turn contains many, and its terminal
 	// accounting arrives far too late for a caller holding a budget to act on,
@@ -223,13 +222,11 @@ func parseClaudeUsage(raw json.RawMessage) Usage {
 		return Usage{}
 	}
 	var counts struct {
-		Input      int64  `json:"input_tokens"`
-		Output     int64  `json:"output_tokens"`
-		CacheRead  *int64 `json:"cache_read_input_tokens"`
-		CacheWrite *int64 `json:"cache_creation_input_tokens"`
-		Details    *struct {
-			Thinking *int64 `json:"thinking_tokens"`
-		} `json:"output_tokens_details"`
+		Input      int64                      `json:"input_tokens"`
+		Output     int64                      `json:"output_tokens"`
+		CacheRead  *int64                     `json:"cache_read_input_tokens"`
+		CacheWrite *int64                     `json:"cache_creation_input_tokens"`
+		Details    *claudeproto.OutputDetails `json:"output_tokens_details"`
 	}
 	if json.Unmarshal(raw, &counts) != nil {
 		return Usage{}
@@ -252,10 +249,7 @@ func parseClaudeUsage(raw json.RawMessage) Usage {
 		CacheWrite: write,
 		CacheKnown: counts.CacheRead != nil && counts.CacheWrite != nil,
 	}}
-	// Claude reports its thinking as a part of output_tokens.
-	if d := counts.Details; d != nil && d.Thinking != nil && *d.Thinking >= 0 && *d.Thinking <= counts.Output {
-		usage.Reasoning, usage.ReasoningKnown = *d.Thinking, true
-	}
+	usage.Reasoning, usage.ReasoningKnown = counts.Details.Reasoning(counts.Output)
 	return usage
 }
 
@@ -311,7 +305,7 @@ func claudeCompactionTrigger(m map[string]json.RawMessage) string {
 func (s *Session) claudeTerminalFailure(t *Turn, m map[string]json.RawMessage, subtype string) error {
 	failure := &TurnError{Engine: harness.Claude, Code: claudeproto.ResultSubtype(subtype)}
 	t.mu.Lock()
-	assistantError, limit := t.claudeError, t.claudeLimit
+	refusal := t.claudeRefusal
 	t.mu.Unlock()
 	var frame struct {
 		Reason string `json:"terminal_reason"`
@@ -319,14 +313,11 @@ func (s *Session) claudeTerminalFailure(t *Turn, m map[string]json.RawMessage, s
 		Error  string `json:"error"`
 	}
 	if json.Unmarshal(mustMarshal(m), &frame) == nil && claudeproto.ErrorCode(frame.Error) != "" {
-		assistantError = frame.Error
+		refusal.Assistant(frame.Error)
 	}
-	if code := claudeproto.ErrorCode(assistantError); code != "" {
+	if code := refusal.Code(); code != "" {
 		failure.Code = code
-		failure.Cause, _ = claudeproto.Cause(code)
-	}
-	if limit.Explains(assistantError) {
-		failure.Cause, failure.ResetsAt = harness.CauseQuotaExhausted, limit.ResetsAt
+		failure.Cause, failure.ResetsAt, _ = refusal.Cause()
 	}
 	if frame.Reason == "prompt_too_long" || frame.Stop == "model_context_window_exceeded" {
 		failure.Code, failure.Cause, failure.ResetsAt = "model_context_window_exceeded", harness.CauseContextLimit, nil
