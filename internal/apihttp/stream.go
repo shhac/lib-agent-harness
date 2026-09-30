@@ -47,16 +47,10 @@ func Stream(ctx context.Context, r Request, idle time.Duration, onEvent func([]b
 		cancel()
 	})
 	defer timer.Stop()
-	request, err := http.NewRequestWithContext(ctx, r.Method, r.URL, bytes.NewReader(r.Body))
+	request, err := newRequest(ctx, r, "text/event-stream")
 	if err != nil {
-		return nil, &Failure{Cause: harness.CauseUnknown, Phase: PhasePreflight, Code: "api_base_url_invalid"}
+		return nil, err
 	}
-	if r.Token != "" {
-		request.Header.Set("Authorization", "Bearer "+r.Token)
-	}
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Accept", "text/event-stream")
-	request.Header.Set("User-Agent", "lib-agent-harness")
 	response, err := client(r.Transport).Do(request)
 	if err != nil {
 		return nil, streamInterrupted(ctx, &stalled, PhaseTransport, err)
@@ -72,14 +66,7 @@ func Stream(ctx context.Context, r Request, idle time.Duration, onEvent func([]b
 	mediaType, _, _ := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	switch mediaType {
 	case "application/json":
-		data, err := io.ReadAll(io.LimitReader(response.Body, int64(r.Limit)+1))
-		if err != nil {
-			return nil, streamInterrupted(ctx, &stalled, PhaseResponse, err)
-		}
-		if len(data) > r.Limit {
-			return nil, ResponseFailure("output_limit")
-		}
-		return data, nil
+		return readBounded(response.Body, r.Limit, func(err error) error { return streamInterrupted(ctx, &stalled, PhaseResponse, err) })
 	case "text/event-stream":
 	default:
 		return nil, ResponseFailure("unexpected_media_type")

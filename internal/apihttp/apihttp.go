@@ -107,6 +107,27 @@ type Request struct {
 // Do sends the request and returns a successful JSON response body. Every
 // failure is context.Canceled or a *Failure.
 func Do(ctx context.Context, r Request) ([]byte, error) {
+	request, err := newRequest(ctx, r, "application/json")
+	if err != nil {
+		return nil, err
+	}
+	response, err := client(r.Transport).Do(request)
+	if err != nil {
+		return nil, Interrupted(ctx, PhaseTransport, err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, StatusFailure(response)
+	}
+	if !jsonMediaType(response.Header.Get("Content-Type")) {
+		return nil, ResponseFailure("unexpected_media_type")
+	}
+	return readBounded(response.Body, r.Limit, func(err error) error { return Interrupted(ctx, PhaseResponse, err) })
+}
+
+// newRequest is the one place a request gets its credential and headers, so
+// no exchange can send the credential anywhere another would not.
+func newRequest(ctx context.Context, r Request, accept string) (*http.Request, error) {
 	var body io.Reader
 	if r.Body != nil {
 		body = bytes.NewReader(r.Body)
@@ -121,24 +142,19 @@ func Do(ctx context.Context, r Request) ([]byte, error) {
 	if r.Body != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
-	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Accept", accept)
 	request.Header.Set("User-Agent", "lib-agent-harness")
-	response, err := client(r.Transport).Do(request)
+	return request, nil
+}
+
+// readBounded reads a whole body of at most limit bytes; a read that fails is
+// described by interrupted.
+func readBounded(body io.Reader, limit int, interrupted func(error) error) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(body, int64(limit)+1))
 	if err != nil {
-		return nil, Interrupted(ctx, PhaseTransport, err)
+		return nil, interrupted(err)
 	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return nil, StatusFailure(response)
-	}
-	if !jsonMediaType(response.Header.Get("Content-Type")) {
-		return nil, ResponseFailure("unexpected_media_type")
-	}
-	data, err := io.ReadAll(io.LimitReader(response.Body, int64(r.Limit)+1))
-	if err != nil {
-		return nil, Interrupted(ctx, PhaseResponse, err)
-	}
-	if len(data) > r.Limit {
+	if len(data) > limit {
 		return nil, ResponseFailure("output_limit")
 	}
 	return data, nil
