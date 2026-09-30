@@ -186,7 +186,12 @@ func (s *Session) codexTokenUsage(t *Turn, p map[string]json.RawMessage) {
 }
 
 func (s *Session) codexTurnCompleted(t *Turn, p map[string]json.RawMessage) {
-	var turn struct{ ID, Status string }
+	var turn struct {
+		ID, Status string
+		Error      *struct {
+			Info json.RawMessage `json:"codexErrorInfo"`
+		} `json:"error"`
+	}
 	if json.Unmarshal(p["turn"], &turn) != nil {
 		return
 	}
@@ -199,6 +204,11 @@ func (s *Session) codexTurnCompleted(t *Turn, p map[string]json.RawMessage) {
 		t.result.NativeError = true
 		t.mu.Unlock()
 		err = ErrTurnFailed
+		if turn.Error != nil {
+			if failure := codexTurnFailure(turn.Error.Info); failure != nil {
+				err = failure
+			}
+		}
 	}
 	switch turn.Status {
 	case "completed", "interrupted", "failed":
@@ -217,6 +227,102 @@ func (s *Session) codexTurnCompleted(t *Turn, p map[string]json.RawMessage) {
 	}
 	s.emit(t, Event{Kind: "status", Status: turn.Status})
 	t.finish(turn.Status, err)
+}
+
+// codexErrorCauses is the app-server's CodexErrorInfo vocabulary (codex-cli
+// 0.159.0, codex app-server generate-ts) for the variants that are plain
+// strings. The error's message is provider prose and is never read.
+var codexErrorCauses = map[string]harness.Cause{
+	"contextWindowExceeded":       harness.CauseContextLimit,
+	"sessionBudgetExceeded":       harness.CauseUnknown,
+	"usageLimitExceeded":          harness.CauseQuotaExhausted,
+	"rateLimitExceeded":           harness.CauseRateLimited,
+	"flexUnavailable":             harness.CauseUnavailable,
+	"serverOverloaded":            harness.CauseOverloaded,
+	"cyberPolicy":                 harness.CauseContentFiltered,
+	"misalignmentPolicyViolation": harness.CauseContentFiltered,
+	"tooManyDenials":              harness.CauseUnknown,
+	"internalServerError":         harness.CauseUnavailable,
+	"unauthorized":                harness.CauseAuthentication,
+	"badRequest":                  harness.CauseUnknown,
+	"threadRollbackFailed":        harness.CauseUnknown,
+	"sandboxError":                harness.CauseUnknown,
+	"other":                       harness.CauseUnknown,
+}
+
+// codexHTTPErrors are the variants that carry the status of the provider
+// request that failed, which is what explains them.
+var codexHTTPErrors = map[string]bool{
+	"httpConnectionFailed":           true,
+	"responseStreamConnectionFailed": true,
+	"responseStreamDisconnected":     true,
+	"responseTooManyFailedAttempts":  true,
+}
+
+// codexTurnFailure reads a failed turn's CodexErrorInfo, or is nil when it
+// names nothing this library knows.
+func codexTurnFailure(info json.RawMessage) *TurnError {
+	var name string
+	if json.Unmarshal(info, &name) == nil {
+		cause, ok := codexErrorCauses[name]
+		if !ok {
+			return nil
+		}
+		return &TurnError{Engine: harness.Codex, Code: snakeCase(name), Cause: cause}
+	}
+	var variant map[string]struct {
+		Status *int `json:"httpStatusCode"`
+	}
+	if json.Unmarshal(info, &variant) != nil || len(variant) != 1 {
+		return nil
+	}
+	for name, detail := range variant {
+		if !codexHTTPErrors[name] {
+			return nil
+		}
+		cause := harness.CauseUnknown
+		if detail.Status != nil {
+			cause = httpStatusCause(*detail.Status)
+		}
+		return &TurnError{Engine: harness.Codex, Code: snakeCase(name), Cause: cause}
+	}
+	return nil
+}
+
+// httpStatusCause is what a provider's status says, and only what it says
+// unambiguously: a 429 may equally be an exhausted plan, but Codex reports
+// that as usageLimitExceeded instead.
+func httpStatusCause(status int) harness.Cause {
+	switch status {
+	case 401:
+		return harness.CauseAuthentication
+	case 403:
+		return harness.CausePermissionDenied
+	case 413:
+		return harness.CauseContextLimit
+	case 429:
+		return harness.CauseRateLimited
+	case 500, 502, 503, 504:
+		return harness.CauseUnavailable
+	case 529:
+		return harness.CauseOverloaded
+	}
+	return harness.CauseUnknown
+}
+
+// snakeCase spells an allowlisted camelCase enum in the library's code style.
+func snakeCase(name string) string {
+	var b strings.Builder
+	for i, r := range name {
+		if r >= 'A' && r <= 'Z' {
+			if i > 0 {
+				b.WriteByte('_')
+			}
+			r += 'a' - 'A'
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 type codexUsage struct {
