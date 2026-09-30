@@ -43,7 +43,7 @@ func TestRejectionBoundsTheStatedReset(t *testing.T) {
 		"unknown status": {`{"status":"paused"}`, false, false, false},
 		"not an object":  {`[]`, false, false, false},
 	} {
-		limit, ok := Rejection(json.RawMessage(tc.info), now)
+		limit, ok := rejection(json.RawMessage(tc.info), now)
 		if ok != tc.ok || limit.Rejected != tc.rejected || (limit.ResetsAt != nil) != tc.resets {
 			t.Fatalf("%s: %+v %v", name, limit, ok)
 		}

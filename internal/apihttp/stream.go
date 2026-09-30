@@ -14,12 +14,12 @@ import (
 	"github.com/shhac/lib-agent-harness"
 )
 
-// DefaultIdleTimeout bounds the silence between streamed events when the
+// defaultIdleTimeout bounds the silence between streamed events when the
 // caller chose none. A reasoning model can send nothing while it thinks, and
 // not every endpoint sends keepalives meanwhile, so it is as long as the whole
 // of a non-streaming request's default deadline: streaming never fails on
 // silence sooner than not streaming would.
-const DefaultIdleTimeout = 5 * time.Minute
+const defaultIdleTimeout = 5 * time.Minute
 
 // errStreamDone ends a read at the stream's terminator.
 var errStreamDone = errors.New("stream done")
@@ -37,7 +37,7 @@ var errStreamDone = errors.New("stream done")
 // provider did not say it had finished.
 func Stream(ctx context.Context, r Request, idle time.Duration, onEvent func([]byte) error) ([]byte, error) {
 	if idle <= 0 {
-		idle = DefaultIdleTimeout
+		idle = defaultIdleTimeout
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()

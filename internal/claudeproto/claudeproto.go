@@ -41,10 +41,10 @@ func ResultSubtype(subtype string) string {
 	return ""
 }
 
-// Cause classifies an assistant error. Transient marks rejections that can
+// causeOf classifies an assistant error. Transient marks rejections that can
 // clear by waiting: only a check that has seen the whole stream, and found no
 // partial output, may treat those as permission to retry.
-func Cause(code string) (cause harness.Cause, transient bool) {
+func causeOf(code string) (cause harness.Cause, transient bool) {
 	switch code {
 	case "rate_limit":
 		return harness.CauseRateLimited, true
@@ -66,33 +66,33 @@ func Cause(code string) (cause harness.Cause, transient bool) {
 	return harness.CauseUnknown, false
 }
 
-// Limit is what a rate_limit_event said about the request it precedes.
+// rateLimit is what a rate_limit_event said about the request it precedes.
 // Claude sends one only for a subscription login, ahead of the error a refused
 // request produces. Rejected means a subscription limit refused it; ResetsAt is
 // that limit's stated reset, nil when absent or implausible.
-type Limit struct {
+type rateLimit struct {
 	Rejected bool
 	ResetsAt *time.Time
 }
 
-// Rejection reads a rate_limit_event frame's rate_limit_info. False means the
+// rejection reads a rate_limit_event frame's rate_limit_info. False means the
 // frame is not one this library understands.
-func Rejection(info json.RawMessage, now time.Time) (Limit, bool) {
+func rejection(info json.RawMessage, now time.Time) (rateLimit, bool) {
 	var r struct {
 		Status   string `json:"status"`
 		ResetsAt *int64 `json:"resetsAt"`
 	}
 	if json.Unmarshal(info, &r) != nil {
-		return Limit{}, false
+		return rateLimit{}, false
 	}
 	switch r.Status {
 	case "allowed", "allowed_warning":
-		return Limit{}, true
+		return rateLimit{}, true
 	case "rejected":
 	default:
-		return Limit{}, false
+		return rateLimit{}, false
 	}
-	limit := Limit{Rejected: true}
+	limit := rateLimit{Rejected: true}
 	if r.ResetsAt != nil {
 		limit.ResetsAt = Reset(*r.ResetsAt, now)
 	}
@@ -116,7 +116,7 @@ func Reset(unix int64, now time.Time) *time.Time {
 // recovered from the refusal.
 type Refusal struct {
 	code  string
-	limit Limit
+	limit rateLimit
 }
 
 // Assistant records an assistant frame's error field; an ordinary response
@@ -126,7 +126,7 @@ func (r *Refusal) Assistant(errorField string) { r.code = ErrorCode(errorField) 
 // RateLimit records a rate_limit_event's rate_limit_info. False means the
 // frame is not one this library understands, and nothing was recorded.
 func (r *Refusal) RateLimit(info json.RawMessage, now time.Time) bool {
-	limit, ok := Rejection(info, now)
+	limit, ok := rejection(info, now)
 	if ok {
 		r.limit = limit
 	}
@@ -148,7 +148,7 @@ func (r Refusal) Cause() (cause harness.Cause, resetsAt *time.Time, transient bo
 	if r.limit.Rejected && r.code == "rate_limit" {
 		return harness.CauseQuotaExhausted, r.limit.ResetsAt, false
 	}
-	cause, transient = Cause(r.code)
+	cause, transient = causeOf(r.code)
 	return cause, nil, transient
 }
 
