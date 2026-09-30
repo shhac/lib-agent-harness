@@ -307,7 +307,9 @@ library-provided workspace tools confined to `WorkDir`. It comes in two stages:
   error when it is missing or older. Ubuntu 22.04's package is older. Commands will read only a pinned set of system directories,
   `WorkDir` and the directories you list, so a toolchain or cache elsewhere
   (such as `~/go/pkg/mod`) has to be named. Windows gets the file tools but not
-  commands.
+  commands. A session that edits files records the mode it gives new files
+  (default 0600), and resuming it with a different mode is refused with
+  `ErrIncompatibleResume`, because the mode decides who can read those files.
 
 None of this is available yet. `harness.Support` will report each stage when
 it ships. The design also covers OpenRouter

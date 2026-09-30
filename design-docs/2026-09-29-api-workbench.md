@@ -161,9 +161,22 @@ session.Options{
   workbench is set. This follows the pattern `skillsDigest` already uses, so
   every existing digest pinned in `session/ref_golden_test.go` stays the same.
   The payload holds `WorkDir`, `Write`, whether commands are enabled,
-  `Loopback` and `Read`, but not `Env` or `Timeout`. A resume must name the same
-  workspace and the same powers. `Ref.WorkDir` is filled in when a workbench is
-  set.
+  `Loopback` and `Read`, but not `Env` or `Timeout`. When `Write` is set, the
+  payload also holds the effective new-file mode: `NewFileMode` as
+  `normalizeAPI` resolves it, so an unset mode is recorded as 0600, stored as
+  its permission bits as a number. The mode decides who can read the files the
+  model creates, so resuming under a wider mode would quietly widen who can
+  read them. Without `Write` the mode is left out: no workbench tool creates a
+  file, and `Write` is itself a digest input, so switching a session from
+  read-only to writing is refused as a mismatch anyway. Leaving it out also
+  keeps stage 1 digests stable. A resume must name the same workspace, the
+  same powers and, when writing, the same effective mode; any difference is
+  refused with `ErrIncompatibleResume` by `compatible` in `open`, before the
+  transcript is opened, locked or written. The stored `Ref` and the transcript
+  header keep the original `ConfigHash`, and the caller can retry with the
+  recorded configuration. A resumer that bypassed `compatible` would still
+  fail the transcript header's `ConfigHash` check on load. `Ref.WorkDir` is
+  filled in when a workbench is set.
 - **Events.** A workbench call is reported as a tool event, the same way a
   composed skill call is. `ToolActivity` holds its arguments and its bounded
   result.
@@ -630,8 +643,14 @@ is on disk or what the caller configured:
   else is refused at `normalizeAPI` (`RefusedLimit`). The confidential default
   never exposes more than the temporary file did. A caller that wants 0644 for
   a shared checkout says so. Git records only the execute bit, so the default
-  does not change what a commit contains. `NewFileMode` is not in the `Ref`
-  digest: it changes no power, only a new file's mode.
+  does not change what a commit contains. Because the mode decides who can
+  read the files the model creates, the effective mode (0600 when unset) is a
+  `Ref` digest input whenever `Write` is set, as "The `Ref` digest" above
+  describes; a resume under a different mode is refused. `normalizeAPI`
+  resolves the default first, so the digest never sees 0. The mode is fixed
+  when the session opens and cannot change mid-run, so a resume after a crash
+  has to match it too, and the `Resume`-time cleanup of temporaries runs only
+  after the digest matches.
 - **Directories created by `write_file`** get `NewFileMode` with an execute
   bit added wherever a read bit is set (0600 becomes 0700, 0644 becomes 0755),
   set on the new directory's handle.
@@ -639,8 +658,9 @@ is on disk or what the caller configured:
   file and its temporary both take the directory's inherited ACL, so the
   temporary file is exactly as confidential as the final file will be, and
   never less. `NewFileMode` has no effect there, which its documentation and
-  the `WorkspaceWrite` reason say. An existing file's read-only attribute is
-  handled by the refusal above.
+  the `WorkspaceWrite` reason say. It is still a digest input there, so the
+  resume rule is the same on every platform. An existing file's read-only
+  attribute is handled by the refusal above.
 
 Tests:
 
@@ -651,7 +671,15 @@ Tests:
   umask of the process running the other tests;
 - a pause hook between steps 2 and 3 observes the temporary file at 0600;
 - a read-only target is refused on every platform;
-- on Windows, a new file is writable and inherits its directory's ACL.
+- on Windows, a new file is writable and inherits its directory's ACL;
+- resume mismatch: a `Write` session created with `NewFileMode` 0600 and
+  resumed with 0644 fails with `errors.Is(err, ErrIncompatibleResume)`, and the
+  transcript's bytes are unchanged;
+- an unset `NewFileMode` resumes a session created with an explicit 0600, and
+  the reverse, with an identical `ConfigHash`;
+- a new golden in `session/ref_golden_test.go` pins the digest of a `Write`
+  workbench with the default mode, and the existing goldens stay the same;
+- a read-only workbench's digest does not change with `NewFileMode`.
 
 The durability boundary follows from that order:
 
@@ -1451,7 +1479,11 @@ per `AGENTS.md`. The owner or task 1 runs it:
    Add the symlink-free handle walk (`file_is_symlink`,
    `path_through_symlink`, and `.git` found by identity), `NewFileMode` with
    the deterministic final mode, the `file_read_only` refusal, and their tests,
-   including the re-executed umask cases. Also add the `.git` refusal and escape
+   including the re-executed umask cases. Add the effective `NewFileMode`
+   (0600 when unset) to the `Ref` digest when `Write` is set, with the
+   0600-then-0644 resume-mismatch test, the unset-equals-0600 test, the
+   read-only-digest-ignores-the-mode test and the `Write`-workbench golden.
+   Also add the `.git` refusal and escape
    tests, their request-shape case, `WorkspaceWrite`, and the README.
 5. **Stage 2b (LAH-3), macOS.** Add the Seatbelt profile generator, the runner
    (environment, scratch, timeout, bounds, `WaitDelay`, containment, sweep at
