@@ -14,6 +14,7 @@ type claudeCompletionEvent struct {
 		Content []claudeContentBlock `json:"content"`
 	} `json:"message"`
 	Structured json.RawMessage `json:"structured_output"`
+	Info       json.RawMessage `json:"rate_limit_info"`
 }
 type claudeContentBlock struct {
 	Type      string          `json:"type"`

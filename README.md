@@ -39,7 +39,8 @@ The root package `harness` defines what every execution mode shares:
   unavailable, never zero. `Cost` is the harness's own valuation at API rates,
   reported only when the harness states it.
 - `ErrorFacts(err)`: fixed-vocabulary facts (engine, operation, family, cause,
-  code, exit status, retry-after) for any error any mode returns. Error text
+  code, exit status, retry-after, and when an exhausted quota resets) for any
+  error any mode returns. Error text
   never contains provider output or credentials.
 
 ```go

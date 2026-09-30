@@ -16,6 +16,7 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/claudeproto"
 )
 
 // streamEvent is the subset of claude's stream-json protocol this driver
@@ -37,6 +38,10 @@ type streamEvent struct {
 	IsError bool            `json:"is_error"`
 	Result  json.RawMessage `json:"result"`
 	Usage   *streamUsage    `json:"usage"`
+	// Error is the enum on the synthetic assistant message a refused request
+	// produces; RateLimit is a rate_limit_event's reason for the refusal.
+	Error     string          `json:"error"`
+	RateLimit json.RawMessage `json:"rate_limit_info"`
 }
 
 // streamUsage is claude's usage report for one invocation. It carries more
@@ -125,6 +130,8 @@ type streamTranscoder struct {
 	promptSeen      bool              // the first text-bearing user message is the prompt, the rest are tool results
 	pending         []time.Time       // start times of tool calls awaiting a result, FIFO
 	suppressed      map[string]bool   // tool_use ids whose result must be dropped too
+	refusal         string            // the latest refused request's error enum, cleared by a response
+	limit           claudeproto.Limit // what the latest rate_limit_event said
 
 	now func() time.Time // injectable clock so the rendered durations are testable
 }
@@ -152,10 +159,23 @@ func (t *streamTranscoder) beginTurn(prompt string) {
 	t.report = nil
 	t.failure = ""
 	t.completed = false
+	t.refusal, t.limit = "", claudeproto.Limit{}
 	t.userPrompt(prompt)
 }
 
 func (t *streamTranscoder) reachedTerminal() bool { return t.completed }
+
+// failureCause explains a failed turn from the refusal that preceded it.
+func (t *streamTranscoder) failureCause() (harness.Cause, *time.Time) {
+	if t.refusal == "" {
+		return "", nil
+	}
+	if t.limit.Explains(t.refusal) {
+		return harness.CauseQuotaExhausted, t.limit.ResetsAt
+	}
+	cause, _ := claudeproto.Cause(t.refusal)
+	return cause, nil
+}
 
 // snapshot assembles claude's Result. Usage and cost count as known only for a
 // turn that reached its result event and recorded a figure no interruption
@@ -205,7 +225,12 @@ func (t *streamTranscoder) consume(line []byte) {
 	case "system":
 		t.renderSystem(ev)
 	case "assistant":
+		t.refusal = claudeproto.ErrorCode(ev.Error)
 		t.renderBlocks(ev, true)
+	case "rate_limit_event":
+		if limit, ok := claudeproto.Rejection(ev.RateLimit, t.now()); ok {
+			t.limit = limit
+		}
 	case "user":
 		t.renderBlocks(ev, false)
 	case "result":

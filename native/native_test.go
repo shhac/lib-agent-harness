@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/tomltest"
@@ -568,5 +570,44 @@ func TestCodexInterruptedTurnDoesNotReusePreviousKnownTotal(t *testing.T) {
 	s.Close()
 	if r := s.Snapshot(); !r.Usage.Known || r.Usage.Input != 180 {
 		t.Fatalf("cumulative total should repair prior gap: %+v", r)
+	}
+}
+
+// A refused request is explained by the synthetic assistant error before it
+// and, for a subscription login, the rate_limit_event before that. The frames
+// are trimmed from claude 2.1.285 answering a local server's 429.
+func TestClaudeRefusalExplainsTheFailedRun(t *testing.T) {
+	reset := time.Now().Add(2 * time.Hour).Truncate(time.Second).UTC()
+	refusal := `{"type":"assistant","message":{"model":"<synthetic>","content":[{"type":"text","text":"You've hit your session limit"}]},"error":"rate_limit","is_api_error_message":true}` + "\n" +
+		`{"type":"result","subtype":"success","is_error":true,"result":"You've hit your session limit","terminal_reason":"api_error"}` + "\n"
+	for name, tc := range map[string]struct {
+		frames string
+		cause  harness.Cause
+		resets bool
+	}{
+		"subscription window": {fmt.Sprintf(`{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":%d,"rateLimitType":"five_hour"}}`, reset.Unix()) + "\n" + refusal, harness.CauseQuotaExhausted, true},
+		"api rate limit":      {refusal, harness.CauseRateLimited, false},
+		"recovered":           {strings.Replace(refusal, `{"type":"result"`, `{"type":"assistant","message":{"content":[{"type":"text","text":"recovered"}]}}`+"\n"+`{"type":"result"`, 1), "", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, _ := NewStream(harness.Claude, io.Discard, StreamOptions{Structured: true})
+			s.UserPrompt("go")
+			io.WriteString(s, tc.frames)
+			s.Close()
+			_, err := s.Report()
+			facts, ok := harness.ErrorFacts(err)
+			if !ok || facts.Code != CodeTurnFailed || facts.Cause != tc.cause || (facts.ResetsAt != nil) != tc.resets || (tc.resets && !facts.ResetsAt.Equal(reset)) {
+				t.Fatalf("%+v %v", facts, err)
+			}
+			// The next turn starts unexplained.
+			s.UserPrompt("again")
+			io.WriteString(s, `{"type":"result","is_error":true,"result":"no"}`+"\n")
+			s.Close()
+			if _, err := s.Report(); err == nil {
+				t.Fatal("failure lost")
+			} else if facts, _ := harness.ErrorFacts(err); facts.Cause != "" || facts.ResetsAt != nil {
+				t.Fatalf("stale explanation: %+v", facts)
+			}
+		})
 	}
 }

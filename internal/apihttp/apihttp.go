@@ -51,9 +51,17 @@ func (f *Failure) Retryable() bool {
 	return f.Cause == harness.CauseOverloaded || f.Cause == harness.CauseRateLimited || f.Cause == harness.CauseUnavailable
 }
 
-// ResponseFailure is an unusable response.
+// ResponseFailure is an unusable response. The terminal states a provider
+// explains carry their cause.
 func ResponseFailure(code string) *Failure {
-	return &Failure{Cause: harness.CauseUnknown, Phase: PhaseResponse, Code: code}
+	cause := harness.CauseUnknown
+	switch code {
+	case "output_truncated":
+		cause = harness.CauseOutputTruncated
+	case "content_filtered", "model_refusal":
+		cause = harness.CauseContentFiltered
+	}
+	return &Failure{Cause: cause, Phase: PhaseResponse, Code: code}
 }
 
 // DefaultTransport does not honour ambient proxy variables, for the same
@@ -188,7 +196,7 @@ func StatusFailure(response *http.Response) *Failure {
 		failure.Cause = harness.CauseContextLimit
 	// Quota exhaustion shares 429 with rate limiting but will not clear by waiting.
 	case status == http.StatusTooManyRequests && code == "insufficient_quota":
-		failure.Code = code
+		failure.Cause, failure.Code = harness.CauseQuotaExhausted, code
 	case status == http.StatusTooManyRequests:
 		failure.Cause = harness.CauseRateLimited
 	case status == http.StatusServiceUnavailable:

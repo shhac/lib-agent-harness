@@ -127,6 +127,9 @@ type transcoder interface {
 	// reachedTerminal reports whether the turn ended with a terminal result.
 	// Named apart from the transcoders' own completed field, which it reads.
 	reachedTerminal() bool
+	// failureCause says why a failed turn failed, where the harness said;
+	// empty when it did not.
+	failureCause() (harness.Cause, *time.Time)
 }
 
 // Stream converts JSON-line CLI output to a common transcript and events.
@@ -181,6 +184,13 @@ func (s *Stream) Close()                      { s.t.Close() }
 func (s *Stream) UserPrompt(prompt string) { s.t.beginTurn(prompt) }
 func (s *Stream) Snapshot() Result         { return s.t.snapshot() }
 
+// turnFailed is the failed turn's error, with the cause the harness gave.
+func (s *Stream) turnFailed() error {
+	failure := turnError(s.engine, CodeTurnFailed)
+	failure.Cause, failure.ResetsAt = s.t.failureCause()
+	return failure
+}
+
 // Report returns the latest invocation's report, or a RunError saying why there
 // is none; the provider's own account of a failure is Snapshot().Failure.
 func (s *Stream) Report() (json.RawMessage, error) {
@@ -189,7 +199,7 @@ func (s *Stream) Report() (json.RawMessage, error) {
 		return r.Report, nil
 	}
 	if r.Failure != "" {
-		return nil, turnError(s.engine, CodeTurnFailed)
+		return nil, s.turnFailed()
 	}
 	return nil, turnError(s.engine, CodeNoResponse)
 }
@@ -384,7 +394,7 @@ func runOutcome(engine harness.Engine, stream *Stream, result Result, runErr, re
 	case runErr != nil:
 		return processError(engine, runErr)
 	case result.Failure != "":
-		return turnError(engine, CodeTurnFailed)
+		return stream.turnFailed()
 	case !stream.t.reachedTerminal():
 		return &RunError{Engine: engine, Family: harness.FailureProcess, Code: CodeNoTerminalResult}
 	case reportErr != nil:

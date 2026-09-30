@@ -1,6 +1,10 @@
 package claudeproto
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+	"time"
+)
 
 func TestOnlySchemaValuesAreRetained(t *testing.T) {
 	for _, code := range []string{"authentication_failed", "rate_limit", "overloaded", "cloud_credential_error", "unknown"} {
@@ -18,5 +22,31 @@ func TestOnlySchemaValuesAreRetained(t *testing.T) {
 		if ErrorCode(value) != "" || ResultSubtype(value) != "" {
 			t.Errorf("%q was retained", value)
 		}
+	}
+}
+
+func TestRejectionBoundsTheStatedReset(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	for name, tc := range map[string]struct {
+		info     string
+		ok       bool
+		rejected bool
+		resets   bool
+	}{
+		"allowed":        {`{"status":"allowed","resetsAt":1800003600}`, true, false, false},
+		"rejected":       {`{"status":"rejected","resetsAt":1800003600}`, true, true, true},
+		"no reset":       {`{"status":"rejected"}`, true, true, false},
+		"past reset":     {`{"status":"rejected","resetsAt":1799990000}`, true, true, false},
+		"distant reset":  {`{"status":"rejected","resetsAt":1900000000}`, true, true, false},
+		"unknown status": {`{"status":"paused"}`, false, false, false},
+		"not an object":  {`[]`, false, false, false},
+	} {
+		limit, ok := Rejection(json.RawMessage(tc.info), now)
+		if ok != tc.ok || limit.Rejected != tc.rejected || (limit.ResetsAt != nil) != tc.resets {
+			t.Fatalf("%s: %+v %v", name, limit, ok)
+		}
+	}
+	if !(Limit{Rejected: true}).Explains("rate_limit") || (Limit{Rejected: true}).Explains("overloaded") || (Limit{}).Explains("rate_limit") {
+		t.Fatal("a rejection explains only a rate_limit refusal")
 	}
 }

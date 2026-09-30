@@ -140,6 +140,7 @@ func parseClaude(data []byte, tools []Tool) (Result, error) {
 	var message Message
 	completed := false
 	assistantError := ""
+	var limit claudeproto.Limit
 	for _, line := range bytes.Split(data, []byte("\n")) {
 		if len(bytes.TrimSpace(line)) == 0 {
 			continue
@@ -154,14 +155,17 @@ func parseClaude(data []byte, tools []Tool) (Result, error) {
 		if code := boundary.observe(event); code != "" {
 			return accounting, &RequestError{Cause: harness.CauseUnknown, Engine: harness.Claude, Phase: PhaseResponse, Code: code}
 		}
-		if event.Type == "assistant" {
+		switch event.Type {
+		case "assistant":
 			assistantError = claudeproto.ErrorCode(event.Error)
+		case "rate_limit_event":
+			observeLimit(&limit, event.Info)
 		}
 		if event.Type != "result" {
 			continue
 		}
 		if event.IsError || event.Subtype != "success" || completed {
-			return accounting, claudeTerminalFailure(event.Subtype, event.Reason, event.Stop, assistantError)
+			return accounting, claudeTerminalFailure(event.Subtype, event.Reason, event.Stop, assistantError, limit)
 		}
 		completed = true
 		var err error

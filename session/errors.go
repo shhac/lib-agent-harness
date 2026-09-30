@@ -261,15 +261,17 @@ func (e *ProcessError) Unwrap() error { return ErrTransport }
 // through Options.OnDiagnostic instead, so a diagnostic can be recorded without
 // a message that might be displayed carrying anything a provider wrote.
 //
-// In a session whose loop the library runs, a failed model request ends the
-// turn with that request's own facts: Code, Cause, Phase and RetryAfter are
-// completion's RequestError fields. They are empty for a native turn.
+// Cause, and ResetsAt for an exhausted quota, are set where the harness said
+// why the turn failed. In a session whose loop the library runs, a failed model
+// request ends the turn with that request's own facts: Code, Cause, Phase,
+// RetryAfter and ResetsAt are completion's RequestError fields.
 type TurnError struct {
 	Engine     harness.Engine
 	Code       string
 	Cause      harness.Cause
 	Phase      string
 	RetryAfter time.Duration
+	ResetsAt   *time.Time
 }
 
 func (e *TurnError) Error() string {

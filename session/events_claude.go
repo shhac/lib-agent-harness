@@ -74,6 +74,20 @@ func (s *Session) claudeStreamEvent(t *Turn, m map[string]json.RawMessage) {
 }
 
 func (s *Session) claudeAssistant(t *Turn, m map[string]json.RawMessage) {
+	// A refused request surfaces as a synthetic assistant message carrying the
+	// error's enum. It is the CLI's explanation, not a model response: its
+	// text is not the agent's reply and its zero usage was never measured.
+	if code := claudeproto.ErrorCode(str(m, "error")); code != "" || flag(m, "is_api_error_message") {
+		t.mu.Lock()
+		t.claudeError = code
+		t.mu.Unlock()
+		return
+	}
+	// A response after a refusal means the CLI recovered from it; a later
+	// failure must not be explained by it.
+	t.mu.Lock()
+	t.claudeError = ""
+	t.mu.Unlock()
 	s.claudeMessageContext(t, m["message"])
 	// One completed model response. A turn contains many, and its terminal
 	// accounting arrives far too late for a caller holding a budget to act on,
@@ -176,7 +190,7 @@ func (s *Session) claudeResult(t *Turn, m map[string]json.RawMessage) {
 			// unexplained outcome this whole contract exists to stop producing, and
 			// a protocol-level result error typically has no process output to fall
 			// back on.
-			err = s.claudeTerminalFailure(m, r.Subtype)
+			err = s.claudeTerminalFailure(t, m, r.Subtype)
 		}
 	}
 	s.claudeModelCapacity(t, m["modelUsage"])
@@ -286,23 +300,31 @@ func claudeCompactionTrigger(m map[string]json.RawMessage) string {
 // claudeTerminalFailure builds a typed failure from a result frame, and hands
 // the caller a bounded, sanitized diagnostic through the hook that exists for
 // it. Provider text never enters the error value.
-func (s *Session) claudeTerminalFailure(m map[string]json.RawMessage, subtype string) error {
+func (s *Session) claudeTerminalFailure(t *Turn, m map[string]json.RawMessage, subtype string) error {
 	failure := &TurnError{Engine: harness.Claude, Code: claudeproto.ResultSubtype(subtype)}
-	if failure.Code == "" {
-		failure.Code = "turn_failed"
-	}
+	t.mu.Lock()
+	assistantError, limit := t.claudeError, t.claudeLimit
+	t.mu.Unlock()
 	var frame struct {
 		Reason string `json:"terminal_reason"`
 		Stop   string `json:"stop_reason"`
 		Error  string `json:"error"`
 	}
-	if json.Unmarshal(mustMarshal(m), &frame) == nil {
-		if code := claudeproto.ErrorCode(frame.Error); code != "" {
-			failure.Code = code
-		}
-		if frame.Reason == "prompt_too_long" || frame.Stop == "model_context_window_exceeded" {
-			failure.Code = "model_context_window_exceeded"
-		}
+	if json.Unmarshal(mustMarshal(m), &frame) == nil && claudeproto.ErrorCode(frame.Error) != "" {
+		assistantError = frame.Error
+	}
+	if code := claudeproto.ErrorCode(assistantError); code != "" {
+		failure.Code = code
+		failure.Cause, _ = claudeproto.Cause(code)
+	}
+	if limit.Explains(assistantError) {
+		failure.Cause, failure.ResetsAt = harness.CauseQuotaExhausted, limit.ResetsAt
+	}
+	if frame.Reason == "prompt_too_long" || frame.Stop == "model_context_window_exceeded" {
+		failure.Code, failure.Cause, failure.ResetsAt = "model_context_window_exceeded", harness.CauseContextLimit, nil
+	}
+	if failure.Code == "" {
+		failure.Code = "turn_failed"
 	}
 	if report := s.options.OnDiagnostic; report != nil {
 		report(Diagnostic{Engine: harness.Claude, Stage: "turn_result", Code: failure.Code, Detail: sanitize(mustMarshal(m["errors"]), 1024), At: time.Now().UTC()})

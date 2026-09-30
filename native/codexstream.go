@@ -131,6 +131,8 @@ func (t *codexTranscoder) beginTurn(prompt string) {
 
 func (t *codexTranscoder) reachedTerminal() bool { return t.completed }
 
+func (t *codexTranscoder) failureCause() (harness.Cause, *time.Time) { return "", nil }
+
 // snapshot assembles codex's Result. Usage is known as soon as any
 // turn.completed carried it, because that figure is already the session total;
 // codex reports no cost, so Cost stays unknown.

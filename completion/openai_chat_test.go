@@ -182,7 +182,14 @@ func TestOpenAIChatRejectsIncompleteOrAmbiguousResponses(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			reply, usage, err := messageAndUsage(Complete(context.Background(), apiConfig(respondWith(200, tc.body)), userMessage, lookupTool))
-			failure := requireAPIFailure(t, err, PhaseResponse, harness.CauseUnknown, tc.code)
+			cause := harness.CauseUnknown
+			switch tc.code {
+			case "output_truncated":
+				cause = harness.CauseOutputTruncated
+			case "content_filtered", "model_refusal":
+				cause = harness.CauseContentFiltered
+			}
+			failure := requireAPIFailure(t, err, PhaseResponse, cause, tc.code)
 			if failure.Retryable() || !reflect.DeepEqual(reply, Message{}) {
 				t.Fatalf("rejected response leaked a reply or retry: %#v", reply)
 			}

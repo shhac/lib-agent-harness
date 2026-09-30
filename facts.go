@@ -48,7 +48,18 @@ const (
 	CauseStructuredOutputLimit Cause = "structured_output_limit"
 	CausePermissionDenied      Cause = "permission_denied"
 	CauseTimeout               Cause = "timeout"
-	CauseUnknown               Cause = "unknown"
+	// CauseQuotaExhausted: a plan's usage limit, a subscription window or a
+	// prepaid balance is used up. It shares 429 with rate limiting but does not
+	// clear by waiting a moment; Facts.ResetsAt says when it does, where the
+	// provider stated it.
+	CauseQuotaExhausted Cause = "quota_exhausted"
+	// CauseOutputTruncated: the response hit an output token limit and ended
+	// before the model finished.
+	CauseOutputTruncated Cause = "output_truncated"
+	// CauseContentFiltered: the provider withheld or refused the response under
+	// its content or usage policy.
+	CauseContentFiltered Cause = "content_filtered"
+	CauseUnknown         Cause = "unknown"
 )
 
 // Facts is what a library error knows about itself.
@@ -66,6 +77,10 @@ type Facts struct {
 	ExitCode *int   `json:"exit_code,omitempty"`
 	// RetryAfter is a provider-stated delay, bounded; zero when none was given.
 	RetryAfter time.Duration `json:"retry_after,omitempty"`
+	// ResetsAt is when the limit that refused the request resets, as the
+	// provider stated it; nil when it did not. It accompanies an exhausted
+	// quota, which may be hours away, where RetryAfter is a short delay.
+	ResetsAt *time.Time `json:"resets_at,omitempty"`
 	// Retryable reports whether repeating the operation is safe on its own
 	// terms. It is false for a failed turn even when the provider might
 	// succeed next time, because a native turn may already have run tools.

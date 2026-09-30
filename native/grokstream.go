@@ -123,6 +123,8 @@ func (t *grokTranscoder) beginTurn(prompt string) {
 
 func (t *grokTranscoder) reachedTerminal() bool { return t.completed }
 
+func (t *grokTranscoder) failureCause() (harness.Cause, *time.Time) { return "", nil }
+
 func (t *grokTranscoder) snapshot() Result {
 	usage := t.usage
 	usage.Known = t.completed && t.sawUsage && !t.usageIncomplete

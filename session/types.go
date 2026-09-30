@@ -12,6 +12,7 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/claudeproto"
 )
 
 // MaxFrameBytes bounds one native JSON-line frame, including discarded tool
@@ -369,6 +370,10 @@ type Turn struct {
 	grokResponse int
 	// closeTools shuts the caller's tool channel when this turn ends.
 	closeTools func()
+	// claudeError and claudeLimit are why Claude refused this turn's latest
+	// request, kept for the errored result that follows.
+	claudeError string
+	claudeLimit claudeproto.Limit
 }
 
 func (t *Turn) ID() string           { t.mu.Lock(); defer t.mu.Unlock(); return t.id }

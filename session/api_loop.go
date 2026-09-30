@@ -260,7 +260,7 @@ func apiTurnFailure(err error) *TurnError {
 	if request.Code != "" {
 		failure.Code = request.Code
 	}
-	failure.Cause, failure.Phase, failure.RetryAfter = request.Cause, string(request.Phase), request.RetryAfter
+	failure.Cause, failure.Phase, failure.RetryAfter, failure.ResetsAt = request.Cause, string(request.Phase), request.RetryAfter, request.ResetsAt
 	return failure
 }
 

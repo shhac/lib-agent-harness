@@ -55,7 +55,7 @@ func TestClaudeFailureClassification(t *testing.T) {
 	for _, tc := range []struct {
 		native string
 		kind   harness.Cause
-	}{{"overloaded", harness.CauseOverloaded}, {"rate_limit", harness.CauseRateLimited}, {"server_error", harness.CauseUnavailable}, {"authentication_failed", harness.CauseAuthentication}, {"billing_error", harness.CauseUnknown}, {"invalid_request", harness.CauseUnknown}} {
+	}{{"overloaded", harness.CauseOverloaded}, {"rate_limit", harness.CauseRateLimited}, {"server_error", harness.CauseUnavailable}, {"authentication_failed", harness.CauseAuthentication}, {"billing_error", harness.CauseQuotaExhausted}, {"invalid_request", harness.CauseUnknown}} {
 		data := []byte(`{"type":"assistant","error":"` + tc.native + `","message":{"content":[{"type":"text","text":"secret"}]}}` + "\n" + `{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["secret"]}`)
 		_, err := parseClaude(data, nil)
 		var failure *RequestError
@@ -73,6 +73,74 @@ func TestClaudeFailureClassification(t *testing.T) {
 	}
 	if claudeRequestFailure([]byte(`{"type":"assistant","error":"rate_limit"}`)) != nil {
 		t.Fatal("missing terminal result")
+	}
+}
+
+// claudeRefusal is how claude 2.1.285 reports a request the API refused: a
+// synthetic assistant error, then an errored result labelled "success". A
+// subscription login is told why first, in a rate_limit_event. Trimmed from
+// frames captured against a local server answering 429.
+func claudeRefusal(assistantError string, rateLimit string) []byte {
+	lines := []string{`{"type":"system","subtype":"init","tools":["StructuredOutput"],"model":"claude-haiku-4-5-20251001","apiKeySource":"none","claude_code_version":"2.1.285"}`}
+	if rateLimit != "" {
+		lines = append(lines, `{"type":"rate_limit_event","rate_limit_info":`+rateLimit+`,"uuid":"u","session_id":"s"}`)
+	}
+	lines = append(lines,
+		`{"type":"assistant","message":{"model":"<synthetic>","role":"assistant","stop_reason":"stop_sequence","type":"message","usage":{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"content":[{"type":"text","text":"You've hit your session limit · secret"}]},"parent_tool_use_id":null,"error":"`+assistantError+`","is_api_error_message":true}`,
+		`{"type":"result","subtype":"success","is_error":true,"api_error_status":429,"duration_api_ms":0,"result":"secret","stop_reason":"stop_sequence","total_cost_usd":0,"usage":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0},"terminal_reason":"api_error"}`)
+	return []byte(strings.Join(lines, "\n") + "\n")
+}
+
+func TestClaudeRefusalOnCurrentCLI(t *testing.T) {
+	reset := time.Now().Add(3 * time.Hour).Truncate(time.Second).UTC()
+	rejected := fmt.Sprintf(`{"status":"rejected","resetsAt":%d,"rateLimitType":"five_hour","isUsingOverage":false,"unifiedWindows":{"five_hour":{"utilization":1,"resetsAt":%d}}}`, reset.Unix(), reset.Unix())
+	for _, tc := range []struct {
+		name, error, rateLimit string
+		cause                  harness.Cause
+		retryable              bool
+		resets                 bool
+	}{
+		{"api key rate limit", "rate_limit", "", harness.CauseRateLimited, true, false},
+		{"overloaded", "overloaded", "", harness.CauseOverloaded, true, false},
+		{"authentication", "authentication_failed", "", harness.CauseAuthentication, false, false},
+		{"subscription window", "rate_limit", rejected, harness.CauseQuotaExhausted, false, true},
+		{"allowed window", "rate_limit", `{"status":"allowed_warning","resetsAt":1}`, harness.CauseRateLimited, true, false},
+		{"implausible reset", "rate_limit", `{"status":"rejected","resetsAt":1}`, harness.CauseQuotaExhausted, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := claudeRefusal(tc.error, tc.rateLimit)
+			_, err := parseClaude(data, nil)
+			var failure *RequestError
+			if !errors.As(err, &failure) || failure.Cause != tc.cause || failure.Code != tc.error {
+				t.Fatalf("%+v", err)
+			}
+			facts, _ := harness.ErrorFacts(err)
+			if facts.Retryable != tc.retryable || (facts.ResetsAt != nil) != tc.resets || (tc.resets && !facts.ResetsAt.Equal(reset)) {
+				t.Fatalf("facts %+v", facts)
+			}
+			if strings.Contains(err.Error(), "secret") {
+				t.Fatal("leaked provider data")
+			}
+			// Output before the refusal withdraws retry permission, but the
+			// terminal diagnostic still names what it can without it.
+			partial := append([]byte(`{"type":"assistant","message":{"content":[{"type":"text","text":"partial"}]}}`+"\n"), data...)
+			if claudeRequestFailure(partial) != nil {
+				t.Fatal("partial output accepted as a clean refusal")
+			}
+			if diagnostic := claudeTerminalDiagnostic(partial); diagnostic == nil || diagnostic.Retryable() || diagnostic.Code != tc.error {
+				t.Fatalf("diagnostic %+v", diagnostic)
+			}
+		})
+	}
+	// Only an API refusal is labelled this way; any other errored "success"
+	// is not evidence of a transient rejection.
+	other := strings.Replace(string(claudeRefusal("rate_limit", "")), `"terminal_reason":"api_error"`, `"terminal_reason":"max_turns"`, 1)
+	if claudeRequestFailure([]byte(other)) != nil {
+		t.Fatal("non-API errored result granted retry permission")
+	}
+	// A rate_limit_event this library cannot read is not skipped silently.
+	if claudeRequestFailure(claudeRefusal("rate_limit", `{"status":"surprise"}`)) != nil {
+		t.Fatal("unknown rate limit status accepted")
 	}
 }
 

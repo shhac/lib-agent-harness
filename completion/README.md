@@ -285,14 +285,20 @@ when observed from the subprocess. These fields do not establish whether quota
 was consumed. Only explicit overload, rate-limit, and
 service-unavailable failures without partial response output are retryable.
 Authentication, permission denials, unavailable models, structured-output
-exhaustion, context limits, unknown failures, timeouts, transport loss,
-malformed output and capability probes never authorize a retry. The caller owns
+exhaustion, context limits, exhausted quotas, truncated or filtered output,
+unknown failures, timeouts, transport loss, malformed output and capability
+probes never authorize a retry. The caller owns
 retry budgets and scheduling; no request is retried here. Classification does
 not establish that the failed request consumed no quota. `RetryAfter` is zero
 when the CLI supplies no trustworthy delay (currently both completion adapters).
+An exhausted quota (`quota_exhausted`: an API endpoint's `insufficient_quota`,
+Claude's `billing_error`, or a Claude subscription window that refused the
+request) carries `ResetsAt` when the provider stated when it resets.
 
 Claude classification requires a typed assistant error and terminal failed
-result. Codex exec exposes only a message in its terminal error envelope, so the
+result. Current CLIs label a refused request's result `success` with
+`is_error` and `terminal_reason` `api_error`; a subscription login is also sent
+a `rate_limit_event` saying whether a subscription window refused it. Codex exec exposes only a message in its terminal error envelope, so the
 adapter recognizes a narrow set of canonical native error formats: exact
 capacity/context failures and anchored HTTP 429/503/529/401/403 status formats. Any
 item output, successful completion, malformed/unknown event or unrecognized

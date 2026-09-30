@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os/exec"
 	"strconv"
+	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
 )
@@ -39,6 +40,10 @@ type RunError struct {
 	Family   harness.Family
 	Code     string
 	ExitCode *int
+	// Cause, and ResetsAt for an exhausted quota, say why a turn failed where
+	// the harness stated it.
+	Cause    harness.Cause
+	ResetsAt *time.Time
 	cause    error
 }
 
@@ -94,7 +99,7 @@ func (e *RunError) Unwrap() error { return e.cause }
 // is retryable on its own terms: a refusal repeats, and a native turn may
 // already have run tools.
 func (e *RunError) HarnessFacts() harness.Facts {
-	return harness.Facts{Engine: e.Engine, Operation: harness.Run, Family: e.Family, Code: e.Code, ExitCode: e.ExitCode}
+	return harness.Facts{Engine: e.Engine, Operation: harness.Run, Family: e.Family, Cause: e.Cause, Code: e.Code, ExitCode: e.ExitCode, ResetsAt: e.ResetsAt}
 }
 
 // capabilityError drops an engine the library does not know, since the

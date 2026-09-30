@@ -441,6 +441,12 @@ func str(m map[string]json.RawMessage, k string) string {
 	return s
 }
 
+func flag(m map[string]json.RawMessage, k string) bool {
+	var b bool
+	_ = json.Unmarshal(m[k], &b)
+	return b
+}
+
 func runOnce(ctx context.Context, binary string, args []string, dir string, env []string) ([]byte, error) {
 	cmd, p, err := process.Command(ctx, binary, args...)
 	if err != nil {

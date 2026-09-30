@@ -90,7 +90,7 @@ func TestOpenAIChatMaxCompletionTokens(t *testing.T) {
 	cfg := apiConfig(api)
 	cfg.MaxOutputTokens = 8
 	result, err := Complete(context.Background(), cfg, userMessage, nil)
-	requireAPIFailure(t, err, PhaseResponse, harness.CauseUnknown, "output_truncated")
+	requireAPIFailure(t, err, PhaseResponse, harness.CauseOutputTruncated, "output_truncated")
 	if result.Message.Content != "" || len(result.Message.ToolCalls) != 0 {
 		t.Fatal("a reply cut off at the cap was returned")
 	}
