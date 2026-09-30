@@ -147,6 +147,9 @@ const (
 	CapabilityServerNotLoaded     = "tool_server_not_loaded"
 	CapabilityServerNameReserved  = "tool_server_name_reserved"
 	CapabilityLoginUnavailable    = "harness_login_unavailable"
+	// CapabilityBrowserToolsMissing: startup did not advertise the configured
+	// browser integration's tools. This does not identify extension connectivity.
+	CapabilityBrowserToolsMissing = "browser_tools_missing"
 )
 
 // Sandbox capability failures.
@@ -171,7 +174,7 @@ const (
 	BeforeFirstPrompt = "before_first_prompt"
 )
 
-// CapabilityError reports that a restricted session could not be established.
+// CapabilityError reports that a requested session capability could not be established.
 // Tool names, when present, are the ones the check disagreed about, and they
 // come from the caller's own configuration or from a fixed native-name
 // comparison — never from free text.
@@ -204,6 +207,15 @@ func (e *CapabilityError) Error() string {
 	}[e.Code]
 	if message == "" {
 		message = "the restricted session configuration could not be established"
+	}
+	if e.Code == CapabilityBrowserToolsMissing {
+		message = "the installed harness did not advertise the browser tools"
+		switch e.Engine {
+		case harness.Codex:
+			message += "; configure the native Node REPL browser bridge in the selected CLI home, install the ChatGPT Chrome extension (https://chromewebstore.google.com/detail/chatgpt/hehggadaopoacecdllhhajmbjkdcmajg), and restart the CLI"
+		case harness.Claude:
+			message += "; enable Claude in Chrome, install its Chrome extension (https://chromewebstore.google.com/detail/claude/fcoeoabgfenejglbffodgkkbkcdhcgfn), and restart the CLI"
+		}
 	}
 	out := string(e.Engine) + ": " + message
 	if len(e.Tools) > 0 {

@@ -746,6 +746,15 @@ Sandboxed Codex sessions are also refused: their isolated home cannot inherit
 the owner's browser bridge safely. Use an ordinary native Codex session, or
 leave `Browser` unset.
 
+Before any prompt, Codex sessions check that `node_repl` advertises its `js`
+and `js_reset` tools, including deferred tools. Claude sessions check that
+`claude-in-chrome` is connected and advertises browser tools. Missing tools
+produce a typed `session.CapabilityError` with code `browser_tools_missing`,
+the extension URL and setup guidance. Codex's inventory proves bridge tools
+are loaded, not that Chrome is connected. Native runs have no equivalent
+startup check and retain the CLI's own diagnostics. Neither check executes a
+browser action.
+
 That browser is not sandboxed. It runs outside the OS sandbox, with that
 Chrome profile's logins, and reaches whatever the extension's site
 permissions allow. For agents:

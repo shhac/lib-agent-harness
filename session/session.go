@@ -183,6 +183,14 @@ func open(ctx context.Context, o Options, r *Ref, lease *os.File) (*Session, err
 		return nil, s.resumeFailure(r != nil, err)
 	}
 	if err = s.initialize(ctx, r != nil); err != nil {
+		// A startup notification can close the transport before initialize's
+		// reply arrives. Preserve that structural failure instead of replacing
+		// its actionable capability error with the resulting transport error.
+		s.mu.Lock()
+		if s.failure != nil {
+			err = s.failure
+		}
+		s.mu.Unlock()
 		s.fail(err)
 		s.settleFailedLaunch(l)
 		return nil, s.resumeFailure(r != nil, err)
@@ -365,6 +373,11 @@ func (s *Session) initialize(ctx context.Context, resume bool) error {
 		}
 		if s.options.Sandbox != nil {
 			if err = checkCodexSandbox(s.options, body); err != nil {
+				return err
+			}
+		}
+		if s.options.Browser {
+			if err = checkCodexBrowser(ctx, s.transport, response.Thread.ID); err != nil {
 				return err
 			}
 		}

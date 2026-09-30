@@ -5,6 +5,7 @@ package session
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -31,6 +32,68 @@ func TestBrowserIsRefusedWhereItCannotBeHonoured(t *testing.T) {
 	}
 	if _, err := normalize(Options{Provider: harness.Provider{Engine: harness.Claude}, WorkDir: work, Browser: true}); err != nil {
 		t.Fatalf("an ordinary Claude session with a browser: %v", err)
+	}
+}
+
+func TestNativeBrowserStartupAndResume(t *testing.T) {
+	for _, engine := range []harness.Engine{harness.Codex, harness.Claude} {
+		t.Run(string(engine), func(t *testing.T) {
+			binary, log := fakeHarness(t, fakeClean)
+			o := Options{Provider: harness.Provider{Engine: engine, CLI: harness.CLI{Binary: binary, Home: t.TempDir()}}, WorkDir: t.TempDir(), Browser: true}
+			ctx := probeContext(t)
+			s, err := Start(ctx, o)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			runTurn(t, ctx, s, "browser start")
+			ref := s.Ref()
+			if _, err := s.Release(ctx); err != nil {
+				t.Fatal(err)
+			}
+			resumed, err := Resume(ctx, o, ref)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resumed.Close()
+			runTurn(t, ctx, resumed, "browser resume")
+			if _, err := resumed.Release(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if invocations(t, log, "probe") != 0 {
+				t.Fatal("ordinary browser session ran a restriction probe")
+			}
+			if invocations(t, log, "session") != 2 {
+				t.Fatal("start and resume did not launch separately")
+			}
+		})
+	}
+}
+
+func TestMissingBrowserFailsBeforePrompt(t *testing.T) {
+	for _, engine := range []harness.Engine{harness.Codex, harness.Claude} {
+		for _, scenario := range []string{"browser-missing", "browser-empty"} {
+			t.Run(string(engine)+" "+scenario, func(t *testing.T) {
+				binary, log := fakeHarness(t, scenario)
+				o := Options{Provider: harness.Provider{Engine: engine, CLI: harness.CLI{Binary: binary, Home: t.TempDir()}}, WorkDir: t.TempDir(), Browser: true}
+				s, err := Start(probeContext(t), o)
+				if s != nil {
+					s.Close()
+					t.Fatal("session opened without browser tools")
+				}
+				var failure *CapabilityError
+				if !errors.As(err, &failure) || failure.Code != CapabilityBrowserToolsMissing || failure.Phase != BeforeFirstPrompt {
+					t.Fatalf("lost capability failure: %v", err)
+				}
+				raw, readErr := os.ReadFile(log)
+				if readErr != nil {
+					t.Fatal(readErr)
+				}
+				if strings.Contains(string(raw), "input:") {
+					t.Fatal("missing browser sent a prompt")
+				}
+			})
+		}
 	}
 }
 
@@ -101,7 +164,8 @@ func TestSandboxedBrowserStartupCrossCheck(t *testing.T) {
 		code   string
 	}{
 		"browser beside native":   {false, `{"type":"system","subtype":"init","mcp_servers":[` + chrome + `],"tools":["Bash",` + browserTools + `]}`, ""},
-		"browser not loaded":      {false, `{"type":"system","subtype":"init","mcp_servers":[],"tools":["Bash"]}`, CapabilityServerNotLoaded},
+		"browser not loaded":      {false, `{"type":"system","subtype":"init","mcp_servers":[],"tools":["Bash"]}`, CapabilityBrowserToolsMissing},
+		"browser without tools":   {false, `{"type":"system","subtype":"init","mcp_servers":[` + chrome + `],"tools":["Bash"]}`, CapabilityBrowserToolsMissing},
 		"another server":          {false, `{"type":"system","subtype":"init","mcp_servers":[` + chrome + `,{"name":"claude.ai Gmail","status":"connected"}],"tools":["Bash",` + browserTools + `,"mcp__claude_ai_Gmail__send"]}`, CapabilityNativeToolsPresent},
 		"browser and hosted":      {true, `{"type":"system","subtype":"init","mcp_servers":[` + chrome + `,` + crew + `],"tools":["Bash",` + browserTools + `,"mcp__crew__read_file"]}`, ""},
 		"hosted server not given": {true, `{"type":"system","subtype":"init","mcp_servers":[` + chrome + `],"tools":["Bash",` + browserTools + `]}`, CapabilityServerNotLoaded},

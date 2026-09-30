@@ -120,7 +120,7 @@ func (s *Session) observeClaudeInit(m map[string]json.RawMessage) bool {
 		return false
 	}
 	host := hostedTools(s.options)
-	browser := s.options.Browser && s.options.Sandbox != nil
+	browser := s.options.Browser
 	if host == nil && !browser {
 		return false
 	}
@@ -150,8 +150,29 @@ func (s *Session) observeClaudeInit(m map[string]json.RawMessage) bool {
 			}
 		}
 		if !loaded {
-			s.recordSurface(&CapabilityError{Engine: harness.Claude, Code: CapabilityServerNotLoaded, Phase: BeforeFirstPrompt, Tools: []string{server}})
+			code := CapabilityServerNotLoaded
+			if server == claudeBrowserServer && browser {
+				code = CapabilityBrowserToolsMissing
+			}
+			s.recordSurface(&CapabilityError{Engine: harness.Claude, Code: code, Phase: BeforeFirstPrompt, Tools: []string{server}})
 			return true
+		}
+	}
+	if browser {
+		available := false
+		for _, name := range frame.Tools {
+			for _, tool := range claudeBrowserAdmitted {
+				if name == "mcp__"+claudeBrowserServer+"__"+tool {
+					available = true
+				}
+			}
+		}
+		if !available {
+			s.recordSurface(&CapabilityError{Engine: harness.Claude, Code: CapabilityBrowserToolsMissing, Phase: BeforeFirstPrompt})
+			return true
+		}
+		if host == nil && s.options.Sandbox == nil {
+			return true // Ordinary sessions keep the owner's native and MCP tools.
 		}
 	}
 	// Judged as identity, not as text: an advertised tool that did not arrive

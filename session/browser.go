@@ -1,6 +1,9 @@
 package session
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"strings"
 
 	harness "github.com/shhac/lib-agent-harness"
@@ -66,4 +69,40 @@ func normalizeBackground(o Options) error {
 // them a sandboxed session may call is decided by its permission rules.
 func browserTool(o Options, name string) bool {
 	return o.Browser && strings.HasPrefix(name, "mcp__"+claudeBrowserServer+"__")
+}
+
+// checkCodexBrowser checks the configured bridge's advertised tools, including
+// deferred ones. This does not execute JavaScript, open a browser, or prove an
+// extension connection. The protocol and identities were checked against
+// codex-cli 0.159.2 with a local provider that refuses inference.
+func checkCodexBrowser(ctx context.Context, w wire, threadID string) error {
+	missing := &CapabilityError{Engine: harness.Codex, Code: CapabilityBrowserToolsMissing, Phase: BeforeFirstPrompt}
+	body, err := w.request(ctx, "mcpServerStatus/list", map[string]any{"threadId": threadID, "serverName": "node_repl", "detail": "toolsAndAuthOnly"})
+	if err != nil {
+		if errors.Is(err, ErrRejected) {
+			return missing
+		}
+		return err
+	}
+	var status struct {
+		Data []struct {
+			Name          string  `json:"name"`
+			RuntimeStatus string  `json:"runtimeStatus"`
+			ToolsError    *string `json:"toolsError"`
+			Tools         map[string]struct {
+				Name string `json:"name"`
+			} `json:"tools"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(body, &status) != nil || status.Data == nil {
+		return &CapabilityError{Engine: harness.Codex, Code: CapabilityProbeUnreadable, Phase: BeforeFirstPrompt}
+	}
+	for _, server := range status.Data {
+		if server.Name == "node_repl" && server.ToolsError == nil &&
+			(server.RuntimeStatus == "" || server.RuntimeStatus == "connected") &&
+			server.Tools["js"].Name == "js" && server.Tools["js_reset"].Name == "js_reset" {
+			return nil
+		}
+	}
+	return missing
 }

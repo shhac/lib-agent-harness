@@ -191,9 +191,16 @@ func fakeClaude(scenario string, args []string) int {
 	if len(hosted) > 0 {
 		server = strings.Split(hosted[0], "__")[1]
 	}
+	servers := []any{map[string]any{"name": server, "status": "connected"}}
+	if slices.Contains(args, "--chrome") && scenario != "browser-missing" {
+		servers = append(servers, map[string]any{"name": claudeBrowserServer, "status": "connected"})
+		if scenario != "browser-empty" {
+			hosted = append(hosted, "mcp__claude-in-chrome__read_page")
+		}
+	}
 	// Emitted before any prompt, as the installed CLI does, so the session's
 	// startup cross-check has something to judge.
-	if out.Encode(map[string]any{"type": "system", "subtype": "init", "session_id": session, "tools": hosted, "mcp_servers": []any{map[string]any{"name": server, "status": "connected"}}}) != nil {
+	if out.Encode(map[string]any{"type": "system", "subtype": "init", "session_id": session, "tools": hosted, "mcp_servers": servers}) != nil {
 		return 2
 	}
 	for input.Scan() {
@@ -354,6 +361,16 @@ func fakeCodex(scenario string, args []string) int {
 					return 2
 				}
 			}
+		case "mcpServerStatus/list":
+			data := []any{}
+			if scenario != "browser-missing" {
+				tools := map[string]any{}
+				if scenario != "browser-empty" {
+					tools = map[string]any{"js": map[string]any{"name": "js"}, "js_reset": map[string]any{"name": "js_reset"}}
+				}
+				data = append(data, map[string]any{"name": "node_repl", "tools": tools})
+			}
+			result = map[string]any{"data": data}
 		case "thread/compact/start":
 			if out.Encode(map[string]any{"id": id, "result": map[string]any{}}) != nil {
 				return 2
