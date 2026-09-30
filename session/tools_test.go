@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
 func putSynthetic(t *testing.T, dir, name, text string) {
@@ -44,12 +46,22 @@ func privateDir(t *testing.T) string {
 	return dir
 }
 
+// hostDir is privateDir for a tool host that will listen: the host binds its
+// channel as a Unix domain socket under TMPDIR, which a sandbox the suite runs
+// in may refuse.
+func hostDir(t *testing.T) string {
+	t.Helper()
+	dir := privateDir(t)
+	testenv.RequireUnixSocket(t)
+	return dir
+}
+
 func testHost(t *testing.T, handler ToolHandler, tools ...ToolDefinition) *toolHost {
 	t.Helper()
 	if len(tools) == 0 {
 		tools = []ToolDefinition{{Name: "read_file", Description: "read", Schema: map[string]any{"type": "object"}}}
 	}
-	h, err := newToolHost(ToolHost{Server: "workspace", Tools: tools, Handler: handler, Dir: privateDir(t), Bridge: Bridge{Path: "/usr/bin/true", Args: []string{"tool-bridge"}}}, nil)
+	h, err := newToolHost(ToolHost{Server: "workspace", Tools: tools, Handler: handler, Dir: hostDir(t), Bridge: Bridge{Path: "/usr/bin/true", Args: []string{"tool-bridge"}}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

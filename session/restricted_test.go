@@ -11,9 +11,21 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
+// restrictedOptions is a restricted configuration for a test that opens its
+// tool channel.
 func restrictedOptions(t *testing.T, engine harness.Engine) Options {
+	t.Helper()
+	o := restrictedConfig(t, engine)
+	testenv.RequireUnixSocket(t)
+	return o
+}
+
+// restrictedConfig is restrictedOptions for a test that only normalizes or
+// judges the configuration, or is refused before its tool channel opens.
+func restrictedConfig(t *testing.T, engine harness.Engine) Options {
 	t.Helper()
 	return Options{
 		Provider: harness.Provider{Engine: engine, CLI: harness.CLI{Binary: "/usr/bin/true", Home: t.TempDir()}}, WorkDir: t.TempDir(), RuntimeHome: t.TempDir(), Model: "picked",
@@ -32,7 +44,7 @@ func restrictedOptions(t *testing.T, engine harness.Engine) Options {
 // the conversation actually lives in — the tool server's name and the runtime
 // home — still has to match.
 func TestReferenceIgnoresChannelMaterialAndToolSurfaceButNotServerOrHome(t *testing.T) {
-	first := restrictedOptions(t, harness.Claude)
+	first := restrictedConfig(t, harness.Claude)
 	first, err := normalize(first)
 	if err != nil {
 		t.Fatal(err)
@@ -181,7 +193,7 @@ func TestRestrictedCodexArgumentsRemoveNativeToolSurfaces(t *testing.T) {
 // send. Claude puts hosted tools in top-level `tools`; Codex puts definitions
 // under input[additional_tools] and groups some into namespaces.
 func TestSurfaceJudgementUsesRealRequestShapes(t *testing.T) {
-	o, err := normalize(restrictedOptions(t, harness.Claude))
+	o, err := normalize(restrictedConfig(t, harness.Claude))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +246,7 @@ func TestSurfaceJudgementUsesRealRequestShapes(t *testing.T) {
 // proves the surface, and the mediated helpers are permitted because they can
 // reach nothing but the one configured server.
 func TestCodexSurfaceAcceptsMediatedHelpersOnlyWithChannelEvidence(t *testing.T) {
-	o, err := normalize(restrictedOptions(t, harness.Codex))
+	o, err := normalize(restrictedConfig(t, harness.Codex))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +304,7 @@ func TestCodexSurfaceAcceptsMediatedHelpersOnlyWithChannelEvidence(t *testing.T)
 }
 
 func TestProbeChecksCodexIdentityAndInheritedInstructions(t *testing.T) {
-	o, err := normalize(restrictedOptions(t, harness.Codex))
+	o, err := normalize(restrictedConfig(t, harness.Codex))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -331,7 +343,7 @@ func TestNormalizeRejectsContradictoryRestrictedConfiguration(t *testing.T) {
 		"invalid tool host":  func(o *Options) { o.Restriction.Tools.Handler = nil },
 	} {
 		t.Run(name, func(t *testing.T) {
-			o := restrictedOptions(t, harness.Claude)
+			o := restrictedConfig(t, harness.Claude)
 			mutate(&o)
 			if _, err := normalize(o); err == nil {
 				t.Fatal("a contradictory restricted configuration was accepted")
@@ -339,7 +351,7 @@ func TestNormalizeRejectsContradictoryRestrictedConfiguration(t *testing.T) {
 		})
 	}
 	// Appending scoped instructions is the supported way to add a task.
-	o := restrictedOptions(t, harness.Claude)
+	o := restrictedConfig(t, harness.Claude)
 	o.Instructions = Instructions{Append, "implement the assignment"}
 	if _, err := normalize(o); err != nil {
 		t.Fatalf("appended scoped instructions were rejected: %v", err)
@@ -437,11 +449,11 @@ func TestBareToolNameNeverPassesAsAHostedTool(t *testing.T) {
 // What a probe observed decides its outcome, judged without a provider or a
 // harness: each observation maps to the refusal it warrants, or to none.
 func TestJudgeProbeMapsEachObservationToItsOutcome(t *testing.T) {
-	claude, err := normalize(restrictedOptions(t, harness.Claude))
+	claude, err := normalize(restrictedConfig(t, harness.Claude))
 	if err != nil {
 		t.Fatal(err)
 	}
-	codex, err := normalize(restrictedOptions(t, harness.Codex))
+	codex, err := normalize(restrictedConfig(t, harness.Codex))
 	if err != nil {
 		t.Fatal(err)
 	}

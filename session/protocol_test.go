@@ -183,7 +183,7 @@ func TestSessionSurvivesABridgeRestart(t *testing.T) {
 // An application's state directory is deep — deeper than a local socket path may
 // be — so the channel must not be placed beneath it.
 func TestToolHostWorksBeneathADeepApplicationStateDirectory(t *testing.T) {
-	deep := privateDir(t)
+	deep := hostDir(t)
 	for i := 0; i < 6; i++ {
 		deep = filepath.Join(deep, strings.Repeat("state-segment", 2))
 	}

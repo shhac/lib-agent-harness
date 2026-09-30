@@ -12,6 +12,10 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      # CI runs unsandboxed: a test that would skip because the environment
+      # refused it fails instead, so no coverage is lost silently.
+      AGENT_HARNESS_TEST_NO_SKIP: '1'
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6

@@ -74,10 +74,10 @@ func TestSkillDeliveryPerEngineAndMode(t *testing.T) {
 			return o
 		}, instructionSkills, instructionSkills},
 		{"claude sandboxed", func(t *testing.T) Options { return sandboxOptions(t, harness.Claude, "/usr/bin/true", false) }, instructionSkills, instructionSkills},
-		{"claude restricted", func(t *testing.T) Options { return restrictedOptions(t, harness.Claude) }, hostedSkills, hostedSkills},
+		{"claude restricted", func(t *testing.T) Options { return restrictedConfig(t, harness.Claude) }, hostedSkills, hostedSkills},
 		{"codex ordinary", func(t *testing.T) Options { return ordinaryOptions(t, harness.Codex) }, instructionSkills, instructionSkills},
 		{"codex sandboxed", func(t *testing.T) Options { return sandboxOptions(t, harness.Codex, "/usr/bin/true", false) }, nativeSkills, instructionSkills},
-		{"codex restricted", func(t *testing.T) Options { return restrictedOptions(t, harness.Codex) }, hostedSkills, hostedSkills},
+		{"codex restricted", func(t *testing.T) Options { return restrictedConfig(t, harness.Codex) }, hostedSkills, hostedSkills},
 		{"grok", func(t *testing.T) Options { return ordinaryOptions(t, harness.Grok) }, nativeSkills, instructionSkills},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -274,7 +274,7 @@ func TestGrokSessionLoadsAPluginOrItsRules(t *testing.T) {
 
 func TestRestrictedSessionHostsTheSkillTools(t *testing.T) {
 	skill, reader := testSkill(t, "demo", true), testSkill(t, "reader", false)
-	o := restrictedOptions(t, harness.Codex)
+	o := restrictedConfig(t, harness.Codex)
 	o.Instructions = Instructions{Mode: Append, Text: "Scoped task."}
 	o.Skills.Provided = []harness.Skill{skill, reader}
 	if _, err := normalize(o); refusalCode(t, err) != "work_dir_required" {
@@ -331,7 +331,7 @@ func TestRestrictedSessionHostsTheSkillTools(t *testing.T) {
 		t.Fatalf("the caller's tools must still reach the caller: %+v", r)
 	}
 
-	reserved := restrictedOptions(t, harness.Claude)
+	reserved := restrictedConfig(t, harness.Claude)
 	reserved.Restriction.Tools.Tools = append(reserved.Restriction.Tools.Tools, ToolDefinition{Name: LoadSkillTool, Schema: map[string]any{"type": "object"}})
 	reserved.Skills.Provided = []harness.Skill{reader}
 	if _, err := normalize(reserved); refusalCode(t, err) != RefusedSkillToolReserved {
@@ -402,10 +402,10 @@ func TestGlobalSkillRequestsPerMode(t *testing.T) {
 			return o
 		}, false, false},
 		{"claude sandboxed", func(t *testing.T) Options { return sandboxOptions(t, harness.Claude, "/usr/bin/true", false) }, false, true},
-		{"claude restricted", func(t *testing.T) Options { return restrictedOptions(t, harness.Claude) }, false, true},
+		{"claude restricted", func(t *testing.T) Options { return restrictedConfig(t, harness.Claude) }, false, true},
 		{"codex ordinary", func(t *testing.T) Options { return ordinaryOptions(t, harness.Codex) }, true, false},
 		{"codex sandboxed", func(t *testing.T) Options { return sandboxOptions(t, harness.Codex, "/usr/bin/true", false) }, false, false},
-		{"codex restricted", func(t *testing.T) Options { return restrictedOptions(t, harness.Codex) }, false, true},
+		{"codex restricted", func(t *testing.T) Options { return restrictedConfig(t, harness.Codex) }, false, true},
 		{"grok", func(t *testing.T) Options { return ordinaryOptions(t, harness.Grok) }, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

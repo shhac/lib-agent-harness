@@ -273,7 +273,7 @@ func TestSilentlyDroppedToolServerClosesTheSession(t *testing.T) {
 // A reserved name is refused before anything is launched, so an operator is
 // told what to change rather than seeing an empty session.
 func TestReservedToolServerNameIsRefused(t *testing.T) {
-	o := restrictedOptions(t, harness.Claude)
+	o := restrictedConfig(t, harness.Claude)
 	o.Restriction = &Restriction{Tools: o.Restriction.Tools}
 	o.Restriction.Tools.Server = "workspace"
 	_, err := normalize(o)
@@ -285,7 +285,7 @@ func TestReservedToolServerNameIsRefused(t *testing.T) {
 		t.Errorf("refusal did not name the server: %v", failure.Tools)
 	}
 	// Codex has no such reservation, so the same name is fine there.
-	codex := restrictedOptions(t, harness.Codex)
+	codex := restrictedConfig(t, harness.Codex)
 	codex.Restriction = &Restriction{Tools: codex.Restriction.Tools}
 	codex.Restriction.Tools.Server = "workspace"
 	if _, err = normalize(codex); err != nil {

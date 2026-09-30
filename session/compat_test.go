@@ -106,7 +106,7 @@ func TestUnidentifiedLaunchMarkerReservesTheAssignment(t *testing.T) {
 // forever would turn a repairable failure — a missing binary, a bad path — into
 // an assignment no later resume could unblock.
 func TestConfirmedFailedLaunchSettlesItsMarker(t *testing.T) {
-	dir := privateDir(t)
+	dir := hostDir(t)
 	o, err := normalize(Options{
 		Provider: harness.Provider{Engine: harness.Claude, CLI: harness.CLI{Binary: filepath.Join(t.TempDir(), "absent-harness"), Home: t.TempDir()}},
 		WorkDir:  t.TempDir(), RuntimeHome: t.TempDir(),
@@ -145,7 +145,7 @@ func TestConfirmedFailedLaunchSettlesItsMarker(t *testing.T) {
 // A marker naming a live process is never settled by the same path: that is the
 // crash window, and it stays reserved.
 func TestLiveLaunchIsNotSettledAsFailed(t *testing.T) {
-	dir := privateDir(t)
+	dir := hostDir(t)
 	group, err := syscall.Getpgid(0)
 	if err != nil {
 		t.Fatal(err)

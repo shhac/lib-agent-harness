@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
 func TestHelper(t *testing.T) {
@@ -111,6 +113,8 @@ func TestStopBeforeStart(t *testing.T) {
 }
 
 func TestCancellationDrainsDescendantPipes(t *testing.T) {
+	// The descendant holding the pipe is stopped by killing the group.
+	testenv.RequireProcessGroup(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	p, buf := helper(t, ctx, "parent")

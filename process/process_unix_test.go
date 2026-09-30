@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
 // TestDetachFromTerminalSignalsLeavesOurProcessGroup pins the property that
@@ -27,6 +29,7 @@ import (
 // the child DOES share our group, so this test fails if the helper silently
 // stops doing anything, rather than passing for the wrong reason.
 func TestDetachFromTerminalSignalsLeavesOurProcessGroup(t *testing.T) {
+	testenv.RequireProcessGroup(t)
 	ours, err := syscall.Getpgid(os.Getpid())
 	if err != nil {
 		t.Fatalf("Getpgid(self): %v", err)
@@ -83,6 +86,9 @@ func prepareTestProcess(t *testing.T, cmd *exec.Cmd) {
 // grandchild still lived. Inspect the descendant too, allowing dead zombies
 // which Linux containers may leave for their init process to reap.
 func TestCancelledGroupStopsDescendant(t *testing.T) {
+	testenv.RequireProcessGroup(t)
+	// A refused ps would read as a descendant already gone.
+	testenv.RequireProcessStatus(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	p, buf := helper(t, ctx, "parent")

@@ -225,7 +225,11 @@ func TestOpenStartsFreshWhenAResumedClaudeExits(t *testing.T) {
 
 // Open never starts a harness over one it cannot confirm gone.
 func TestOpenHoldsAnUnconfirmedLaunch(t *testing.T) {
-	o, log := persistentOptions(t, harness.Claude)
+	// Refused before its tool channel opens, so this runs where a sandbox
+	// refuses the channel's socket too.
+	binary, log := fakeHarness(t, fakeClean, fakePersistEnv+"=1")
+	o := restrictedConfig(t, harness.Claude)
+	o.Provider.CLI.Binary = binary
 	if err := recordLaunch(o.Restriction.Tools.Dir, launchRecord{Engine: string(harness.Claude), Launch: "elsewhere", Started: time.Now()}); err != nil {
 		t.Fatal(err)
 	}

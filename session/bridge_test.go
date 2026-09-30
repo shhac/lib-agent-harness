@@ -17,6 +17,7 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
 // These env names make the test binary re-execute itself as a stand-in for a
@@ -160,6 +161,7 @@ func TestFreeBridgeLockIsNotProofTheHarnessIsGone(t *testing.T) {
 
 // A group with no members is the one thing that does establish absence.
 func TestReclaimConfirmsAbsenceFromTheProcessGroup(t *testing.T) {
+	testenv.RequireProcessGroup(t)
 	dir := privateDir(t)
 	cmd := exec.Command(os.Args[0], "-test.run=TestReclaimConfirmsAbsenceFromTheProcessGroup")
 	cmd.Env = append(os.Environ(), holdLockEnv+"="+filepath.Join(privateDir(t), "unused.lock"))
@@ -182,6 +184,7 @@ func TestReclaimConfirmsAbsenceFromTheProcessGroup(t *testing.T) {
 // A live group whose bridge names the same launch is provably ours, so it can be
 // signalled — and termination is confirmed from the group, not from the lock.
 func TestReclaimTerminatesAnIdentifiedOrphan(t *testing.T) {
+	testenv.RequireProcessGroup(t)
 	dir := privateDir(t)
 	launch := filepath.Join(privateDir(t), "launch")
 	cmd := exec.Command(os.Args[0], "-test.run=TestReclaimTerminatesAnIdentifiedOrphan")
@@ -224,6 +227,7 @@ func TestReclaimTerminatesAnIdentifiedOrphan(t *testing.T) {
 // A live group whose bridge belongs to a different launch must never be
 // signalled: that is exactly the identifier-reuse case.
 func TestReclaimRefusesAnUnidentifiedLiveGroup(t *testing.T) {
+	testenv.RequireProcessGroup(t)
 	dir := privateDir(t)
 	cmd := exec.Command(os.Args[0], "-test.run=TestReclaimRefusesAnUnidentifiedLiveGroup")
 	cmd.Env = append(os.Environ(), holdLockEnv+"="+lockPath(dir), holdLaunchEnv+"=/tmp/some-other-launch")
@@ -307,6 +311,7 @@ func TestAssignmentLeaseExcludesASecondHolder(t *testing.T) {
 // for launch the way a running harness's bridge does, and returns its pid.
 func standInBridge(t *testing.T, lock, launch string) int {
 	t.Helper()
+	testenv.RequireProcessGroup(t)
 	cmd := exec.Command(os.Args[0], "-test.run=^$")
 	cmd.Env = append(os.Environ(), holdLockEnv+"="+lock, holdLaunchEnv+"="+launch)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -332,7 +337,7 @@ func standInBridge(t *testing.T, lock, launch string) int {
 // take it and launch before Release gets round to reclaiming. What Release then
 // finds on disk is that session's live harness, and it must be left alone.
 func TestReleaseLeavesAnAssignmentAnotherSessionTook(t *testing.T) {
-	dir := privateDir(t)
+	dir := hostDir(t)
 	o, err := normalize(Options{
 		Provider: harness.Provider{Engine: harness.Claude, CLI: harness.CLI{Binary: "/usr/bin/true", Home: t.TempDir()}}, WorkDir: t.TempDir(), RuntimeHome: t.TempDir(),
 		Restriction: &Restriction{Tools: ToolHost{

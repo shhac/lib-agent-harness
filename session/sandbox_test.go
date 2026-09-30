@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
 // Sandbox scenarios: how the fake canary behaves, what the fake status check
@@ -443,6 +444,22 @@ func TestOpenCanaryEscapesAreEachDetected(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(workspace, ".git"), 0700); err != nil {
 		t.Fatal(err)
 	}
+	name := filepath.Base(root) + ".canary"
+	// Run inside a sandbox of its own, such as an agent's, this suite's
+	// canary is contained by that outer sandbox: a /tmp it may not write makes
+	// the canary rightly report no escape there, and production's reading of
+	// the same refusal as enforced is true of the combined sandbox. So make
+	// each write the canary must report first, and skip, naming it, if the
+	// environment refuses one. Each file written is cleaned up whatever ends
+	// the test, and removed now so the canary starts from what it would find.
+	for _, path := range []string{filepath.Join(workspace, "canary"), filepath.Join(root, "outside"), filepath.Join("/tmp", name), filepath.Join(sessionTempDir(), name), filepath.Join(workspace, ".git", "config")} {
+		err := os.WriteFile(path, []byte("x\n"), 0600)
+		testenv.SkipIfRefused(t, "the unsandboxed canary's write to "+path, err)
+		t.Cleanup(func() { _ = os.Remove(path) })
+		if err = os.Remove(path); err != nil {
+			t.Fatalf("could not remove the pre-written %s: %v", path, err)
+		}
+	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -459,7 +476,7 @@ func TestOpenCanaryEscapesAreEachDetected(t *testing.T) {
 	}()
 	cmd := exec.Command("/bin/sh", "-c", canaryScript)
 	cmd.Dir = workspace
-	cmd.Env = append(os.Environ(), "TMPDIR="+sessionTempDir(), "CANARY_SIBLING="+filepath.Join(root, "outside"), "CANARY_NAME="+filepath.Base(root)+".canary", "CANARY_PORT="+strconv.Itoa(listener.Addr().(*net.TCPAddr).Port))
+	cmd.Env = append(os.Environ(), "TMPDIR="+sessionTempDir(), "CANARY_SIBLING="+filepath.Join(root, "outside"), "CANARY_NAME="+name, "CANARY_PORT="+strconv.Itoa(listener.Addr().(*net.TCPAddr).Port))
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatal(err)

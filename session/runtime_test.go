@@ -210,14 +210,14 @@ func TestRepeatedPreparationLeavesTheCredentialAlone(t *testing.T) {
 
 // A restricted session will not start without somewhere private to run.
 func TestRestrictedSessionRequiresARuntimeHome(t *testing.T) {
-	o := restrictedOptions(t, harness.Codex)
+	o := restrictedConfig(t, harness.Codex)
 	o.RuntimeHome = ""
 	if _, err := normalize(o); err == nil {
 		t.Fatal("a restricted session was accepted with no runtime home")
 	}
 	// And the runtime home is part of its identity: resuming elsewhere is a
 	// different session.
-	first, err := normalize(restrictedOptions(t, harness.Codex))
+	first, err := normalize(restrictedConfig(t, harness.Codex))
 	if err != nil {
 		t.Fatal(err)
 	}

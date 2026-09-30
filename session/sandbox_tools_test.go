@@ -12,9 +12,19 @@ import (
 	"testing"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
+// sandboxToolHost is a tool host for a test that opens its channel.
 func sandboxToolHost(t *testing.T) *ToolHost {
+	t.Helper()
+	host := sandboxToolConfig(t)
+	testenv.RequireUnixSocket(t)
+	return host
+}
+
+// sandboxToolConfig is sandboxToolHost for a test whose channel never opens.
+func sandboxToolConfig(t *testing.T) *ToolHost {
 	t.Helper()
 	return &ToolHost{
 		Server:  "crew",
@@ -25,9 +35,16 @@ func sandboxToolHost(t *testing.T) *ToolHost {
 
 func sandboxToolOptions(t *testing.T, engine harness.Engine, binary string, web bool) Options {
 	t.Helper()
+	o := sandboxToolConfigOptions(t, engine, binary, web)
+	testenv.RequireUnixSocket(t)
+	return o
+}
+
+func sandboxToolConfigOptions(t *testing.T, engine harness.Engine, binary string, web bool) Options {
+	t.Helper()
 	o := sandboxOptions(t, engine, binary, true)
 	o.Sandbox.Web = web
-	o.Sandbox.Tools = sandboxToolHost(t)
+	o.Sandbox.Tools = sandboxToolConfig(t)
 	return o
 }
 
@@ -137,14 +154,14 @@ func TestSandboxToolsAreRefusedWhenTheyCannotBeHosted(t *testing.T) {
 	}
 	for name, edit := range cases {
 		t.Run(name, func(t *testing.T) {
-			host := sandboxToolHost(t)
+			host := sandboxToolConfig(t)
 			edit(host)
 			if _, err := normalize(Options{Provider: harness.Provider{Engine: harness.Claude}, WorkDir: work, Sandbox: &Sandbox{Write: true, Tools: host}}); err == nil {
 				t.Fatal("tool host accepted")
 			}
 		})
 	}
-	host := sandboxToolHost(t)
+	host := sandboxToolConfig(t)
 	caller := host.Tools[0].Schema
 	o := mustNormalize(t, Options{Provider: harness.Provider{Engine: harness.Claude}, WorkDir: work, Sandbox: &Sandbox{Tools: host}})
 	o.Sandbox.Tools.Tools[0].Schema["edited"] = true
@@ -161,7 +178,7 @@ func TestSandboxToolServerIsPartOfTheReference(t *testing.T) {
 	hash := func(tools *ToolHost) string {
 		return reference(mustNormalize(t, Options{Provider: harness.Provider{Engine: harness.Claude, CLI: harness.CLI{Home: home}}, WorkDir: work, Sandbox: &Sandbox{Write: true, Tools: tools}}), "id").ConfigHash
 	}
-	first, second, renamed := sandboxToolHost(t), sandboxToolHost(t), sandboxToolHost(t)
+	first, second, renamed := sandboxToolConfig(t), sandboxToolConfig(t), sandboxToolConfig(t)
 	second.Tools = second.Tools[:1]
 	renamed.Server = "other"
 	if hash(first) != hash(second) {
@@ -310,7 +327,7 @@ func TestFailedSandboxLeavesNoToolChannel(t *testing.T) {
 
 func TestSandboxedToolsVerifyWithoutAChannel(t *testing.T) {
 	binary, _ := fakeHarness(t, fakeSandboxOK)
-	o := sandboxToolOptions(t, harness.Claude, binary, false)
+	o := sandboxToolConfigOptions(t, harness.Claude, binary, false)
 	if err := VerifySandbox(context.Background(), o); err != nil {
 		t.Fatal(err)
 	}

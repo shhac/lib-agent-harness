@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
 // escapee runs a shell that backgrounds a helper, which moves itself into a
@@ -22,6 +24,8 @@ import (
 // own platform binaries.
 func escapee(t *testing.T, ctx context.Context, linger string) (*Process, func() int) {
 	t.Helper()
+	testenv.RequireProcessGroup(t)
+	testenv.RequireProcessStatus(t)
 	cmd, p, err := Command(ctx, "/bin/sh", "-c", `"$0" -test.run='^TestHelper$' -- detached >/dev/null 2>&1 & echo $!; `+linger, os.Args[0])
 	if err != nil {
 		t.Fatal(err)
@@ -53,6 +57,8 @@ func (b *lockedBuffer) String() string {
 	return b.buf.String()
 }
 
+// alive needs ps: a test that calls it first calls testenv.RequireProcessStatus,
+// since a refused ps would make every process look gone.
 func alive(pid int) bool {
 	if syscall.Kill(pid, 0) != nil {
 		return false
@@ -147,6 +153,8 @@ func TestLaunchTokensNest(t *testing.T) {
 }
 
 func TestSweepReachesUnreadableChildrenOfMarkedProcesses(t *testing.T) {
+	testenv.RequireProcessGroup(t)
+	testenv.RequireProcessStatus(t)
 	cmd, p, err := Command(context.Background(), "/bin/sh", "-c", `"$0" -test.run='^TestHelper$' -- sleeper & sleep 1; exit 0`, os.Args[0])
 	if err != nil {
 		t.Fatal(err)
@@ -180,6 +188,9 @@ func niceOf(t *testing.T, pid int) string {
 // The tree runs niced, including a descendant forked later into a process
 // group of its own, as an agent's background server is.
 func TestBackgroundLowersTheWholeTree(t *testing.T) {
+	testenv.RequireProcessGroup(t)
+	testenv.RequireGroupPriority(t)
+	testenv.RequireProcessStatus(t)
 	cmd, p, err := Command(context.Background(), "/bin/sh", "-c", `sleep 0.3; "$0" -test.run='^TestHelper$' -- detached >/dev/null 2>&1 & echo $!; sleep 1`, os.Args[0])
 	if err != nil {
 		t.Fatal(err)

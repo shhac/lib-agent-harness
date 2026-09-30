@@ -969,6 +969,33 @@ paid models or touch real account credentials. CI runs on Linux, macOS, and
 Windows. Consumers depend on published module tags, not sibling-directory
 `replace` directives.
 
+### Running the tests inside a sandbox
+
+The suite also runs inside a sandbox, such as the one an agent runs its
+commands in, provided it allows loopback connections: the provider stand-ins
+and capability checks listen on `127.0.0.1`. Tests that need something else
+such a sandbox commonly refuses first probe for it, once per test binary, and
+skip with the probe's refusal when the environment denies it with a permission
+error:
+
+| Needs | Tests |
+| --- | --- |
+| A Unix domain socket under `TMPDIR` | every test that opens a restricted or sandboxed session's tool channel (`session/`) |
+| A process group of its own (setpgid) | the tests of what containment does with the group — detach, group cancellation, descendant pipes, escapees, sweeps (`process/`); the stand-in bridge and `Reclaim` tests (`session/`) |
+| Reading process status with `ps` | the cancelled-group and sweep tests (`process/`), which otherwise could not tell a live process from a gone one |
+| Lowering a process group's priority | `TestBackgroundLowersTheWholeTree` (`process/`) |
+| Writing `/tmp` and `TMPDIR` directly | `TestOpenCanaryEscapesAreEachDetected` (`session/`): an outer sandbox contains the unsandboxed canary too, which then rightly reports no escape |
+
+Any other probe failure fails the test, so a real fault is never hidden behind a
+skip. `go test -v ./...` lists each skip with its reason, for example
+`environment refuses a Unix domain socket under TMPDIR: listen: … operation not
+permitted`. Harness launches in general are not gated. They always start in a
+process group of their own, and that has to work wherever the library runs.
+
+Setting `AGENT_HARNESS_TEST_NO_SKIP=1` turns every such skip into a failure. CI
+sets it, so an unsandboxed run can never pass by skipping. The helpers live in
+`internal/testenv`.
+
 Licensed under [PolyForm Perimeter 1.0.0](LICENSE), matching the sibling
 `lib-agent-*` libraries.
 
