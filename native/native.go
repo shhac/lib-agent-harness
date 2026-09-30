@@ -47,8 +47,8 @@ type Config struct {
 	// this run only: Claude Code's --chrome, or Codex's browser_use and
 	// browser_use_external features with an already configured native bridge
 	// in the selected CLI home and the ChatGPT Chrome extension. The browser
-	// uses that profile's logins outside the shell sandbox. Off unless set;
-	// an engine without one is refused (see harness.Support).
+	// uses that profile's logins outside the shell sandbox. Unset preserves CLI
+	// defaults; an engine without one is refused (see harness.Support).
 	Browser bool
 	// Background runs the harness, and everything it starts, at background
 	// priority, so agent work yields to the machine's interactive use (see

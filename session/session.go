@@ -187,7 +187,8 @@ func open(ctx context.Context, o Options, r *Ref, lease *os.File) (*Session, err
 		// reply arrives. Preserve that structural failure instead of replacing
 		// its actionable capability error with the resulting transport error.
 		s.mu.Lock()
-		if s.failure != nil {
+		var capability *CapabilityError
+		if errors.As(s.failure, &capability) {
 			err = s.failure
 		}
 		s.mu.Unlock()

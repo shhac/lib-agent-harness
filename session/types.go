@@ -148,8 +148,8 @@ type Options struct {
 	// Browser turns on the browser integration the harness itself ships, for
 	// this session only: Claude Code's --chrome, or Codex's browser_use and
 	// browser_use_external features with an already configured native bridge
-	// in the selected CLI home and the ChatGPT Chrome extension. It is off
-	// unless set and never implied by another option; an engine without one
+	// in the selected CLI home and the ChatGPT Chrome extension. Unset preserves
+	// the CLI's defaults; never implied by another option. An engine without one
 	// is refused (see harness.Support). A sandboxed Claude session admits the
 	// browser's tools beside its own, except those that would read local files
 	// or start another agent. The browser itself runs outside the OS sandbox,

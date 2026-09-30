@@ -722,8 +722,9 @@ stopped when the session closes (see Process containment below).
 ### The harness's own browser
 
 `Options.Browser` (and `native.Config.Browser` for a run) switches on the
-browser integration the harness ships, for that invocation only. It is off
-unless set and never implied by another option:
+browser integration the harness ships, for that invocation only. The library
+requests it only when set; leaving it unset preserves the CLI's own defaults
+and configuration. It is never implied by another option:
 
 - Claude Code: `--chrome` (Claude in Chrome), with the
   [Claude extension](https://chromewebstore.google.com/detail/claude/fcoeoabgfenejglbffodgkkbkcdhcgfn).
