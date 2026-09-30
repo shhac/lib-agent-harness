@@ -6,6 +6,7 @@ package completion
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"runtime"
 	"time"
@@ -80,6 +81,12 @@ type Message struct {
 	Content    string     `json:"content,omitempty"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
+	// Replay is state an OpenAI-compatible endpoint returned with this
+	// assistant message and needs back with it, such as a reasoning model's
+	// reasoning_content. It is opaque: keep the message in history as it is.
+	// It is sent only to the endpoint and model that produced it; any other
+	// destination is refused with replay_mismatch.
+	Replay json.RawMessage `json:"replay,omitempty"`
 }
 type ToolCall struct {
 	ID       string `json:"id"`
@@ -88,6 +95,9 @@ type ToolCall struct {
 		Name      string `json:"name"`
 		Arguments string `json:"arguments"`
 	} `json:"function"`
+	// Replay is state the endpoint attached to this call, such as Gemini's
+	// thought signature; see Message.Replay.
+	Replay json.RawMessage `json:"replay,omitempty"`
 }
 type Tool struct {
 	Type     string   `json:"type"`
@@ -131,6 +141,10 @@ func Complete(ctx context.Context, cfg Config, messages []Message, tools []Tool)
 	}
 	if cfg.MaxOutputTokens > 0 && !offersMaxOutputTokens(engine) {
 		return Result{}, preflightFailure(engine, "max_output_tokens_unsupported")
+	}
+	if engine != harness.OpenAICompatible && carriesReplay(messages) {
+		// Replay belongs to the endpoint that produced it; a CLI would drop it.
+		return Result{}, preflightFailure(engine, "replay_mismatch")
 	}
 	messages, tools, err := composeSkills(engine, cfg.Skills, messages, tools)
 	if err != nil {

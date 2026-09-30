@@ -86,7 +86,7 @@ func (s *Session) runAPITurn(ctx context.Context, t *Turn) {
 		}
 		response := a.nextResponse()
 		message := result.Message
-		if a.append(record{Type: recordAssistant, Turn: t.id, Response: response, Text: message.Content, Calls: message.ToolCalls}) != nil {
+		if a.append(record{Type: recordAssistant, Turn: t.id, Response: response, Text: message.Content, Calls: message.ToolCalls, Replay: message.Replay}) != nil {
 			return
 		}
 		s.touch()

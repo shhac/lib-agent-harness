@@ -29,6 +29,8 @@ type seenRequest struct {
 		Content    *string           `json:"content"`
 		ToolCallID string            `json:"tool_call_id"`
 		ToolCalls  []json.RawMessage `json:"tool_calls"`
+		// ReasoningContent is provider state sent back with an assistant message.
+		ReasoningContent json.RawMessage `json:"reasoning_content"`
 	} `json:"messages"`
 	Tools []struct {
 		Function struct {

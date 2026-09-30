@@ -54,13 +54,16 @@ type record struct {
 	Text     string                `json:"text,omitempty"`
 	Response int                   `json:"response,omitempty"`
 	Calls    []completion.ToolCall `json:"calls,omitempty"`
-	Call     string                `json:"call,omitempty"`
-	Tool     string                `json:"tool,omitempty"`
-	IsError  bool                  `json:"is_error,omitempty"`
-	Outcome  string                `json:"outcome,omitempty"`
-	Usage    *harness.Usage        `json:"usage,omitempty"`
-	Status   string                `json:"status,omitempty"`
-	Code     string                `json:"code,omitempty"`
+	// Replay is the provider state an assistant response carried, kept so a
+	// resumed conversation sends it back as the endpoint requires.
+	Replay  json.RawMessage `json:"replay,omitempty"`
+	Call    string          `json:"call,omitempty"`
+	Tool    string          `json:"tool,omitempty"`
+	IsError bool            `json:"is_error,omitempty"`
+	Outcome string          `json:"outcome,omitempty"`
+	Usage   *harness.Usage  `json:"usage,omitempty"`
+	Status  string          `json:"status,omitempty"`
+	Code    string          `json:"code,omitempty"`
 }
 
 // transcriptHeader binds a transcript to the reference that created it.
@@ -235,7 +238,7 @@ func conversation(records []record, system string) []completion.Message {
 		case recordUser:
 			out = append(out, completion.Message{Role: "user", Content: r.Text})
 		case recordAssistant:
-			out = append(out, completion.Message{Role: "assistant", Content: r.Text, ToolCalls: r.Calls})
+			out = append(out, completion.Message{Role: "assistant", Content: r.Text, ToolCalls: r.Calls, Replay: r.Replay})
 			for _, call := range r.Calls {
 				key := record{Response: r.Response, Call: call.ID}.key()
 				text := notRunText

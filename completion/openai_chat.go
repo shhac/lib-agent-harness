@@ -29,9 +29,23 @@ type chatReasoning struct {
 type chatMessage struct {
 	Role string `json:"role"`
 	// Content is null only for an assistant message that carries tool calls.
-	Content    *string    `json:"content"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
+	Content          *string         `json:"content"`
+	ToolCalls        []chatToolCall  `json:"tool_calls,omitempty"`
+	ToolCallID       string          `json:"tool_call_id,omitempty"`
+	ReasoningContent json.RawMessage `json:"reasoning_content,omitempty"`
+	ReasoningDetails json.RawMessage `json:"reasoning_details,omitempty"`
+}
+
+// chatToolCall is a call as the wire carries it; the caller's Replay is
+// never sent under its own name.
+type chatToolCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+	ExtraContent json.RawMessage `json:"extra_content,omitempty"`
 }
 
 type chatTool struct {
@@ -52,9 +66,9 @@ func chatRequestBody(cfg Config, messages []Message, tools []Tool) ([]byte, erro
 	if _, err := toolCatalog(tools); err != nil {
 		return nil, preflightFailure(harness.OpenAICompatible, "invalid_tool_catalog")
 	}
-	wire, ok := chatMessages(messages)
-	if !ok {
-		return nil, preflightFailure(harness.OpenAICompatible, "invalid_messages")
+	wire, code := chatMessages(messages, replayBinding(cfg))
+	if code != "" {
+		return nil, preflightFailure(harness.OpenAICompatible, code)
 	}
 	request := chatRequest{Model: cfg.Model, Messages: wire, MaxCompletionTokens: cfg.MaxOutputTokens}
 	switch cfg.Provider.API.EffortParameter {
@@ -83,9 +97,9 @@ func chatRequestBody(cfg Config, messages []Message, tools []Tool) ([]byte, erro
 	return body, nil
 }
 
-func chatMessages(messages []Message) ([]chatMessage, bool) {
+func chatMessages(messages []Message, binding string) ([]chatMessage, string) {
 	if len(messages) == 0 {
-		return nil, false
+		return nil, "invalid_messages"
 	}
 	wire := make([]chatMessage, 0, len(messages))
 	for _, message := range messages {
@@ -93,32 +107,42 @@ func chatMessages(messages []Message) ([]chatMessage, bool) {
 		out := chatMessage{Role: message.Role, Content: &content, ToolCallID: message.ToolCallID}
 		switch message.Role {
 		case "system", "user":
-			if len(message.ToolCalls) > 0 || message.ToolCallID != "" {
-				return nil, false
+			if len(message.ToolCalls) > 0 || message.ToolCallID != "" || len(message.Replay) > 0 {
+				return nil, "invalid_messages"
 			}
 		case "tool":
-			if len(message.ToolCalls) > 0 || message.ToolCallID == "" {
-				return nil, false
+			if len(message.ToolCalls) > 0 || message.ToolCallID == "" || len(message.Replay) > 0 {
+				return nil, "invalid_messages"
 			}
 		case "assistant":
 			if message.ToolCallID != "" {
-				return nil, false
+				return nil, "invalid_messages"
 			}
+			fields, ok := openReplay(message.Replay, binding, messageReplayFields)
+			if !ok {
+				return nil, "replay_mismatch"
+			}
+			out.ReasoningContent, out.ReasoningDetails = fields["reasoning_content"], fields["reasoning_details"]
 			for _, call := range message.ToolCalls {
 				if call.Type != "function" || call.ID == "" || call.Function.Name == "" {
-					return nil, false
+					return nil, "invalid_messages"
 				}
+				extra, ok := openReplay(call.Replay, binding, callReplayFields)
+				if !ok {
+					return nil, "replay_mismatch"
+				}
+				wireCall := chatToolCall{ID: call.ID, Type: call.Type, Function: call.Function, ExtraContent: extra["extra_content"]}
+				out.ToolCalls = append(out.ToolCalls, wireCall)
 			}
-			out.ToolCalls = message.ToolCalls
 			if len(message.ToolCalls) > 0 && content == "" {
 				out.Content = nil
 			}
 		default:
-			return nil, false
+			return nil, "invalid_messages"
 		}
 		wire = append(wire, out)
 	}
-	return wire, true
+	return wire, ""
 }
 
 type chatCompletionResponse struct {
@@ -137,7 +161,10 @@ type chatCompletionResponse struct {
 					Name      string `json:"name"`
 					Arguments string `json:"arguments"`
 				} `json:"function"`
+				ExtraContent json.RawMessage `json:"extra_content"`
 			} `json:"tool_calls"`
+			ReasoningContent json.RawMessage `json:"reasoning_content"`
+			ReasoningDetails json.RawMessage `json:"reasoning_details"`
 		} `json:"message"`
 	} `json:"choices"`
 	Usage json.RawMessage `json:"usage"`
@@ -145,7 +172,10 @@ type chatCompletionResponse struct {
 
 // parseChatCompletion accepts only an unambiguous terminal response. Anything
 // else returns no reply, alongside the usage the response reported.
-func parseChatCompletion(data []byte, tools []Tool) (Result, error) {
+//
+// binding names the endpoint and model, for the provider state the reply
+// carries back (see replay.go).
+func parseChatCompletion(data []byte, tools []Tool, binding string) (Result, error) {
 	accounting := Result{Usage: chatUsage(data)}
 	var response chatCompletionResponse
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -166,7 +196,7 @@ func parseChatCompletion(data []byte, tools []Tool) (Result, error) {
 	if message.Refusal != nil && *message.Refusal != "" {
 		return accounting, apiResponseFailure("model_refusal")
 	}
-	result := Message{Role: "assistant"}
+	result := Message{Role: "assistant", Replay: captureReplay(binding, map[string]json.RawMessage{"reasoning_content": message.ReasoningContent, "reasoning_details": message.ReasoningDetails}, messageReplayFields)}
 	if len(message.Content) > 0 && string(message.Content) != "null" && json.Unmarshal(message.Content, &result.Content) != nil {
 		return accounting, apiResponseFailure("malformed_response")
 	}
@@ -183,7 +213,7 @@ func parseChatCompletion(data []byte, tools []Tool) (Result, error) {
 			return accounting, apiResponseFailure("invalid_tool_call")
 		}
 		seen[call.ID] = true
-		proposal := ToolCall{ID: call.ID, Type: "function"}
+		proposal := ToolCall{ID: call.ID, Type: "function", Replay: captureReplay(binding, map[string]json.RawMessage{"extra_content": call.ExtraContent}, callReplayFields)}
 		proposal.Function.Name = call.Function.Name
 		proposal.Function.Arguments = call.Function.Arguments
 		result.ToolCalls = append(result.ToolCalls, proposal)

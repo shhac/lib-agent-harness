@@ -56,7 +56,7 @@ func openAIComplete(ctx context.Context, cfg Config, messages []Message, tools [
 	if apihttp.Echoes(string(data), token) {
 		return Result{Usage: chatUsage(data)}, apiResponseFailure("credential_echoed")
 	}
-	result, err := parseChatCompletion(data, tools)
+	result, err := parseChatCompletion(data, tools, replayBinding(cfg))
 	if err != nil {
 		return result, err
 	}

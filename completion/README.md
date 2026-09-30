@@ -33,6 +33,15 @@ when the response supplies consistent token counts. Streaming, structured
 output and remote sessions are currently refused rather than silently
 approximated.
 
+Reasoning endpoints can return state they need back with the history:
+DeepSeek and Kimi thinking modes refuse a tool-call history without its
+`reasoning_content`, OpenRouter asks for `reasoning_details`, and Gemini signs
+each tool call's thought in `extra_content`. The reply carries it as
+`Message.Replay` and `ToolCall.Replay`; keep the message in history as it is,
+and the next request sends those fields back. A replay is bound to the endpoint
+and model that produced it, and sending it to any other endpoint, model or
+engine is refused with `replay_mismatch`.
+
 Select `Config.Provider`, `Model`, and optional `Effort`; set `Provider.CLI`'s
 binary and native login home paths when needed. The library does not copy credentials or fall back
 to API billing. For CLI engines, Claude retains native login/keychain resolution,
