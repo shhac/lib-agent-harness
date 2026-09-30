@@ -32,6 +32,10 @@ func LinkCount(info fs.FileInfo) uint64 {
 	}
 	return 0
 }
+
+// NotRegular reports an open refused because the name isn't a regular
+// file. Opening a Unix socket fails with EOPNOTSUPP here, where Linux says
+// ENXIO.
 func NotRegular(err error) bool {
-	return err == unix.ENXIO || err == unix.ENODEV || err == unix.ENOTDIR
+	return err == unix.ENXIO || err == unix.ENODEV || err == unix.ENOTDIR || err == unix.EOPNOTSUPP
 }
