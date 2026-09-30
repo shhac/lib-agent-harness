@@ -3,6 +3,7 @@ package catalog
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -25,6 +26,10 @@ func TestMain(m *testing.M) {
 		switch arg {
 		case "app-server":
 			os.Exit(runCatalogFixture("codex", os.Getenv("CODEX_HOME")))
+		case "--bundled":
+			// Codex's catalog baked into the binary, read beside the model list.
+			fmt.Println(`{"models":[{"slug":"fixture-codex-model","context_window":123456}]}`)
+			os.Exit(0)
 		case "--input-format":
 			os.Exit(runCatalogFixture("claude", os.Getenv("CLAUDE_CONFIG_DIR")))
 		case "--no-leader":

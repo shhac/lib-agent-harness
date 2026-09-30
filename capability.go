@@ -269,6 +269,7 @@ var supportTable = map[supportKey]Capability{
 
 	{Codex, Models, Available}:                native,
 	{Codex, Models, Effort}:                   native,
+	{Codex, Models, ContextWindow}:            {Unknown, "the window the installed CLI's bundled model catalog states; the account's service may differ"},
 	{Claude, Models, Available}:               native,
 	{Claude, Models, Effort}:                  native,
 	{Grok, Models, Available}:                 native,

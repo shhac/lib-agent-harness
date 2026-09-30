@@ -105,7 +105,7 @@ func TestSupportIsTheOnlyEngineQuestion(t *testing.T) {
 	if Support(OpenAICompatible, Models, Effort).Usable() || !Support(Grok, Models, Effort).Usable() {
 		t.Fatal("effort listing claims changed")
 	}
-	if Support(Grok, Models, ContextWindow).Availability != Native || Support(OpenAICompatible, Models, ContextWindow).Availability != Unknown || Support(Codex, Models, ContextWindow).Usable() {
+	if Support(Grok, Models, ContextWindow).Availability != Native || Support(OpenAICompatible, Models, ContextWindow).Availability != Unknown || Support(Codex, Models, ContextWindow).Availability != Unknown {
 		t.Fatal("context window listing claims changed")
 	}
 	grokCompletion := Native

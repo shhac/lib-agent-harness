@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 )
@@ -119,4 +120,42 @@ func addCodexPage(catalog *catalogBuilder, raw json.RawMessage) (string, error) 
 		}
 	}
 	return result.NextCursor, nil
+}
+
+// addCodexWindows fills each model's context window from the catalog bundled
+// in the installed binary, which the app-server's model list does not carry.
+// It is the binary's statement, not the account's: the service may differ.
+// A catalog that cannot be read leaves the windows unstated rather than
+// failing a discovery that has already succeeded.
+func (d discoverer) addCodexWindows(ctx context.Context, command invocation, models []Model) {
+	bundled := invocation{bin: command.bin, args: []string{"debug", "models", "--bundled"}, env: command.env}
+	var windows map[string]int64
+	_ = d.run(ctx, bundled, func(reader io.Reader, _ io.Writer) error {
+		windows = readCodexWindows(io.LimitReader(reader, outputLimit))
+		return nil
+	})
+	for i := range models {
+		if window := windows[models[i].ID]; window > 0 && models[i].ContextWindow == 0 {
+			models[i].ContextWindow = window
+		}
+	}
+}
+
+func readCodexWindows(reader io.Reader) map[string]int64 {
+	var catalog struct {
+		Models []struct {
+			Slug   string `json:"slug"`
+			Window int64  `json:"context_window"`
+		} `json:"models"`
+	}
+	if json.NewDecoder(reader).Decode(&catalog) != nil {
+		return nil
+	}
+	windows := make(map[string]int64, len(catalog.Models))
+	for _, m := range catalog.Models {
+		if m.Slug != "" && m.Window > 0 {
+			windows[m.Slug] = m.Window
+		}
+	}
+	return windows
 }

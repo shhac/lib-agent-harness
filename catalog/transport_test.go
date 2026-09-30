@@ -83,6 +83,9 @@ func TestTransportInvokesEachEngineWithItsOwnInvocation(t *testing.T) {
 			if len(models) != 1 || models[0].ID != tc.wantModel {
 				t.Fatalf("unexpected catalog: %+v", models)
 			}
+			if tc.engine == harness.Codex && models[0].ContextWindow != 123456 {
+				t.Fatalf("the bundled catalog's window was not joined: %+v", models)
+			}
 			if time.Since(started) > 10*time.Second {
 				t.Fatal("discovery waited for the child instead of stopping it")
 			}

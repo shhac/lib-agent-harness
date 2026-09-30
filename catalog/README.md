@@ -8,7 +8,7 @@ refused before any process or request.
 
 | Engine | Source | Efforts | Context window |
 | --- | --- | --- | --- |
-| Codex | `app-server` `initialize` then paginated `model/list` (hidden models left out) | stated | not stated |
+| Codex | `app-server` `initialize` then paginated `model/list` (hidden models left out) | stated | `context_window` from `debug models --bundled`: the binary's own catalog, which the account's service may differ from |
 | Claude | stream-json `initialize` control request, under the restricted flag set completion uses | stated per model where Claude lists them | not stated |
 | Grok | `grok agent --no-leader stdio`: one ACP `initialize`, reading `result._meta.modelState` | stated where `supportsReasoningEffort` is present | `totalContextTokens` |
 | OpenAI-compatible | `GET {BaseURL}/models`, one page | never listed | `context_window` (Vercel AI Gateway) or `context_length` (OpenRouter) when numeric |

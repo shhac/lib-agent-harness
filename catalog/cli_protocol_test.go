@@ -225,3 +225,37 @@ func TestGrokCatalogFailsClosed(t *testing.T) {
 		t.Fatalf("unbounded stream: %v", err)
 	}
 }
+
+// The app-server's model list states no window; the catalog bundled in the
+// same binary does, and discovery joins it by model ID. A bundled catalog that
+// cannot be read leaves the windows unstated without failing discovery.
+func TestCodexWindowsComeFromTheBundledCatalog(t *testing.T) {
+	for name, tc := range map[string]struct {
+		bundled string
+		want    int64
+	}{
+		"stated":     {`{"models":[{"slug":"test-thinker","context_window":272000,"max_context_window":872000},{"slug":"unlisted","context_window":1}]}`, 272000},
+		"unreadable": {`secret`, 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var ran [][]string
+			d := testDiscoverer(func(_ context.Context, command invocation, talk exchange) error {
+				ran = append(ran, command.args)
+				if len(command.args) > 0 && command.args[0] == "debug" {
+					return talk(strings.NewReader(tc.bundled), io.Discard)
+				}
+				return talk(strings.NewReader(codexCatalogFixture), io.Discard)
+			})
+			models, err := d.discover(context.Background(), cliProvider(harness.Codex, testBinary(t), t.TempDir()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if models[0].ContextWindow != tc.want || models[1].ContextWindow != 0 {
+				t.Fatalf("%+v", models)
+			}
+			if len(ran) != 2 || !reflect.DeepEqual(ran[1], []string{"debug", "models", "--bundled"}) {
+				t.Fatalf("ran %q", ran)
+			}
+		})
+	}
+}

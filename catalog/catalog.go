@@ -113,6 +113,9 @@ func (d discoverer) list(ctx context.Context, p harness.Provider) ([]Model, erro
 		models, err = read(reader, writer)
 		return err
 	})
+	if err == nil && p.Engine == harness.Codex {
+		d.addCodexWindows(ctx, command, models)
+	}
 	return models, err
 }
 
