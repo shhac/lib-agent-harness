@@ -162,6 +162,10 @@ func TestOpenAIChatRejectsIncompleteOrAmbiguousResponses(t *testing.T) {
 		{"filtered", chatBody(chatChoice(`"content_filter"`, text)), "content_filtered", true},
 		{"refusal", chatBody(chatChoice(`"stop"`, `{"role":"assistant","content":null,"refusal":"secret refusal"}`)), "model_refusal", true},
 		{"no choices", chatBody(), "unexpected_choice_count", true},
+		// Some gateways report a failure inside a 200 response. Without a status
+		// only an allowlisted string code classifies it, and nothing retries it.
+		{"embedded error", `{"error":{"code":429,"message":"secret"},"usage":{"prompt_tokens":5,"completion_tokens":2}}`, "provider_error", true},
+		{"embedded quota", `{"error":{"code":"insufficient_quota","message":"secret"},"usage":{"prompt_tokens":5,"completion_tokens":2}}`, "insufficient_quota", true},
 		{"two choices", chatBody(chatChoice(`"stop"`, text), chatChoice(`"stop"`, text)), "unexpected_choice_count", true},
 		{"missing message", chatBody(`{"index":0,"finish_reason":"stop"}`), "malformed_response", true},
 		{"non-assistant role", chatBody(chatChoice(`"stop"`, `{"role":"user","content":"secret"}`)), "malformed_response", true},
@@ -188,6 +192,8 @@ func TestOpenAIChatRejectsIncompleteOrAmbiguousResponses(t *testing.T) {
 				cause = harness.CauseOutputTruncated
 			case "content_filtered", "model_refusal":
 				cause = harness.CauseContentFiltered
+			case "insufficient_quota":
+				cause = harness.CauseQuotaExhausted
 			}
 			failure := requireAPIFailure(t, err, PhaseResponse, cause, tc.code)
 			if failure.Retryable() || !reflect.DeepEqual(reply, Message{}) {

@@ -210,18 +210,45 @@ func StatusFailure(response *http.Response) *Failure {
 	return failure
 }
 
+// EmbeddedFailure classifies an error object a provider returned inside a
+// successful HTTP response, as some gateways do. There is no status to trust,
+// so only an allowlisted string code classifies it, and nothing makes it
+// retryable: a numeric code there is not an HTTP status.
+func EmbeddedFailure(errorObject json.RawMessage) *Failure {
+	failure := ResponseFailure("provider_error")
+	switch code := allowlistedCode(errorObject); code {
+	case "model_not_found":
+		failure.Cause, failure.Code = harness.CauseModelUnavailable, code
+	case "context_length_exceeded":
+		failure.Cause, failure.Code = harness.CauseContextLimit, code
+	case "insufficient_quota":
+		failure.Cause, failure.Code = harness.CauseQuotaExhausted, code
+	}
+	return failure
+}
+
 func errorCode(body io.Reader) string {
 	var envelope struct {
-		Error struct {
-			Code json.RawMessage `json:"code"`
-			Type json.RawMessage `json:"type"`
-		} `json:"error"`
+		Error json.RawMessage `json:"error"`
 	}
 	data, err := io.ReadAll(io.LimitReader(body, errorBodyLimit))
 	if err != nil || json.Unmarshal(data, &envelope) != nil {
 		return ""
 	}
-	for _, raw := range []json.RawMessage{envelope.Error.Code, envelope.Error.Type} {
+	return allowlistedCode(envelope.Error)
+}
+
+// allowlistedCode reads an error object's code or type, and returns it only
+// when it is one this library classifies.
+func allowlistedCode(errorObject json.RawMessage) string {
+	var fields struct {
+		Code json.RawMessage `json:"code"`
+		Type json.RawMessage `json:"type"`
+	}
+	if json.Unmarshal(errorObject, &fields) != nil {
+		return ""
+	}
+	for _, raw := range []json.RawMessage{fields.Code, fields.Type} {
 		var value string
 		if json.Unmarshal(raw, &value) != nil {
 			continue

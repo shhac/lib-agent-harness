@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/apihttp"
 	"github.com/shhac/lib-agent-harness/internal/jsonschema"
 )
 
@@ -121,6 +122,8 @@ func chatMessages(messages []Message) ([]chatMessage, bool) {
 }
 
 type chatCompletionResponse struct {
+	// Error is a failure some gateways report inside a 200 response.
+	Error   json.RawMessage `json:"error"`
 	Choices []struct {
 		FinishReason *string `json:"finish_reason"`
 		Message      *struct {
@@ -148,6 +151,9 @@ func parseChatCompletion(data []byte, tools []Tool) (Result, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	if decoder.Decode(&response) != nil || decoder.Decode(new(any)) != io.EOF {
 		return accounting, apiResponseFailure("malformed_response")
+	}
+	if len(response.Error) > 0 && string(response.Error) != "null" {
+		return accounting, apiFailure(apihttp.EmbeddedFailure(response.Error))
 	}
 	if len(response.Choices) != 1 {
 		return accounting, apiResponseFailure("unexpected_choice_count")
