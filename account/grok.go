@@ -9,10 +9,10 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
-	"strings"
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/nativecli"
 	"github.com/shhac/lib-agent-harness/process"
 )
 
@@ -25,36 +25,6 @@ const (
 	// agent's capabilities, which is the largest frame the probe reads.
 	grokFrameLimit = 4 << 20
 )
-
-// grokReducedTelemetryEnvironment opts the probe out of Grok's client
-// telemetry and its import of other harnesses' local configuration, as
-// native.GrokTelemetryReduced does for a run.
-var grokReducedTelemetryEnvironment = []string{
-	"GROK_TELEMETRY_ENABLED=0",
-	"GROK_TELEMETRY_MIXPANEL_ENABLED=0",
-	"GROK_TELEMETRY_TRACE_UPLOAD=0",
-	"GROK_FEEDBACK_ENABLED=0",
-	"GROK_DISABLE_AUTOUPDATER=1",
-	"GROK_MEMORY=0",
-	"GROK_CURSOR_SKILLS_ENABLED=0",
-	"GROK_CURSOR_RULES_ENABLED=0",
-	"GROK_CURSOR_AGENTS_ENABLED=0",
-	"GROK_CURSOR_MCPS_ENABLED=0",
-	"GROK_CURSOR_HOOKS_ENABLED=0",
-	"GROK_CLAUDE_SKILLS_ENABLED=0",
-	"GROK_CLAUDE_RULES_ENABLED=0",
-	"GROK_CLAUDE_AGENTS_ENABLED=0",
-	"GROK_CLAUDE_MCPS_ENABLED=0",
-	"GROK_CLAUDE_HOOKS_ENABLED=0",
-	"GROK_CLAUDE_SESSIONS_ENABLED=0",
-	"GROK_CURSOR_SESSIONS_ENABLED=0",
-	"GROK_CODEX_SKILLS_ENABLED=0",
-	"GROK_CODEX_RULES_ENABLED=0",
-	"GROK_CODEX_AGENTS_ENABLED=0",
-	"GROK_CODEX_MCPS_ENABLED=0",
-	"GROK_CODEX_HOOKS_ENABLED=0",
-	"GROK_CODEX_SESSIONS_ENABLED=0",
-}
 
 // inspectGrok asks Grok's agent protocol for the login's subscription. It
 // initializes the protocol and sends one extension request; it never creates
@@ -87,23 +57,9 @@ func inspectGrok(ctx context.Context, p harness.Provider, binary string) (harnes
 func grokEnvironment(home string) []string {
 	env := os.Environ()
 	if home != "" {
-		env = setEnv(env, "GROK_HOME", home)
+		env = nativecli.Override(env, "GROK_HOME="+home)
 	}
-	for _, entry := range grokReducedTelemetryEnvironment {
-		key, value, _ := strings.Cut(entry, "=")
-		env = setEnv(env, key, value)
-	}
-	return env
-}
-
-func setEnv(env []string, key, value string) []string {
-	out := make([]string, 0, len(env)+1)
-	for _, entry := range env {
-		if name, _, _ := strings.Cut(entry, "="); name != key {
-			out = append(out, entry)
-		}
-	}
-	return append(out, key+"="+value)
+	return nativecli.Override(env, nativecli.GrokReducedTelemetry...)
 }
 
 // grokExchange runs the contained agent for one handshake and one request,

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/nativecli"
 	"github.com/shhac/lib-agent-harness/session"
 )
 
@@ -53,7 +54,7 @@ func grokFixture() int {
 	if home == "" {
 		return 10
 	}
-	for _, entry := range grokReducedTelemetryEnvironment {
+	for _, entry := range nativecli.GrokReducedTelemetry {
 		key, value, _ := strings.Cut(entry, "=")
 		if os.Getenv(key) != value {
 			return 11
