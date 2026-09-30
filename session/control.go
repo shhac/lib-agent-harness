@@ -73,6 +73,7 @@ func (s *Session) startTurnScoped(lifetime, request context.Context, in Input) (
 	s.mu.Unlock()
 	switch s.options.Provider.Engine {
 	case harness.Codex:
+		s.syncLogin()
 		err = s.startCodexTurn(request, t, ref, in)
 	case harness.Grok:
 		err = s.startGrokTurn(request, lifetime, t, ref, in)

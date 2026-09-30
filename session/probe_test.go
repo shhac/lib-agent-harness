@@ -147,7 +147,7 @@ func TestRestrictedStartRecordsTheHarnessAndReleaseClearsIt(t *testing.T) {
 // A refresh the harness made to its runtime copy goes back to the source once
 // the harness is gone, so the operator's own CLI and the next worker share it.
 func TestReleaseReturnsARefreshedLoginToItsSource(t *testing.T) {
-	o, _ := probedOptions(t, harness.Codex, fakeListed, fakeRefreshEnv+"=refreshed-login")
+	o, _ := probedOptions(t, harness.Codex, fakeListed, fakeRefreshEnv+"="+string(syntheticFile(codexCredentialFile, "refreshed-login")))
 	ctx := probeContext(t)
 	s, err := Start(ctx, o)
 	if err != nil {
@@ -169,10 +169,51 @@ func TestReleaseReturnsARefreshedLoginToItsSource(t *testing.T) {
 	}
 }
 
+// A refresh must reach the source while the harness is still running, not
+// only when it is released: another session sharing the login would otherwise
+// refresh with the same single-use token, which codex-cli 0.159.0 reports as
+// refresh_token_reused. A turn's end pushes it back, and a turn's start pulls
+// in what another session pushed.
+func TestTurnsCarryARefreshBetweenRunningSessions(t *testing.T) {
+	o, _ := probedOptions(t, harness.Codex, fakeListed, fakeRefreshEnv+"="+string(syntheticFile(codexCredentialFile, "refreshed-login")))
+	ctx := probeContext(t)
+	s, err := Start(ctx, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _, _ = s.Release(ctx) }()
+	turn, err := s.StartTurn(ctx, Input{"hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range turn.Events() {
+	}
+	if _, err = turn.Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := credentialText(t, o.Provider.CLI.Home); got != "refreshed-login" {
+		t.Fatalf("a running session kept its refresh to itself: %q", got)
+	}
+	// Another session refreshed next; this one takes it before its next turn.
+	putSynthetic(t, o.Provider.CLI.Home, codexCredentialFile, "sibling-refresh")
+	turn, err = s.StartTurn(ctx, Input{"again"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range turn.Events() {
+	}
+	if _, err = turn.Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := credentialText(t, o.RuntimeHome); got != "sibling-refresh" {
+		t.Fatalf("a running session kept a spent token: %q", got)
+	}
+}
+
 // An operator who logs in again while a worker runs has made a newer login. The
 // worker's refresh of the older one must not replace it.
 func TestReleaseLeavesANewerSourceLoginAlone(t *testing.T) {
-	o, _ := probedOptions(t, harness.Codex, fakeListed, fakeRefreshEnv+"=refreshed-login")
+	o, _ := probedOptions(t, harness.Codex, fakeListed, fakeRefreshEnv+"="+string(syntheticFile(codexCredentialFile, "refreshed-login")))
 	ctx := probeContext(t)
 	s, err := Start(ctx, o)
 	if err != nil {

@@ -226,6 +226,9 @@ func (s *Session) codexTurnCompleted(t *Turn, p map[string]json.RawMessage) {
 		s.emit(t, Event{Kind: "usage", Usage: &accounting})
 	}
 	s.emit(t, Event{Kind: "status", Status: turn.Status})
+	// Before the caller hears the turn ended, so a refresh made during it has
+	// reached the source by the time anything else is started.
+	s.syncLogin()
 	t.finish(turn.Status, err)
 }
 

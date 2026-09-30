@@ -433,7 +433,14 @@ result, a model, an error or a log; no API key is substituted for it. Which copy
 is authoritative is decided by digest: a source that still matches what the home
 was given has not changed, so a refresh the harness made wins; a source that has
 changed is a new login and wins instead; a source that has been removed is a
-logout and is left removed. Restricted Claude sessions use the selected native
+logout and is left removed. A refresh reaches the source as each turn ends, and
+a running session takes another's refresh before its next turn, because a Codex
+refresh token is single use: two sessions refreshing copies of one login spend
+it twice, and the second is refused (`refresh_token_reused`). A running session
+is never moved to a different account's login, and a copy holding a refresh the
+source did not take is left for the next launch to resolve. Writes to the
+source are serialized by a `.agent-harness-login.lock` beside it; the
+operator's own CLI does not take it. Restricted Claude sessions use the selected native
 login and Claude Code's restricted mode; they do not use this credential-copy route.
 
 Your bridge command is your own binary re-executed as the harness's tool server.

@@ -15,9 +15,18 @@ import (
 
 func putSynthetic(t *testing.T, dir, name, text string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, name), syntheticFile(name, text), 0600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// syntheticFile gives a synthetic Codex login the shape of a real auth.json, a
+// JSON object, which is all the library requires of one.
+func syntheticFile(name, text string) []byte {
+	if name != codexCredentialFile {
+		return []byte(text)
+	}
+	return mustMarshal(map[string]string{"synthetic": text})
 }
 
 // privateDir mirrors what an application supplies: a directory only its owner

@@ -1,7 +1,9 @@
 package session
 
 import (
+	"encoding/json"
 	"errors"
+	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/sharedlogin"
@@ -46,6 +48,52 @@ func codexRuntime(source, runtime string) sharedlogin.Home {
 		Runtime:    runtime,
 		Credential: codexCredentialFile,
 		Files:      map[string][]byte{codexConfigFile: []byte(runtimeConfig)},
+		Valid:      codexLoginValid,
+		Account:    codexAccount,
+	}
+}
+
+// codexLoginValid accepts only a whole auth.json. Codex may rewrite the file
+// in place, so a copy taken mid-write would otherwise be shared.
+func codexLoginValid(data []byte) bool {
+	var login map[string]json.RawMessage
+	return json.Unmarshal(data, &login) == nil && login != nil
+}
+
+// codexAccount is the ChatGPT account a login belongs to; empty for an API
+// key login, which names none.
+func codexAccount(data []byte) string {
+	var login struct {
+		Tokens *struct {
+			Account string `json:"account_id"`
+		} `json:"tokens"`
+	}
+	if json.Unmarshal(data, &login) != nil || login.Tokens == nil {
+		return ""
+	}
+	return login.Tokens.Account
+}
+
+// syncLogin reconciles a running Codex session's login with its source home
+// between turns (see sharedlogin.Home.Sync), so a refresh one session makes
+// reaches the others before they spend the same refresh token. A failure is
+// reported, never fatal to the turn: the session still holds a login.
+func (s *Session) syncLogin() {
+	o := s.options
+	if o.Provider.Engine != harness.Codex || o.RuntimeHome == "" || (o.Restriction == nil && o.Sandbox == nil) {
+		return
+	}
+	err := codexRuntime(o.Provider.CLI.Home, o.RuntimeHome).Sync()
+	var shared *sharedlogin.Error
+	if err == nil || (errors.As(err, &shared) && shared.Code == sharedlogin.CodeUnsupported) {
+		return
+	}
+	code := "login_sync_failed"
+	if shared != nil {
+		code = shared.Code
+	}
+	if report := o.OnDiagnostic; report != nil {
+		report(Diagnostic{Engine: harness.Codex, Stage: "login_sync", Code: code, At: time.Now().UTC()})
 	}
 }
 

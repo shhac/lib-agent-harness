@@ -4,6 +4,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -22,6 +23,10 @@ func credentialText(t *testing.T, dir string) string {
 	raw, err := os.ReadFile(filepath.Join(dir, codexCredentialFile))
 	if err != nil {
 		t.Fatal(err)
+	}
+	var login struct{ Synthetic *string }
+	if json.Unmarshal(raw, &login) == nil && login.Synthetic != nil {
+		return *login.Synthetic
 	}
 	return string(raw)
 }

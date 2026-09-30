@@ -34,6 +34,12 @@ const Record = "login.shared"
 
 const lockFile = "login.lock"
 
+// sourceLockFile serializes every library process writing to one source home,
+// whichever runtime home it serves. The runtime lock alone lets two workers
+// check the source and then both write it. The operator's own CLI does not
+// take it.
+const sourceLockFile = ".agent-harness-login.lock"
+
 // maxCredential bounds a credential file; anything larger is not one.
 const maxCredential = 1 << 20
 
@@ -68,6 +74,9 @@ type Home struct {
 	// Valid, when set, must accept a credential before it is copied either
 	// way, so a file caught halfway through a rewrite is never shared.
 	Valid func([]byte) bool
+	// Account, when set, names the account a credential belongs to. Sync never
+	// moves a running harness onto a different account's login.
+	Account func([]byte) string
 }
 
 // Prepare makes the runtime home, writes its configuration and shares the
@@ -160,6 +169,32 @@ func (h Home) share() error {
 // was removed since this home was given its credential: a newer login or a
 // logout wins over a worker's copy.
 func (h Home) WriteBack() error {
+	return h.locked(h.writeBack)
+}
+
+// Sync reconciles a running harness's login with the source between its
+// turns. A refresh this home made goes back to the source at once, and a
+// refresh another home made comes in, so no two harnesses keep refreshing
+// copies of one login. That matters because a refresh token may be single
+// use: a second refresh with the same one is refused, and a provider may then
+// revoke the login for everyone sharing it.
+//
+// A pull happens only when this home's copy is still exactly what it was
+// given, the source changed, and both belong to the same account: a harness
+// is never moved to another account mid-conversation, and a copy holding a
+// refresh the source did not take is left for the next launch to resolve.
+func (h Home) Sync() error {
+	return h.locked(func() error {
+		if err := h.writeBack(); err != nil {
+			return err
+		}
+		return h.pull()
+	})
+}
+
+// locked runs fn holding the runtime home's lock, then the source's. Every
+// process takes them in that order.
+func (h Home) locked(fn func() error) error {
 	if !supported() {
 		return failure(CodeUnsupported)
 	}
@@ -172,6 +207,15 @@ func (h Home) WriteBack() error {
 		return failure(CodeRuntimeUnusable)
 	}
 	defer unlock()
+	unlockSource, err := lock(filepath.Join(h.Source, sourceLockFile))
+	if err != nil {
+		return failure(CodeLoginShare)
+	}
+	defer unlockSource()
+	return fn()
+}
+
+func (h Home) writeBack() error {
 	refreshed, err := h.read(filepath.Join(h.Runtime, h.Credential))
 	if err != nil || refreshed == nil {
 		return err
@@ -197,6 +241,34 @@ func (h Home) WriteBack() error {
 		return failure(CodeLoginShare)
 	}
 	return writeRecord(h.Runtime, refreshedDigest)
+}
+
+func (h Home) pull() error {
+	shared := readRecord(h.Runtime)
+	if shared == nil {
+		return nil
+	}
+	here := filepath.Join(h.Runtime, h.Credential)
+	current, err := h.read(here)
+	if err != nil || current == nil || hex.EncodeToString(digest(current)) != shared.Source {
+		return err
+	}
+	source, err := h.read(filepath.Join(h.Source, h.Credential))
+	if err != nil || source == nil {
+		// A logout is not this running harness's to act on; its next launch is.
+		return err
+	}
+	sourceDigest := digest(source)
+	if hex.EncodeToString(sourceDigest) == shared.Source {
+		return nil
+	}
+	if h.Account != nil && h.Account(source) != h.Account(current) {
+		return nil
+	}
+	if err = writePrivate(here, source); err != nil {
+		return failure(CodeLoginShare)
+	}
+	return writeRecord(h.Runtime, sourceDigest)
 }
 
 // Digest identifies the credential at path without revealing it. A missing
