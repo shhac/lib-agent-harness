@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -99,6 +100,113 @@ func TestOpenAIModelsRequestAndExtensions(t *testing.T) {
 	}
 }
 
+// supported_parameters is read per entry: a value that is not a bounded array
+// of strings leaves that entry's parameters unknown and the rest of the
+// catalog as it was.
+func TestOpenAIModelsRecordSupportedParameters(t *testing.T) {
+	many := make([]string, maxParameters+1)
+	for i := range many {
+		many[i] = fmt.Sprintf(`"p%d"`, i)
+	}
+	for _, tc := range []struct {
+		name  string
+		value string
+		want  []string
+		known bool
+		tools bool
+	}{
+		{"with tools", `"supported_parameters":["temperature","tools","tool_choice"]`, []string{"temperature", "tools", "tool_choice"}, true, true},
+		{"without tools", `"supported_parameters":["temperature","max_tokens"]`, []string{"temperature", "max_tokens"}, true, false},
+		{"empty", `"supported_parameters":[]`, []string{}, true, false},
+		{"null", `"supported_parameters":null`, nil, false, false},
+		{"missing", `"other":1`, nil, false, false},
+		{"string", `"supported_parameters":"tools"`, nil, false, false},
+		{"number inside", `"supported_parameters":["tools",7]`, nil, false, false},
+		{"too many", `"supported_parameters":[` + strings.Join(many, ",") + `]`, nil, false, false},
+		{"most allowed", `"supported_parameters":[` + strings.Join(many[:maxParameters], ",") + `]`, nil, true, false},
+		{"entry too long", `"supported_parameters":["tools","` + strings.Repeat("x", maxParameterBytes+1) + `"]`, nil, false, false},
+		{"longest entry", `"supported_parameters":["` + strings.Repeat("x", maxParameterBytes) + `"]`, []string{strings.Repeat("x", maxParameterBytes)}, true, false},
+		{"empty string", `"supported_parameters":["tools",""]`, nil, false, false},
+		{"duplicates", `"supported_parameters":["tools","seed","tools","seed"]`, []string{"tools", "seed"}, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := respondWith(200, `{"data":[
+				{"id":"before","supported_parameters":["tools"]},
+				{"id":"subject","context_length":8192,`+tc.value+`},
+				{"id":"after","name":"After"}
+			]}`)
+			models, err := discoverAPI(t, api, apiProvider())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(models) != 3 || models[0].ID != "before" || !models[0].ParametersKnown || models[2].Name != "After" || models[2].ParametersKnown {
+				t.Fatalf("the rest of the catalog changed: %+v", models)
+			}
+			subject := models[1]
+			if subject.ID != "subject" || subject.ContextWindow != 8192 {
+				t.Fatalf("%+v", subject)
+			}
+			if subject.ParametersKnown != tc.known || tc.want != nil && !reflect.DeepEqual(subject.Parameters, tc.want) {
+				t.Fatalf("parameters %#v known %v", subject.Parameters, subject.ParametersKnown)
+			}
+			if !tc.known && subject.Parameters != nil {
+				t.Fatalf("unknown parameters kept values: %#v", subject.Parameters)
+			}
+			if tc.name == "most allowed" && len(subject.Parameters) != maxParameters {
+				t.Fatalf("%d parameters", len(subject.Parameters))
+			}
+			if supported, known := SupportsTools(subject); supported != tc.tools || known != tc.known {
+				t.Fatalf("SupportsTools = %v, %v", supported, known)
+			}
+		})
+	}
+}
+
+func TestSupportsTools(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		model            Model
+		supported, known bool
+	}{
+		{"known with tools", Model{ID: "m", Parameters: []string{"seed", "tools"}, ParametersKnown: true}, true, true},
+		{"known without", Model{ID: "m", Parameters: []string{"tool_choice", "seed"}, ParametersKnown: true}, false, true},
+		{"known empty", Model{ID: "m", Parameters: []string{}, ParametersKnown: true}, false, true},
+		{"unknown", Model{ID: "m"}, false, false},
+		// Parameters without ParametersKnown say nothing.
+		{"unknown with values", Model{ID: "m", Parameters: []string{"tools"}}, false, false},
+	} {
+		if supported, known := SupportsTools(tc.model); supported != tc.supported || known != tc.known {
+			t.Errorf("%s: %v, %v", tc.name, supported, known)
+		}
+	}
+}
+
+// Callers cache catalogs. Parameters survive a round trip, and an entry cached
+// before they were recorded decodes as unknown, never as "no tools".
+func TestModelParametersRoundTripAndOldCachesAreUnknown(t *testing.T) {
+	for _, model := range []Model{
+		{ID: "m", Name: "m", Parameters: []string{"tools"}, ParametersKnown: true},
+		{ID: "m", Name: "m", Parameters: []string{}, ParametersKnown: true},
+		{ID: "m", Name: "m"},
+	} {
+		encoded, err := json.Marshal(model)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded Model
+		if err = json.Unmarshal(encoded, &decoded); err != nil || !reflect.DeepEqual(decoded, model) {
+			t.Fatalf("%s decoded as %+v (%v)", encoded, decoded, err)
+		}
+	}
+	var cached Model
+	if err := json.Unmarshal([]byte(`{"id":"m","name":"m","efforts":null,"efforts_known":false,"is_default":true}`), &cached); err != nil {
+		t.Fatal(err)
+	}
+	if _, known := SupportsTools(cached); known {
+		t.Fatalf("an old cached entry claimed parameters: %+v", cached)
+	}
+}
+
 func TestOpenAILoopbackWithoutCredentialSendsNone(t *testing.T) {
 	api := respondWith(200, `{"data":[{"id":"llama"}]}`)
 	p := harness.Provider{Engine: harness.OpenAICompatible, API: harness.API{BaseURL: "http://127.0.0.1:11434/v1", Dialect: harness.OpenAIChatCompletions, Unauthenticated: true}}
@@ -134,6 +242,9 @@ func TestOpenAIDiscoveryFailuresAreTyped(t *testing.T) {
 		{"too many", respondWith(200, `{"data":[`+strings.Join(many, ",")+`]}`), harness.FailureRequest, harness.CauseUnknown, "catalog_limit"},
 		{"echoed", respondWith(200, `{"data":[{"id":"`+testToken+`"}]}`), harness.FailureRequest, harness.CauseUnknown, "credential_echoed"},
 		{"echoed escaped", respondWith(200, `{"data":[{"id":"m","description":"secret-dummy-token-not-real"}]}`), harness.FailureRequest, harness.CauseUnknown, "credential_echoed"},
+		// The escape hides the token from the raw body, so only the decoded
+		// parameter shows it.
+		{"echoed parameter", respondWith(200, `{"data":[{"id":"m","supported_parameters":["tools","secret-dummy-token-not-real"]}]}`), harness.FailureRequest, harness.CauseUnknown, "credential_echoed"},
 		{"connection", &fakeAPI{respond: func(*http.Request) (*http.Response, error) {
 			return nil, errors.New("dial tcp: secret.invalid: " + testToken)
 		}}, harness.FailureRequest, harness.CauseUnknown, "transport_failed"},

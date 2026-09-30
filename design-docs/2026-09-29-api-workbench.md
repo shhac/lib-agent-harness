@@ -1447,14 +1447,29 @@ Its own gaps are these:
    `tools`, so a model without tool support cannot take part:
    - **Detected:** `catalog.Model` gains `Parameters []string` (with
      `ParametersKnown`, like `EffortsKnown`). It is read from each entry's
-     `supported_parameters`, bounded, and only as an array of strings.
-     `parseAPIModels` also keeps reading `context_length`. Pricing is not
-     parsed in this work.
+     `supported_parameters` only as a JSON array of at most 128 non-empty
+     strings of at most 64 bytes each, repeats dropped and order kept; `[]`
+     is known and empty. Null, a missing field, another type or anything over
+     the bound makes that entry's parameters unknown, and the rest of the
+     catalog is still returned. Each parameter is in the credential-echo
+     check. CLI engines leave both unset (unknown). `parseAPIModels` also
+     keeps reading `context_length`. Pricing is not parsed in this work.
    - **Refused:** `catalog.SupportsTools(model)` reports `true`, `false` or
-     unknown. Checking it is the caller's step when it chooses a model,
-     because configuring a session never triggers discovery (the API transports
-     design). crew-assistant refuses a model whose `Parameters` are known and
-     lack `tools`.
+     unknown. Configuring a session never triggers discovery (the API
+     transports design), so the caller passes the entry it chose the model
+     from as `session.Options.CatalogModel`. `normalizeAPI` checks it right
+     after `model_required`: an entry whose `ID` (or non-empty `Resolved`) is
+     not `Model` is `conflicting_options`; one that is known and lacks `tools`
+     is refused with `RefusedModelWithoutTools`
+     (`model_without_tool_calling`, a capability failure) before the runtime
+     home, the transcript lock, any file or any request. No entry, or one
+     with `ParametersKnown` false (including an entry cached before this
+     field existed), is unknown and the session goes ahead: a failed or
+     missing discovery never blocks an explicitly configured model. The
+     entry is read only during normalization, never kept and not in the
+     `Ref` digest. A CLI engine refuses it with `conflicting_options`.
+     Because the check runs in `normalizeAPI`, it covers stage 1's
+     workbench too, ahead of the workbench's own checks.
    - **At request time:** with the typed routing option below,
      `require_parameters: true` asks OpenRouter to route only to providers that
      honour every parameter sent, `tools` included. What OpenRouter answers when
@@ -1575,6 +1590,14 @@ shapes, and the tests use synthetic responses in those shapes:
 2. **Catalog tool support.** Add `catalog.Model.Parameters`/`ParametersKnown`
    from `supported_parameters`, and `SupportsTools`, with fixtures. Update the
    README's Models section.
+
+   **Done (2026-09-30), except the live checks.** Parameters are recorded
+   under the bounds in (4). `session.Options.CatalogModel` carries the
+   caller's entry, and `normalizeAPI` refuses a known model without `tools`
+   with `RefusedModelWithoutTools` before launch, on `Start`, `Open` and
+   `Resume` alike. That also covers the workbench. Unknown goes ahead. The
+   tests use fixtures and an in-process model; OpenRouter's real
+   `supported_parameters` values are among the live checks above.
 3. **Stage 1 (LAH-2).** Add `Options.Workbench` and the `WorkDir` rules, the
    reserved names, `read_file`/`list_files`/`search_files` on `os.Root`, the
    shared file-check package, the `Ref` digest only when set (golden digests

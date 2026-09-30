@@ -190,6 +190,10 @@ for _, m := range models {
     if m.EffortsKnown {
         offer(m.ID, m.Efforts, m.DefaultEffort)
     }
+    // Tool calling, where the endpoint lists the model's parameters.
+    if supported, known := catalog.SupportsTools(m); known && !supported {
+        hide(m.ID) // an API session would be refused
+    }
 }
 ```
 
@@ -197,6 +201,16 @@ Discovery performs no inference and invents no catalog: Codex and Claude read
 their installed CLI's account-aware catalog, Grok its agent protocol's model
 state, and an OpenAI-compatible endpoint its `GET /models`. Efforts are listed
 only where the engine states them.
+
+`m.Parameters` holds the request parameters an endpoint says the model accepts,
+read from OpenRouter's `supported_parameters` (such as `tools`, `seed`).
+`m.ParametersKnown` says the endpoint listed them, so an empty list means
+"none". When it is false, `Parameters` is nil and means only that nothing was
+said. CLI engines never list them. The list is taken only as an array of at most
+128 non-empty strings of at most 64 bytes each, with duplicates dropped.
+Anything else leaves that one model's parameters unknown, and the rest of the
+catalog is still returned. `catalog.SupportsTools(m)` answers whether `tools`
+is listed, and whether that is known at all.
 
 ## Native sessions
 
@@ -299,6 +313,19 @@ s, opened, err := session.Open(ctx, session.Options{
 - **Tools:** only your hosted tools and composed skills exist, because the
   library writes every request. Your handler runs one call at a time, with the
   same closing-tool and settlement rules as restricted CLI sessions.
+- **Models without tool calling:** every session sends tools, so pass the
+  catalog entry you chose the model from as `Options.CatalogModel`. When that
+  entry lists its parameters without `tools`, `Start`, `Open` and `Resume`
+  refuse with an `*UnsupportedError` whose code is
+  `session.RefusedModelWithoutTools` (`model_without_tool_calling`), before
+  any file is written or request sent. With no entry, or one whose
+  `ParametersKnown` is false, the session goes ahead, because unknown is not
+  "no": the library never runs discovery for a session, and a failed
+  discovery never blocks a model you configured. The entry's `ID` (or its
+  `Resolved`) must equal `Model`, otherwise the session is refused with
+  `RefusedConflict`. The entry is advisory and not part of a `Ref`. A model
+  that lists `tools` can still fail mid-run, as a typed turn failure. A CLI
+  engine refuses `CatalogModel`.
 - **Each turn:** the whole history is resent (Chat Completions keeps no server
   state) until the model answers without tool calls, bounded by
   `Options.Loop`, which also carries an optional per-response `MaxOutputTokens`

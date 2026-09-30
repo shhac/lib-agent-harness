@@ -39,6 +39,29 @@ type Model struct {
 	IsDefault bool `json:"is_default"`
 	// ContextWindow is the stated window in tokens; zero means not stated.
 	ContextWindow int64 `json:"context_window,omitempty"`
+	// Parameters are the request parameters the endpoint says the model
+	// accepts, such as "tools", as OpenRouter's supported_parameters lists
+	// them. ParametersKnown says the endpoint stated them: an empty Parameters
+	// is then "none"; without it, Parameters is nil and means only that the
+	// endpoint did not say. CLI engines never state them.
+	Parameters      []string `json:"parameters"`
+	ParametersKnown bool     `json:"parameters_known"`
+}
+
+// SupportsTools reports whether the model accepts tool calling, as its
+// catalog entry states it. known is false when the entry does not list its
+// parameters; supported is then false too and means nothing. It reads only
+// the entry and never runs discovery.
+func SupportsTools(m Model) (supported, known bool) {
+	if !m.ParametersKnown {
+		return false, false
+	}
+	for _, parameter := range m.Parameters {
+		if parameter == "tools" {
+			return true, true
+		}
+	}
+	return false, true
 }
 
 // Effort is one reasoning effort a model accepts.

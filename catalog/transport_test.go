@@ -83,6 +83,10 @@ func TestTransportInvokesEachEngineWithItsOwnInvocation(t *testing.T) {
 			if len(models) != 1 || models[0].ID != tc.wantModel {
 				t.Fatalf("unexpected catalog: %+v", models)
 			}
+			// No CLI states request parameters, so tool support is unknown.
+			if _, known := SupportsTools(models[0]); known || models[0].ParametersKnown || models[0].Parameters != nil {
+				t.Fatalf("a CLI catalog claimed parameters: %+v", models[0])
+			}
 			if tc.engine == harness.Codex && models[0].ContextWindow != 123456 {
 				t.Fatalf("the bundled catalog's window was not joined: %+v", models)
 			}

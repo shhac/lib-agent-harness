@@ -22,6 +22,17 @@ accepts. When it is false, `Efforts` is nil and means only that the engine did
 not say, not that the model takes none. `DefaultEffort`, `IsDefault` and
 `ContextWindow` are likewise only what the engine stated.
 
+`Model.Parameters` and `Model.ParametersKnown` work the same way for the
+request parameters an OpenAI-compatible endpoint lists per model in
+`supported_parameters` (OpenRouter does). They are taken only as an array of at
+most 128 non-empty strings of at most 64 bytes each, repeats dropped and order
+kept; `[]` is known and empty. Null, a missing field, another type or a longer
+list leaves that model's parameters unknown, never failing the catalog. CLI
+engines never list them. Each parameter is included in the credential-echo
+check. `SupportsTools(m)` reports whether `tools` is listed, and whether that
+is known; `session.Options.CatalogModel` uses it to refuse a model without tool
+calling before launch.
+
 CLI children get the same allowlisted environment as `completion`: operating
 context and the selected login home (`CODEX_HOME`, `CLAUDE_CONFIG_DIR`,
 `GROK_HOME`), never provider API keys. Grok also gets the reduced-telemetry

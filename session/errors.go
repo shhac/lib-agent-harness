@@ -84,12 +84,16 @@ const (
 	// restriction beside a sandbox, or a policy a sandbox or restriction owns.
 	RefusedConflict      = "conflicting_options"
 	RefusedModelRequired = "model_required"
-	RefusedSandboxRead   = "sandbox_read_path_invalid"
-	RefusedSandboxTool   = "sandbox_tool_unsupported"
-	RefusedNotConfigured = "not_configured"
-	RefusedNotNative     = "not_native"
-	RefusedMethodMissing = "method_unavailable"
-	RefusedNotOffered    = "not_offered"
+	// RefusedModelWithoutTools: Options.CatalogModel lists the model's request
+	// parameters and "tools" is not among them, so it cannot take the tools
+	// every API session sends.
+	RefusedModelWithoutTools = "model_without_tool_calling"
+	RefusedSandboxRead       = "sandbox_read_path_invalid"
+	RefusedSandboxTool       = "sandbox_tool_unsupported"
+	RefusedNotConfigured     = "not_configured"
+	RefusedNotNative         = "not_native"
+	RefusedMethodMissing     = "method_unavailable"
+	RefusedNotOffered        = "not_offered"
 	// RefusedKeychainUnavailable: the engine's login lives in a keychain that
 	// is locked, so launching it would raise an unlock prompt.
 	RefusedKeychainUnavailable = harness.CodeKeychainUnavailable
@@ -100,7 +104,7 @@ const (
 func refusalFamily(code string) harness.Family {
 	switch code {
 	case RefusedEngine, RefusedOtherEnginePolicy, RefusedEnvManaged, RefusedConflict, RefusedModelRequired,
-		RefusedSandboxTool, RefusedNotNative, RefusedMethodMissing, RefusedNotOffered:
+		RefusedModelWithoutTools, RefusedSandboxTool, RefusedNotNative, RefusedMethodMissing, RefusedNotOffered:
 		return harness.FailureCapability
 	}
 	return harness.FailurePreflight

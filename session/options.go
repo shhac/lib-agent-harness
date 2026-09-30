@@ -32,6 +32,9 @@ func normalize(o Options) (Options, error) {
 	if o.Loop != (Loop{}) {
 		return o, refuse(o, "loop", RefusedOtherEnginePolicy, "Loop bounds the library's own agent loop, which only an OpenAI-compatible session runs; leave it unset")
 	}
+	if o.CatalogModel != nil {
+		return o, refuse(o, "model", RefusedConflict, "CatalogModel is checked only for an OpenAI-compatible session; leave it unset for a CLI engine")
+	}
 	o, err := normalizePaths(o)
 	if err != nil {
 		return o, err

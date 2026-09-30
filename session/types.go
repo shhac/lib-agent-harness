@@ -12,6 +12,7 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/catalog"
 	"github.com/shhac/lib-agent-harness/internal/claudeproto"
 )
 
@@ -219,6 +220,17 @@ type Options struct {
 	// so every session that sets it is refused with RefusedNotOffered. When
 	// set, it and WorkDir are part of a Ref.
 	Workbench *Workbench
+	// CatalogModel is the catalog entry the caller chose Model from, as
+	// catalog.Discover returned it, or nil. It is advisory evidence the caller
+	// already has: the library never runs discovery for a session. An
+	// OpenAI-compatible session always sends tools, so when the entry lists
+	// its parameters (ParametersKnown) without "tools", Start and Resume
+	// refuse with RefusedModelWithoutTools before any file or request. An
+	// entry that does not list them, or no entry, is unknown, and the session
+	// goes ahead. Its ID, or its Resolved when stated, must equal Model. It
+	// is read only while the options are checked, so it is not part of a Ref;
+	// a CLI engine refuses it.
+	CatalogModel *catalog.Model
 	// complete replaces completion.Complete for synthetic tests.
 	complete modelCall
 }

@@ -35,6 +35,7 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/catalog"
 	"github.com/shhac/lib-agent-harness/completion"
 	"github.com/shhac/lib-agent-harness/internal/skills"
 )
@@ -198,6 +199,11 @@ func normalizeAPI(o Options) (Options, error) {
 	case policySet(o.Policy):
 		return o, refuse(o, "policy", RefusedOtherEnginePolicy, "an API session reads no native policy; leave Policy unset")
 	}
+	if err := checkCatalogModel(o); err != nil {
+		return o, err
+	}
+	// The entry is evidence for this check only; the session keeps no copy.
+	o.CatalogModel = nil
 	if code := o.Provider.API.EffortProblem(o.Effort); code != "" {
 		return o, refuse(o, "effort", code, "the effort cannot be sent to this endpoint as configured")
 	}
@@ -226,6 +232,24 @@ func normalizeAPI(o Options) (Options, error) {
 		return o, err
 	}
 	return normalizeWorkbench(o)
+}
+
+// checkCatalogModel refuses a model whose catalog entry lists its parameters
+// without "tools": every API session sends tools, the caller's and any
+// workbench's, so it would fail on its first request. An entry that does not
+// list them is unknown and goes ahead, as does a session without one.
+func checkCatalogModel(o Options) error {
+	entry := o.CatalogModel
+	if entry == nil {
+		return nil
+	}
+	if entry.ID != o.Model && (entry.Resolved == "" || entry.Resolved != o.Model) {
+		return refuse(o, "model", RefusedConflict, "CatalogModel describes another model: its ID or Resolved must equal Model")
+	}
+	if supported, known := catalog.SupportsTools(*entry); known && !supported {
+		return refuse(o, "model", RefusedModelWithoutTools, "the model's catalog entry lists its supported parameters without 'tools', and an API session always sends tools; choose a model that lists tool calling")
+	}
+	return nil
 }
 
 func policySet(p Policy) bool {
