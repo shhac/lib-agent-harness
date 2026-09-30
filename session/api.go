@@ -3,14 +3,16 @@ package session
 // Sessions over an OpenAI-compatible endpoint. An endpoint is only a model, so
 // the library is the agent: each turn calls the model through completion's
 // transport, runs every proposed call through the caller's handler one at a
-// time, answers the library's skill calls, and repeats until the model answers
-// without calls. The Session, Turn, Event and Result shapes are the CLIs'.
+// time, answers the library's own skill and workbench calls, and repeats until
+// the model answers without calls. The Session, Turn, Event and Result shapes
+// are the CLIs'.
 //
-// Only the caller's hosted tools and the library's skill tools exist. The
+// Only the caller's hosted tools, the library's skill tools and, with a
+// Workbench (not offered yet), the library's workbench tools exist. The
 // library writes every request itself, so the restricted surface holds by
-// construction rather than by probe, and no bridge is involved: the handler is
-// called directly, under the same admission, serialization, closing-tool and
-// settlement rules as a hosted channel.
+// construction rather than by probe, and no bridge is involved: the handlers
+// are called directly, under the same admission, serialization, closing-tool
+// and settlement rules as a hosted channel.
 //
 // The conversation lives in RuntimeHome/sessions/<id>/transcript.jsonl, an
 // append-only record synced after every write: the user's input, each model
@@ -156,11 +158,16 @@ func stateError(code string) *StateError {
 
 // apiSession is the library's side of a session whose loop it runs.
 type apiSession struct {
-	store    *transcript
-	complete modelCall
-	tools    []completion.Tool
-	system   string
-	recovery Recovery
+	store *transcript
+	// workspace is the workbench's root, nil without one.
+	workspace *workspace
+	// resultLimit bounds every answer to a call the model sees, as the host's
+	// MaxResultBytes does for the answers it produces.
+	resultLimit int
+	complete    modelCall
+	tools       []completion.Tool
+	system      string
+	recovery    Recovery
 
 	mu        sync.Mutex
 	records   []record
@@ -184,7 +191,7 @@ func normalizeAPI(o Options) (Options, error) {
 		return o, &UnsupportedError{Engine: o.Provider.Engine, Operation: "sandbox", Code: RefusedNotOffered, Capability: harness.Support(o.Provider.Engine, harness.Session, harness.Sandbox)}
 	case o.Model == "":
 		return o, refuse(o, "model", RefusedModelRequired, "an API session requires an explicit model")
-	case o.WorkDir != "":
+	case o.WorkDir != "" && o.Workbench == nil:
 		return o, refuse(o, "work_dir", RefusedConflict, "an API session has no workspace: the caller's tools own theirs, and SkillRun.WorkDir says where skill scripts run; leave WorkDir unset")
 	case len(o.Env) > 0:
 		return o, refuse(o, "env", RefusedConflict, "an API session starts no process; leave Env unset")
@@ -215,7 +222,10 @@ func normalizeAPI(o Options) (Options, error) {
 	if o, err = normalizeLoop(o); err != nil {
 		return o, err
 	}
-	return normalizeAPISkills(o)
+	if o, err = normalizeAPISkills(o); err != nil {
+		return o, err
+	}
+	return normalizeWorkbench(o)
 }
 
 func policySet(p Policy) bool {
@@ -334,10 +344,10 @@ func normalizeAPISkills(o Options) (Options, error) {
 
 // apiReference digests what a resume has to match: the engine, the endpoint
 // (its base URL and dialect, never a credential), the model, effort,
-// instructions, tool server name and skill request. Ref.Home is the runtime
-// home, because the conversation lives there: resuming from another is a
-// different session wearing the same name. Ref.WorkDir is empty; an API
-// session has none. Like a restricted session's, the digest excludes the
+// instructions, tool server name, skill request and workbench. Ref.Home is the
+// runtime home, because the conversation lives there: resuming from another is
+// a different session wearing the same name. Ref.WorkDir is the workbench's
+// workspace, and empty without one. Like a restricted session's, the digest excludes the
 // tools themselves, so a release that edits a tool resumes the stored
 // conversation under the new surface. Like EffortParameter and Streaming,
 // OpenRouter routing is how requests are sent, not what the conversation is:
@@ -357,8 +367,17 @@ func apiReference(o Options, id string) Ref {
 			Skills any
 		}{payload, skills})
 	}
+	var workDir string
+	if workbench := workbenchDigest(o); workbench != nil {
+		// Wrapped, like skills, so a session without one keeps its digest.
+		payload, _ = json.Marshal(struct {
+			Base      json.RawMessage
+			Workbench any
+		}{payload, workbench})
+		workDir = o.WorkDir
+	}
 	hash := sha256.Sum256(payload)
-	return Ref{Engine: o.Provider.Engine, ID: id, Home: o.RuntimeHome, AccountIdentity: o.AccountIdentity, ConfigHash: hex.EncodeToString(hash[:])}
+	return Ref{Engine: o.Provider.Engine, ID: id, Home: o.RuntimeHome, WorkDir: workDir, AccountIdentity: o.AccountIdentity, ConfigHash: hex.EncodeToString(hash[:])}
 }
 
 // openAPI starts or resumes a session whose loop the library runs. Its
@@ -370,6 +389,12 @@ func openAPI(ctx context.Context, o Options, r *Ref) (*Session, error) {
 		records []record
 		err     error
 	)
+	// The workspace opens first, so a workspace that cannot be opened leaves
+	// no transcript behind.
+	ws, err := openWorkspace(o)
+	if err != nil {
+		return nil, err
+	}
 	if r == nil {
 		ref = apiReference(o, newID())
 		store, records, err = createTranscript(o.RuntimeHome, ref)
@@ -378,6 +403,7 @@ func openAPI(ctx context.Context, o Options, r *Ref) (*Session, error) {
 		store, records, err = openTranscript(o.RuntimeHome, ref)
 	}
 	if err != nil {
+		ws.close()
 		return nil, err
 	}
 	s := &Session{options: o, ref: ref, caps: CapabilitiesFor(o.Provider.Engine), lifetime: ctx, done: make(chan struct{}), opGate: make(chan struct{}, 1), removeSkillFiles: func() {}}
@@ -385,11 +411,13 @@ func openAPI(ctx context.Context, o Options, r *Ref) (*Session, error) {
 	if complete == nil {
 		complete = completion.Complete
 	}
-	a := &apiSession{store: store, complete: complete, tools: apiTools(o), system: o.Instructions.Text, records: records, responses: countResponses(records), released: make(chan struct{}), failed: s.fail}
+	a := &apiSession{store: store, workspace: ws, complete: complete, tools: apiTools(o), system: o.Instructions.Text, resultLimit: o.Restriction.Tools.resultLimit(), records: records, responses: countResponses(records), released: make(chan struct{}), failed: s.fail}
 	additions, recovery := recoverTranscript(records)
 	for _, addition := range additions {
+		addition.Text = bound(addition.Text, a.resultLimit)
 		if err = a.append(addition); err != nil {
 			store.close()
+			ws.close()
 			return nil, err
 		}
 	}
@@ -397,7 +425,7 @@ func openAPI(ctx context.Context, o Options, r *Ref) (*Session, error) {
 	s.api = a
 	// No onRefusal: the loop owns every call it hands the host, so it reports
 	// each refusal on the turn itself, in order.
-	host := newDirectToolHost(apiToolHost(o), apiSkillDefinitions(o)...)
+	host := newDirectToolHost(apiToolHost(o, ws), append(apiSkillDefinitions(o), workbenchDefinitions(o)...)...)
 	host.activeTurn = s.activeTurnID
 	s.tools = host
 	if !conversationBegun(a.records) {
@@ -422,9 +450,9 @@ func (s *Session) activeTurnID() string {
 	return s.active.ID()
 }
 
-// apiToolHost is the caller's host with the library's skill calls answered in
-// front of the caller's handler.
-func apiToolHost(o Options) ToolHost {
+// apiToolHost is the caller's host with the library's workbench and skill
+// calls answered, in that order, in front of the caller's handler.
+func apiToolHost(o Options, ws *workspace) ToolHost {
 	host := o.Restriction.Tools
 	if o.skills != nil {
 		run := o.SkillRun
@@ -436,6 +464,9 @@ func apiToolHost(o Options) ToolHost {
 			}
 		}
 		host.Handler = apiSkillHandler{set: o.Skills, opts: opts, next: host.Handler}
+	}
+	if ws != nil {
+		host.Handler = workbenchHandler{ws: ws, next: host.Handler}
 	}
 	return host
 }
@@ -471,14 +502,10 @@ func (h apiSkillHandler) CallTool(ctx context.Context, call ToolCall) (ToolResul
 	return ToolResult{Content: content, IsError: strings.HasPrefix(content, call.Name+" error: ")}, nil
 }
 
-// apiTools are the caller's tools as function definitions. The skill tools
-// are added by completion itself.
+// apiTools are the caller's tools, then the workbench's, as function
+// definitions. The skill tools are added by completion itself.
 func apiTools(o Options) []completion.Tool {
-	tools := make([]completion.Tool, 0, len(o.Restriction.Tools.Tools))
-	for _, t := range o.Restriction.Tools.Tools {
-		tools = append(tools, completion.Tool{Type: "function", Function: completion.Function{Name: t.Name, Description: t.Description, Parameters: t.Schema}})
-	}
-	return tools
+	return completionTools(append(slices.Clone(o.Restriction.Tools.Tools), workbenchDefinitions(o)...))
 }
 
 // apiConfig is one request's completion configuration.
@@ -506,7 +533,7 @@ func (a *apiSession) append(r record) error {
 func (a *apiSession) messages() []completion.Message {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return conversation(a.records, a.system)
+	return conversation(a.records, a.system, a.resultLimit)
 }
 
 func (a *apiSession) nextResponse() int {
@@ -538,8 +565,8 @@ func (a *apiSession) interrupt() {
 }
 
 // shutdown stops the running turn and, once its loop has returned and every
-// call the host admitted has settled, closes the transcript and gives up the
-// lock. A handler still running keeps the conversation locked, so no other
+// call the host admitted has settled, closes the transcript and the
+// workspace, and gives up the lock. A handler still running keeps the conversation locked, so no other
 // session can resume it and answer that call as unknown while it may still be
 // taking effect; its result is recorded when it returns.
 func (a *apiSession) shutdown(host *toolHost) {
@@ -565,6 +592,7 @@ func (a *apiSession) shutdown(host *toolHost) {
 			<-settled
 		}
 		a.store.close()
+		a.workspace.close()
 		close(a.released)
 	}()
 }

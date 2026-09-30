@@ -26,6 +26,9 @@ func normalize(o Options) (Options, error) {
 	if o.Provider.Engine.Transport() == harness.APITransport {
 		return normalizeAPI(o)
 	}
+	if err := refuseCLIWorkbench(o); err != nil {
+		return o, err
+	}
 	if o.Loop != (Loop{}) {
 		return o, refuse(o, "loop", RefusedOtherEnginePolicy, "Loop bounds the library's own agent loop, which only an OpenAI-compatible session runs; leave it unset")
 	}

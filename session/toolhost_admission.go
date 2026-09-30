@@ -79,6 +79,9 @@ func (h *toolHost) execute(ready *admitted, turn string, settle func(toolOutcome
 	if settle != nil {
 		defer func() { settle(out) }()
 	}
+	// Every outcome, whatever produced it, is bounded before it is recorded
+	// or answered. This runs before settle, which was deferred first.
+	defer func() { out.text = h.bounded(out.text) }()
 	if refusal := h.acquire(ready.call, ready.name); refusal != nil {
 		return *refusal
 	}
@@ -95,8 +98,20 @@ func (h *toolHost) execute(ready *admitted, turn string, settle func(toolOutcome
 		h.closed = true
 		h.mu.Unlock()
 	}
-	return toolOutcome{text: bound(result.Content, h.cfg.MaxResultBytes), isError: result.IsError, ran: true}
+	return toolOutcome{text: result.Content, isError: result.IsError, ran: true}
 }
+
+// resultLimit is MaxResultBytes, the bound on every text the model is
+// answered with for a call: a result, a handler's error, a cancellation, a
+// refusal, or the library's own not-run and unknown-outcome answers.
+func (h ToolHost) resultLimit() int {
+	if h.MaxResultBytes > 0 {
+		return h.MaxResultBytes
+	}
+	return defaultMaxResultBytes
+}
+
+func (h *toolHost) bounded(text string) string { return bound(text, h.cfg.resultLimit()) }
 
 // toolOutcome is what one call produced for the model. ran is false for a
 // refusal, whose reason is set: nothing was executed.
@@ -244,7 +259,7 @@ func (h *toolHost) refuse(tool, reason, text string) *toolOutcome {
 	if h.onRefusal != nil {
 		h.onRefusal(tool, reason)
 	}
-	return &toolOutcome{text: text, isError: true, reason: reason}
+	return &toolOutcome{text: h.bounded(text), isError: true, reason: reason}
 }
 
 // refuseLocked is refuse from inside the host's own lock. The notification runs
@@ -253,7 +268,7 @@ func (h *toolHost) refuseLocked(tool, reason, text string) *toolOutcome {
 	if notify := h.onRefusal; notify != nil {
 		go notify(tool, reason)
 	}
-	return &toolOutcome{text: text, isError: true, reason: reason}
+	return &toolOutcome{text: h.bounded(text), isError: true, reason: reason}
 }
 
 func (h *toolHost) pause() {

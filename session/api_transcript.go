@@ -226,8 +226,9 @@ func parseRecords(data []byte, ref Ref) ([]record, bool) {
 // leading system message, then every user input and response in order. Chat
 // Completions requires each call's tool message directly after the response
 // that made it, so every call is answered there: with its recorded result, or,
-// where there is none, as not run or of unknown outcome.
-func conversation(records []record, system string) []completion.Message {
+// where there is none, as not run or of unknown outcome. Each answer is bounded
+// by limit, the host's MaxResultBytes, however it was recorded.
+func conversation(records []record, system string, limit int) []completion.Message {
 	results, started := callStates(records)
 	var out []completion.Message
 	if system != "" {
@@ -248,7 +249,7 @@ func conversation(records []record, system string) []completion.Message {
 				case started[key]:
 					text = unknownOutcomeText
 				}
-				out = append(out, completion.Message{Role: "tool", ToolCallID: call.ID, Content: text})
+				out = append(out, completion.Message{Role: "tool", ToolCallID: call.ID, Content: bound(text, limit)})
 			}
 		}
 	}

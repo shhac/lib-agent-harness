@@ -93,11 +93,16 @@ type Bridge struct {
 // credential and the bridge lock, and it must not be inside anything a tool can
 // reach.
 type ToolHost struct {
-	Server         string
-	Tools          []ToolDefinition
-	Handler        ToolHandler
-	Dir            string
-	Bridge         Bridge
+	Server  string
+	Tools   []ToolDefinition
+	Handler ToolHandler
+	Dir     string
+	Bridge  Bridge
+	// MaxResultBytes bounds every answer to a call the model sees, truncation
+	// marker included: the handler's result or error, a cancellation, a
+	// refusal, and the library's not-run and unknown-outcome answers. Zero
+	// means 64 KiB. A session with a workbench needs at least
+	// 4 KiB, so the workbench's own notes are never cut.
 	MaxResultBytes int
 }
 

@@ -44,8 +44,15 @@ And after a sixth review:
 - the canary and an adversarial CI test try to unmount, remount and rebind
   around the `.git` overlay, and every attempt must fail.
 
-Nothing here is implemented yet. The
-work is staged in the tasks at the end: stage 1 is LAH-2 and stage 2 is LAH-3.
+**Status.** Stage 1 part 1 (LAH-2) is implemented but switched off. It adds
+`Options.Workbench`, the `WorkDir` and `RuntimeHome` rules, the reserved names,
+the `Ref` digest, and `read_file` and `list_files` wired to the model and the
+host. Every session that sets `Workbench` is still refused with
+`RefusedNotOffered`, so no caller can reach the tools, and `Support` claims
+nothing. Stage 1 part 2 switches it on. It adds the opened-handle checks,
+non-blocking opens, the workspace worker, `search_files`, `Support`, the
+README and CI (see "Stage 1 lands in two parts" below). Stage 2 (LAH-3) is not
+implemented. The work is staged in the tasks at the end.
 
 This supersedes one line in two earlier documents: "sandboxing is never
 claimed" for API sessions, in
@@ -799,6 +806,99 @@ sibling, a symlink chain, a directory swapped for a symlink, a hard link to a
 file outside `WorkDir` (pre-existing and created concurrently), a mount below
 `WorkDir`, a FIFO and a socket. Every byte returned meets "What a returned
 byte is" above, and no call blocks on what it opens.
+
+**Stage 1 lands in two parts.** The owner split it so that each part can be
+reviewed on its own:
+
+- **Part 1 (LAH-2), the inert foundation.** It adds:
+  - `Options.Workbench`, the `WorkDir` and `RuntimeHome` rules and the six
+    reserved names;
+  - the `Ref` digest, and `workbenchDefinitions` feeding both `apiTools` and
+    the direct host;
+  - `read_file` and `list_files` on `os.Root`, with the bounds above;
+  - the shared `internal/wsfile` checks, which `internal/skills` now uses
+    unchanged.
+
+  `normalizeWorkbench` runs every check and then still refuses the option
+  with `RefusedNotOffered`. Only an unexported flag that tests set gets past
+  that refusal. So `Support`, the README's planned note and CI do not change.
+  `Workbench` has no stage 2 fields yet, so there is nothing to refuse for
+  them. The `WorkDir` and `RuntimeHome` comparison uses `os.SameFile` on every
+  platform, not only on macOS and Windows. That is stricter, and it costs
+  nothing on Linux. A read tool that cannot be answered says so with a fixed
+  code. Besides the codes named above, part 1 uses `file_path_invalid`,
+  `file_not_found`, `file_not_directory`, `file_unreadable` and
+  `arguments_invalid`. Two more rules keep a result honest:
+  - **Partial listings.** A directory that fails part-way, cannot be opened,
+    or has gone by the time it is opened is never shown as complete.
+    `list_files` lists what it read and adds a note giving how many
+    directories could not be read in full. Only a failure before any entry of
+    the requested directory itself is read is an error.
+  - **Entry types.** `list_files` reads names only, and types each entry with
+    `Lstat` through the root: the entry itself, never a link's target. So a
+    file system that leaves a directory entry's type unknown cannot make a
+    directory look like a file. A directory is descended by opening it and
+    checking the opened handle. Anything else is never opened, so part 1
+    cannot block on a FIFO it lists.
+  - **A bounded walk.** Names are read in batches of 256 and handled as they
+    arrive, so one directory is never held whole. Every name read counts
+    towards a limit of 20,000 per call, `.git` and the reserved temporaries
+    included. At that limit the walk stops and says so. Cancellation is
+    checked at every name.
+  - **A walk through handles.** Neither tool opens a path longer than one
+    name. Each path is walked one component at a time: `Lstat` through the
+    parent directory's handle, then `OpenRoot` through that same handle, and
+    the opened directory must be the one `Lstat` saw (`os.SameFile`). So an
+    ancestor swapped for a link after it was checked is caught at that
+    ancestor. It is never followed, even when the link leads to a look-alike
+    inside the workspace. A cursor keeps the directories along the current
+    path open and reuses the prefix that the next path shares, so a
+    breadth-first listing opens about one directory per directory it lists.
+    It holds at most one handle per level.
+  - **Hidden names, by what is opened.** Each directory entered is also
+    judged by identity against its parent's `.git` (`os.SameFile`). On
+    Windows it is judged by the name the file system gives the opened handle
+    (`GetFinalPathNameByHandle`, which returns long names), and so is the
+    file `read_file` opens. So an 8.3 short name such as `GIT~1` cannot
+    unhide `.git` or a reserved temporary, whether as the target or as an
+    ancestor. Elsewhere a name reaches a file only as spelled, up to case,
+    which the checks already ignore.
+  - **The path asked for.** `list_files` follows no link at all. A link is
+    refused: `file_is_symlink` when it is the last component,
+    `path_through_symlink` on the way. That applies even to a link that stays
+    inside. A `.git` component (in any case, trailing dots and spaces
+    ignored) and a reserved temporary name are refused with `path_not_listed`,
+    whether it is spelled that way or only opens as that.
+
+    `read_file` still follows links that stay inside and still reads `.git`,
+    but it resolves each link itself. It reads the link through its
+    directory's handle, refuses an absolute target or one that leaves the
+    workspace (`file_outside_workspace`), and walks the rest again from the
+    root through the same checks, for at most 40 hops. A reserved temporary
+    name is refused in any component, of the path asked for or of any link's
+    target, and the file it opens must be the one `Lstat` saw.
+  - **A bounded read.** `read_file` finds line ends by scanning the file's
+    bytes in place, and copies only the part it shows. So a 16 MiB file of
+    one-byte lines costs about what a result holds, not a string per line.
+    A line longer than a result is cut on a character boundary.
+  - **The result limit.** A session with a workbench needs
+    `ToolHost.MaxResultBytes` of 0 (64 KiB) or at least 4 KiB (`RefusedLimit`).
+    An error repeats at most 256 bytes of the model's path. So every result,
+    with its notes, fits without the host cutting it. The host's own
+    truncation note now counts towards `MaxResultBytes` for every tool. The
+    limit applies to every answer to a call: a result, a handler's error, a
+    cancellation, a refusal, and the loop's not-run and unknown-outcome
+    answers. So nothing the model is answered with exceeds it.
+- **Part 2 switches it on.** It adds:
+  - the opened-handle checks (link count, mount identity, `GetFileType`) and
+    the `O_NONBLOCK|O_NOCTTY` opens;
+  - the workspace worker, with `workspace_io_stuck`;
+  - `search_files`;
+  - the `Support` entries, the README section with its data caveat, and the
+    Linux CI bind-mount step.
+
+  Last, it removes the flag. Until then no caller can reach a tool that lacks
+  those checks.
 
 **Data caveat.** Anything a read tool returns goes to the model provider. With
 OpenRouter that is a third party chosen by routing (see below). `WorkDir` is

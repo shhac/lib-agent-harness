@@ -179,7 +179,7 @@ func (s *Session) skipCalls(t *Turn, response int, calls []completion.ToolCall) 
 		if started[record{Response: response, Call: call.ID}.key()] {
 			continue
 		}
-		if a.append(record{Type: recordToolResult, Turn: t.id, Response: response, Call: call.ID, Tool: call.Function.Name, Text: notRunText, IsError: true, Outcome: outcomeNotRun}) != nil {
+		if a.append(record{Type: recordToolResult, Turn: t.id, Response: response, Call: call.ID, Tool: call.Function.Name, Text: bound(notRunText, a.resultLimit), IsError: true, Outcome: outcomeNotRun}) != nil {
 			return
 		}
 	}

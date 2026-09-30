@@ -213,6 +213,12 @@ type Options struct {
 	// session (see api.go). Only such a session reads it; setting it for a
 	// CLI engine is refused. It is not part of a Ref.
 	Loop Loop
+	// Workbench gives an OpenAI-compatible session the library's own tools
+	// over WorkDir, which it then requires (see workbench.go). A CLI engine
+	// refuses it: its own tools and Sandbox cover this. It is not offered yet,
+	// so every session that sets it is refused with RefusedNotOffered. When
+	// set, it and WorkDir are part of a Ref.
+	Workbench *Workbench
 	// complete replaces completion.Complete for synthetic tests.
 	complete modelCall
 }

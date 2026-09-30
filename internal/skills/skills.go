@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/wsfile"
 )
 
 // Error carries a fixed reason code.
@@ -155,4 +156,4 @@ func load(skill harness.Skill) (Skill, error) {
 	return s, nil
 }
 
-func control(r rune) bool { return r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) }
+func control(r rune) bool { return wsfile.Control(r) }

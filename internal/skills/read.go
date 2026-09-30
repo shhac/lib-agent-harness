@@ -1,15 +1,13 @@
 package skills
 
 import (
-	"bytes"
 	"errors"
-	"io"
 	"io/fs"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
-	"unicode/utf8"
+
+	"github.com/shhac/lib-agent-harness/internal/wsfile"
 )
 
 // Codes for reading or resolving a file inside a skill.
@@ -48,14 +46,14 @@ func (s Skill) Read(rel string) (string, error) {
 	if err != nil || !os.SameFile(info, opened) {
 		return "", fail(CodeFileUnreadable)
 	}
-	data, err := io.ReadAll(io.LimitReader(file, MaxFileBytes+1))
+	data, tooLarge, err := wsfile.ReadAtMost(file, MaxFileBytes, nil)
 	if err != nil {
 		return "", fail(CodeFileUnreadable)
 	}
-	if len(data) > MaxFileBytes {
+	if tooLarge {
 		return "", fail(CodeFileTooLarge)
 	}
-	if !utf8.Valid(data) || bytes.IndexByte(data, 0) >= 0 {
+	if !wsfile.Text(data) {
 		return "", fail(CodeFileNotText)
 	}
 	return string(data), nil
@@ -86,25 +84,14 @@ func (s Skill) resolve(rel string) (string, fs.FileInfo, error) {
 }
 
 // cleanRelative accepts a slash-separated relative path that stays inside
-// its base when read lexically. Backslashes and colons are refused outright,
-// so one path means the same file on every platform.
+// its base when read lexically, by the rules wsfile shares with the workbench.
 func cleanRelative(rel string) (string, error) {
-	if rel == "" || len(rel) > maxRelativeLength || strings.ContainsAny(rel, "\x00\\:") || strings.HasPrefix(rel, "/") {
+	clean, problem := wsfile.Clean(rel, maxRelativeLength)
+	switch problem {
+	case wsfile.PathInvalid:
 		return "", fail(CodePathInvalid)
-	}
-	if strings.IndexFunc(rel, control) >= 0 {
-		return "", fail(CodePathInvalid)
-	}
-	clean := path.Clean(rel)
-	if clean == "." {
-		return "", fail(CodePathInvalid)
-	}
-	if clean == ".." || strings.HasPrefix(clean, "../") {
+	case wsfile.PathOutside:
 		return "", fail(CodeOutsideSkill)
-	}
-	native := filepath.FromSlash(clean)
-	if filepath.IsAbs(native) || filepath.VolumeName(native) != "" {
-		return "", fail(CodePathInvalid)
 	}
 	return clean, nil
 }

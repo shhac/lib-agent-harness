@@ -311,6 +311,8 @@ s, opened, err := session.Open(ctx, session.Options{
 - **Turn control:** interrupting cancels the request and the running handler.
   Steering is composed.
 - **Not offered yet:** compaction, streamed text deltas, quota and account.
+  `Options.Workbench` exists for the workbench planned below, but every
+  session that sets it is refused with `RefusedNotOffered`.
 
 **Planned: the API workbench.** A
 [design](design-docs/2026-09-29-api-workbench.md) gives these sessions
@@ -520,6 +522,13 @@ nothing else in flight and latches the channel only if it actually succeeded: a
 finish whose arguments the handler rejected has not finished anything.
 Everything queued behind it is refused without executing. `Session.ToolsClosed`
 reports that state.
+
+`ToolHost.MaxResultBytes` (default 64 KiB) bounds every answer to a call that
+the model sees. That covers a result, a handler's error, a cancellation, a
+refusal, and the library's answer for a call that never ran or whose outcome
+is unknown. A longer answer is cut on a character boundary and ends with a
+note that says how many bytes were left out. The note counts towards the
+limit.
 
 If the launching process dies, the harness does not: it keeps its provider
 connection and keeps spending. `session.Reclaim(ctx, dir)` answers two separate

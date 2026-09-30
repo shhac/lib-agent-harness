@@ -67,6 +67,9 @@ type toolHost struct {
 	wg         sync.WaitGroup
 }
 
+// defaultMaxResultBytes is ToolHost.MaxResultBytes when unset.
+const defaultMaxResultBytes = 64 << 10
+
 // newToolHost opens the tool channel under the assignment lease. A caller that
 // already holds the lease passes it, and the host owns it from then on; a nil
 // lease is taken here. Either way, a host that fails to open releases it.
@@ -80,7 +83,7 @@ func newToolHost(cfg ToolHost, lease *os.File) (_ *toolHost, err error) {
 		return nil, err
 	}
 	if cfg.MaxResultBytes <= 0 {
-		cfg.MaxResultBytes = 64 << 10
+		cfg.MaxResultBytes = defaultMaxResultBytes
 	}
 	// A local socket path has a hard length limit far below what an ordinary
 	// application state directory reaches, so the listener gets its own short
@@ -140,7 +143,7 @@ func newToolHost(cfg ToolHost, lease *os.File) (_ *toolHost, err error) {
 // caller's own, such as the library's skill tools.
 func newDirectToolHost(cfg ToolHost, extra ...ToolDefinition) *toolHost {
 	if cfg.MaxResultBytes <= 0 {
-		cfg.MaxResultBytes = 64 << 10
+		cfg.MaxResultBytes = defaultMaxResultBytes
 	}
 	settled := make(chan struct{})
 	close(settled)

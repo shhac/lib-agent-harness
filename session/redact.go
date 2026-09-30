@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 )
 
 // sanitize prepares captured harness output for a caller's private diagnostic
@@ -77,15 +76,26 @@ func opaque(field string) bool {
 	return digits > 0 || (letters > 24 && strings.ToLower(field) != field)
 }
 
-// bound truncates on a rune boundary and says so. Silent truncation would let a
-// tool result look complete when it is not.
+// bound truncates on a rune boundary and says so, within limit: the marker
+// counts towards it. Silent truncation would let a tool result look complete
+// when it is not. A limit too small for the full marker gets a short one, and
+// only one smaller than that is cut without a marker.
 func bound(text string, limit int) string {
 	if len(text) <= limit {
 		return text
 	}
-	end := limit
-	for end > 0 && !utf8.ValidString(text[:end]) {
-		end--
+	const short = "[truncated]"
+	marker := func(omitted int) string { return "\n[truncated: " + strconv.Itoa(omitted) + " further bytes omitted]" }
+	// The marker's length depends on how much it omits, so settle the two.
+	for end, note := limit, marker(len(text)-limit); limit-len(note) >= 1; {
+		next := len(cutRunes(text, limit-len(note)))
+		if next == end {
+			return text[:end] + note
+		}
+		end, note = next, marker(len(text)-next)
 	}
-	return text[:end] + "\n[truncated: " + strconv.Itoa(len(text)-end) + " further bytes omitted]"
+	if limit >= len(short) {
+		return cutRunes(text, limit-len(short)) + short
+	}
+	return cutRunes(text, limit)
 }
