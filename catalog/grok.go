@@ -3,6 +3,7 @@ package catalog
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/shhac/lib-agent-harness/internal/rawjson"
 	"io"
 )
 
@@ -32,7 +33,7 @@ func readGrokCatalog(reader io.Reader, writer io.Writer) ([]Model, error) {
 		if message.Method != "" || !bytes.Equal(message.ID, []byte("1")) {
 			continue
 		}
-		if len(message.Error) != 0 && string(message.Error) != "null" {
+		if !rawjson.Absent(message.Error) {
 			return nil, responseFailure("request_failed")
 		}
 		return grokModels(message.Result)

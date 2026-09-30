@@ -15,6 +15,7 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/rawjson"
 	"github.com/shhac/lib-agent-harness/process"
 )
 
@@ -348,7 +349,7 @@ func parseClaudeReply(m map[string]json.RawMessage) (id string, r response, isRe
 	switch str(data, "subtype") {
 	case "success":
 		body := data["response"]
-		if len(body) > 0 && string(body) != "null" {
+		if !rawjson.Absent(body) {
 			var payload map[string]json.RawMessage
 			if json.Unmarshal(body, &payload) != nil {
 				return "", response{}, true, ErrProtocol
@@ -380,7 +381,7 @@ func parseCodexReply(m map[string]json.RawMessage) (id string, r response, isRep
 	if id == "" {
 		return "", response{}, true, ErrProtocol
 	}
-	if len(m["error"]) == 0 || string(m["error"]) == "null" {
+	if rawjson.Absent(m["error"]) {
 		if len(m["result"]) == 0 {
 			return "", response{}, true, ErrProtocol
 		}

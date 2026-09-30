@@ -16,6 +16,7 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/rawjson"
 )
 
 type grokWireEvent struct {
@@ -64,7 +65,7 @@ func (u grokUsage) usage() harness.Usage {
 		Output:         u.Output,
 		CacheRead:      u.CacheRead,
 		CacheWrite:     u.CacheWrite,
-		Reasoning:      reasoningOrZero(u.Reasoning),
+		Reasoning:      valueOrZero(u.Reasoning),
 		CacheKnown:     true,
 		ReasoningKnown: u.Reasoning != nil,
 	}
@@ -317,7 +318,7 @@ func (t *grokTranscoder) recordEnd(ev grokWireEvent, line []byte) string {
 
 func (t *grokTranscoder) endReport(ev grokWireEvent) json.RawMessage {
 	if t.structured {
-		if jsonAbsent(ev.StructuredOutput) {
+		if rawjson.Absent(ev.StructuredOutput) {
 			return nil
 		}
 		return append(json.RawMessage(nil), ev.StructuredOutput...)
@@ -443,7 +444,7 @@ func grokEventText(ev grokWireEvent) string {
 
 func grokEventOutput(ev grokWireEvent) string {
 	for _, value := range []json.RawMessage{ev.RawOutput, ev.Output, ev.Content} {
-		if jsonAbsent(value) {
+		if rawjson.Absent(value) {
 			continue
 		}
 		var text string
@@ -479,13 +480,13 @@ func (ev grokWireEvent) toolName() string {
 }
 
 func grokToolDescription(ev grokWireEvent) string {
-	if jsonAbsent(ev.RawInput) {
+	if rawjson.Absent(ev.RawInput) {
 		return ev.toolName()
 	}
 	return ev.toolName() + "\n" + string(ev.RawInput)
 }
 
-func reasoningOrZero(v *int64) int64 {
+func valueOrZero(v *int64) int64 {
 	if v == nil {
 		return 0
 	}

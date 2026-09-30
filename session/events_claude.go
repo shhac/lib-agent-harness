@@ -7,6 +7,7 @@ import (
 
 	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/claudeproto"
+	"github.com/shhac/lib-agent-harness/internal/rawjson"
 )
 
 // Claude's stream-json dialect. Kept apart from Codex's because the two
@@ -259,7 +260,7 @@ func validClaudeUsage(raw json.RawMessage) bool {
 		return false
 	}
 	for _, key := range []string{"input_tokens", "output_tokens"} {
-		if len(fields[key]) == 0 || string(fields[key]) == "null" {
+		if rawjson.Absent(fields[key]) {
 			return false
 		}
 	}

@@ -8,6 +8,7 @@ import (
 	"github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/apihttp"
 	"github.com/shhac/lib-agent-harness/internal/jsonschema"
+	"github.com/shhac/lib-agent-harness/internal/rawjson"
 )
 
 type chatRequest struct {
@@ -159,9 +160,9 @@ func chatMessages(messages []Message, binding string) ([]chatMessage, string) {
 // sends one or as a stream is assembled into one (see openai_stream.go).
 type chatCompletionResponse struct {
 	// Error is a failure some gateways report inside a 200 response.
-	Error   json.RawMessage `json:"error"`
-	Choices []chatResponseChoice    `json:"choices"`
-	Usage   json.RawMessage `json:"usage"`
+	Error   json.RawMessage      `json:"error"`
+	Choices []chatResponseChoice `json:"choices"`
+	Usage   json.RawMessage      `json:"usage"`
 }
 
 type chatResponseChoice struct {
@@ -203,7 +204,7 @@ func parseChatCompletion(data []byte, tools []Tool, binding string) (Result, err
 	if decoder.Decode(&response) != nil || decoder.Decode(new(any)) != io.EOF {
 		return accounting, apiResponseFailure("malformed_response")
 	}
-	if len(response.Error) > 0 && string(response.Error) != "null" {
+	if !rawjson.Absent(response.Error) {
 		return accounting, apiFailure(apihttp.EmbeddedFailure(response.Error))
 	}
 	if len(response.Choices) != 1 {
@@ -218,7 +219,7 @@ func parseChatCompletion(data []byte, tools []Tool, binding string) (Result, err
 		return accounting, apiResponseFailure("model_refusal")
 	}
 	result := Message{Role: "assistant", Replay: captureReplay(binding, map[string]json.RawMessage{"reasoning_content": message.ReasoningContent, "reasoning_details": message.ReasoningDetails}, messageReplayFields)}
-	if len(message.Content) > 0 && string(message.Content) != "null" && json.Unmarshal(message.Content, &result.Content) != nil {
+	if !rawjson.Absent(message.Content) && json.Unmarshal(message.Content, &result.Content) != nil {
 		return accounting, apiResponseFailure("malformed_response")
 	}
 	if code := finishFailure(choice.FinishReason, len(message.ToolCalls)); code != "" {

@@ -3,6 +3,7 @@ package catalog
 import (
 	"context"
 	"encoding/json"
+	"github.com/shhac/lib-agent-harness/internal/rawjson"
 	"io"
 )
 
@@ -33,10 +34,10 @@ func readCodexCatalog(reader io.Reader, writer io.Writer) ([]Model, error) {
 			if response.ID != id {
 				continue
 			}
-			if len(response.Error) != 0 && string(response.Error) != "null" {
+			if !rawjson.Absent(response.Error) {
 				return nil, responseFailure("request_failed")
 			}
-			if len(response.Result) == 0 || string(response.Result) == "null" {
+			if rawjson.Absent(response.Result) {
 				return nil, responseFailure("invalid_catalog")
 			}
 			return response.Result, nil

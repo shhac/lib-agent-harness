@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"github.com/shhac/lib-agent-harness/internal/rawjson"
 )
 
 // Some reasoning endpoints return state beside an assistant message that they
@@ -39,7 +40,7 @@ func replayBinding(cfg Config) string {
 func captureReplay(binding string, raw map[string]json.RawMessage, names []string) json.RawMessage {
 	fields := map[string]json.RawMessage{}
 	for _, name := range names {
-		if value := raw[name]; len(value) > 0 && string(value) != "null" {
+		if value := raw[name]; !rawjson.Absent(value) {
 			fields[name] = value
 		}
 	}

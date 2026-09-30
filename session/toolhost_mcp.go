@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"crypto/subtle"
 	"encoding/json"
+	"github.com/shhac/lib-agent-harness/internal/rawjson"
 	"net"
 	"strconv"
 	"strings"
@@ -70,7 +71,7 @@ func (h *toolHost) serve(conn net.Conn) {
 			reply(rpcError(nil, -32700, "parse error"))
 			return
 		}
-		if len(frame.ID) == 0 || string(frame.ID) == "null" {
+		if rawjson.Absent(frame.ID) {
 			// A notification needs no reply, but it is not therefore uninteresting:
 			// a harness cancels a tool call this way, and ignoring it leaves work
 			// running after the turn that asked for it has been interrupted.

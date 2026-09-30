@@ -19,6 +19,7 @@ import (
 
 	"github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/nativecli"
+	"github.com/shhac/lib-agent-harness/internal/rawjson"
 )
 
 // The probe proves Grok's launch flags before a credentialed launch. It runs
@@ -300,7 +301,7 @@ func grokTitleRequest(body []byte) bool {
 		return false
 	}
 	return len(request.Tools) == 1 && request.Tools[0].Type == "function" && request.Tools[0].Name == "session_title" &&
-		request.Choice.Type == "function" && request.Choice.Name == "session_title" && jsonAbsent(request.Text)
+		request.Choice.Type == "function" && request.Choice.Name == "session_title" && rawjson.Absent(request.Text)
 }
 
 // grokRequestKeys are the Responses API fields a proven request may carry.
@@ -353,7 +354,7 @@ func judgeGrokRequest(body []byte, want grokExpectation) (grokEvidence, string) 
 	if want.effort != "" && request.Reasoning.Effort != want.effort {
 		return grokEvidence{}, "probe_changed_effort"
 	}
-	if request.Text.Format.Type != "json_schema" || jsonAbsent(request.Text.Format.Schema) {
+	if request.Text.Format.Type != "json_schema" || rawjson.Absent(request.Text.Format.Schema) {
 		return grokEvidence{}, "probe_invalid_schema"
 	}
 	if !request.Text.Format.Strict || !equalJSON(request.Text.Format.Schema, want.schema) {

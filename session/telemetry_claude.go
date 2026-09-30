@@ -9,6 +9,7 @@ import (
 
 	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/claudeproto"
+	"github.com/shhac/lib-agent-harness/internal/rawjson"
 )
 
 func parseClaudeAccount(raw json.RawMessage) (harness.AccountSnapshot, error) {
@@ -297,7 +298,7 @@ func parseClaudeCredits(raw json.RawMessage) (harness.CreditSnapshot, error) {
 		// The balance's shape has not been observed populated; an object that
 		// is not money stays unknown rather than failing the whole report.
 		var balance claudeMoney
-		if len(s.Balance) > 0 && string(s.Balance) != "null" && json.Unmarshal(s.Balance, &balance) == nil && balance.Minor != nil {
+		if !rawjson.Absent(s.Balance) && json.Unmarshal(s.Balance, &balance) == nil && balance.Minor != nil {
 			if c.Balance, err = balance.signedAmount(); err != nil {
 				return harness.CreditSnapshot{}, err
 			}

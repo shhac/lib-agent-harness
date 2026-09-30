@@ -17,6 +17,7 @@ import (
 
 	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/claudeproto"
+	"github.com/shhac/lib-agent-harness/internal/rawjson"
 )
 
 // streamEvent is the subset of claude's stream-json protocol this driver
@@ -306,7 +307,7 @@ func (t *streamTranscoder) renderResult(ev streamEvent, rawLine []byte) {
 // did; nothing is written.
 func (t *streamTranscoder) recordResult(ev streamEvent, rawLine []byte) (bool, string) {
 	t.completed = true
-	structured := !jsonAbsent(ev.StructuredOutput)
+	structured := !rawjson.Absent(ev.StructuredOutput)
 	if structured {
 		t.report = ev.StructuredOutput
 	}
@@ -380,7 +381,7 @@ func (t *streamTranscoder) writeResultTrailer(structured bool, failure string) {
 // CLI's is_error flag, its subtype, and whatever it put in `result`. "" when
 // the run reported an outcome normally.
 func resultFailure(ev streamEvent) string {
-	hasReport := !jsonAbsent(ev.StructuredOutput)
+	hasReport := !rawjson.Absent(ev.StructuredOutput)
 	if hasReport && !ev.IsError {
 		return ""
 	}
@@ -407,7 +408,7 @@ func resultFailure(ev streamEvent) string {
 // outcomes and an object for some; an unrecognised shape falls back to its raw
 // form rather than being dropped.
 func decodeResultText(raw json.RawMessage) string {
-	if jsonAbsent(raw) {
+	if rawjson.Absent(raw) {
 		return ""
 	}
 	var text string

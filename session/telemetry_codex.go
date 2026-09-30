@@ -7,6 +7,7 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/rawjson"
 )
 
 func parseCodexAccount(raw json.RawMessage) (harness.AccountSnapshot, error) {
@@ -149,7 +150,7 @@ func codexLimitReached(r codexRateLimits) *bool {
 		reached := !*r.Allowed
 		return &reached
 	}
-	if r.Legacy == nil || len(r.Legacy.Reached) == 0 || string(r.Legacy.Reached) == "null" {
+	if r.Legacy == nil || rawjson.Absent(r.Legacy.Reached) {
 		return nil
 	}
 	reached := true

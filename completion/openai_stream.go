@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/shhac/lib-agent-harness/internal/apihttp"
+	"github.com/shhac/lib-agent-harness/internal/rawjson"
 )
 
 // chatStream assembles a streamed Chat Completions response into the shape a
@@ -69,11 +70,11 @@ func (s *chatStream) add(data []byte) error {
 	if json.Unmarshal(data, &chunk) != nil {
 		return apihttp.ResponseFailure("malformed_response")
 	}
-	if len(chunk.Error) > 0 && string(chunk.Error) != "null" {
+	if !rawjson.Absent(chunk.Error) {
 		s.failure = chunk.Error
 		return nil
 	}
-	if len(chunk.Usage) > 0 && string(chunk.Usage) != "null" {
+	if !rawjson.Absent(chunk.Usage) {
 		// Only the terminal chunk should carry it; where every chunk does, the
 		// last is the whole response's.
 		s.usage = chunk.Usage
@@ -125,7 +126,7 @@ func (s *chatStream) addCall(fragment chatCallDelta) error {
 	call.kind += fragment.Type
 	call.name += fragment.Function.Name
 	call.arguments.WriteString(fragment.Function.Arguments)
-	if len(fragment.ExtraContent) > 0 && string(fragment.ExtraContent) != "null" {
+	if !rawjson.Absent(fragment.ExtraContent) {
 		call.extra = fragment.ExtraContent
 	}
 	return nil

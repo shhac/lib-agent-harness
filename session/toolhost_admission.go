@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/shhac/lib-agent-harness/internal/rawjson"
 )
 
 // admitted is a parsed, registered call waiting to execute.
@@ -44,7 +45,7 @@ func (h *toolHost) prepareCall(request, name string, arguments json.RawMessage) 
 	if !hosted {
 		return nil, h.refuse(name, "unknown", "tool "+quoteName(name)+" is not available in this session; nothing was executed")
 	}
-	if len(arguments) == 0 || string(arguments) == "null" {
+	if rawjson.Absent(arguments) {
 		arguments = json.RawMessage("{}")
 	}
 	// Handlers are written against an argument object. A bare string or array

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/rawjson"
 )
 
 // Grok's session/update dialect, and the prompt response that ends a turn.
@@ -97,7 +98,7 @@ func grokToolImages(update map[string]json.RawMessage) toolImages {
 // content blocks. Image blocks are reported as images; another block with no
 // text, such as a diff, keeps the content's JSON text rather than dropping it.
 func grokToolOutput(update map[string]json.RawMessage) string {
-	if raw := update["rawOutput"]; !jsonAbsent(raw) {
+	if raw := update["rawOutput"]; !rawjson.Absent(raw) {
 		var text string
 		if json.Unmarshal(raw, &text) == nil {
 			return text
@@ -112,7 +113,7 @@ func grokToolOutput(update map[string]json.RawMessage) string {
 		} `json:"content"`
 	}
 	raw := update["content"]
-	if jsonAbsent(raw) || json.Unmarshal(raw, &blocks) != nil {
+	if rawjson.Absent(raw) || json.Unmarshal(raw, &blocks) != nil {
 		return toolResultText(raw)
 	}
 	if len(blocks) == 0 {

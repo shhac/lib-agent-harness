@@ -6,6 +6,7 @@ import (
 
 	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/apihttp"
+	"github.com/shhac/lib-agent-harness/internal/rawjson"
 )
 
 // Codex's app-server dialect. Kept apart from Claude's because the two
@@ -141,7 +142,7 @@ func codexToolActivity(typ string, item map[string]json.RawMessage) (json.RawMes
 		return item["arguments"], strings.Join(parts, "\n"), nil
 	case "webSearch":
 		output := ""
-		if !jsonAbsent(item["results"]) {
+		if !rawjson.Absent(item["results"]) {
 			output = string(item["results"])
 		}
 		return pickFields(item, "query", "action"), output, nil
@@ -308,7 +309,7 @@ func parseCodexUsage(raw json.RawMessage) (codexUsage, bool) {
 		return u, false
 	}
 	for _, key := range []string{"inputTokens", "outputTokens", "cachedInputTokens", "reasoningOutputTokens"} {
-		if len(fields[key]) == 0 || string(fields[key]) == "null" {
+		if rawjson.Absent(fields[key]) {
 			return u, false
 		}
 	}

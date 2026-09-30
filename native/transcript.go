@@ -170,8 +170,3 @@ func (m *markerSink) spendTrailer(usage harness.Usage, sawUsage bool, cost harne
 		_, _ = fmt.Fprintf(m.out, "~ $%.4f recorded at API rates; total unavailable\n", cost.USD)
 	}
 }
-
-// jsonAbsent reports a missing value or an explicit JSON null.
-func jsonAbsent(raw json.RawMessage) bool {
-	return len(bytes.TrimSpace(raw)) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
-}

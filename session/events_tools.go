@@ -13,6 +13,7 @@ package session
 import (
 	"encoding/base64"
 	"encoding/json"
+	"github.com/shhac/lib-agent-harness/internal/rawjson"
 	"strings"
 	"unicode/utf8"
 )
@@ -27,7 +28,7 @@ const MaxToolPayloadBytes = 64 << 10
 // Everything else in a payload is the application's data and passes through.
 func (s *Session) withToolPayload(e Event, input json.RawMessage, output string) Event {
 	secret := s.channelSecret()
-	if !jsonAbsent(input) {
+	if !rawjson.Absent(input) {
 		e.Input, e.InputTruncated = boundToolInput(scrub(input, secret), MaxToolPayloadBytes)
 	}
 	if output != "" {
@@ -95,12 +96,6 @@ func cutRunes(text string, limit int) string {
 		end--
 	}
 	return text[:end]
-}
-
-// jsonAbsent reports a value the harness did not supply.
-func jsonAbsent(raw json.RawMessage) bool {
-	trimmed := strings.TrimSpace(string(raw))
-	return trimmed == "" || trimmed == "null"
 }
 
 // Tool images: at most MaxToolImages on one tool_completed event, each at
@@ -171,7 +166,7 @@ func toolResultText(raw json.RawMessage) string {
 
 func toolResult(raw json.RawMessage) (string, toolImages) {
 	var images toolImages
-	if jsonAbsent(raw) {
+	if rawjson.Absent(raw) {
 		return "", images
 	}
 	var text string
@@ -209,7 +204,7 @@ func toolResult(raw json.RawMessage) (string, toolImages) {
 func pickFields(item map[string]json.RawMessage, keys ...string) json.RawMessage {
 	picked := map[string]json.RawMessage{}
 	for _, key := range keys {
-		if !jsonAbsent(item[key]) {
+		if !rawjson.Absent(item[key]) {
 			picked[key] = item[key]
 		}
 	}

@@ -33,6 +33,7 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/rawjson"
 )
 
 // grokProtocolVersion is the only Agent Client Protocol version spoken here.
@@ -82,7 +83,7 @@ func parseGrokAgent(raw json.RawMessage) (grokAgent, error) {
 	if json.Unmarshal(raw, &r) != nil || r.ProtocolVersion == nil || *r.ProtocolVersion != grokProtocolVersion {
 		return grokAgent{}, ErrProtocol
 	}
-	resume := len(r.Capabilities.Session.Resume) != 0 && string(r.Capabilities.Session.Resume) != "null"
+	resume := !rawjson.Absent(r.Capabilities.Session.Resume)
 	return grokAgent{resume: resume}, nil
 }
 

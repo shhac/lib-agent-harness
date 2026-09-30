@@ -19,6 +19,7 @@ import (
 
 	"github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/apihttp"
+	"github.com/shhac/lib-agent-harness/internal/rawjson"
 	"github.com/shhac/lib-agent-harness/process"
 )
 
@@ -174,7 +175,7 @@ func (s *grokStream) result() (Result, *RequestError) {
 	if !s.catalog {
 		return fail(harness.CauseUnknown, "missing_native_tool_catalog")
 	}
-	if jsonAbsent(s.end.Structured) {
+	if rawjson.Absent(s.end.Structured) {
 		return fail(harness.CauseUnknown, "missing_structured_output")
 	}
 	message, err := parseActionEnvelope(s.end.Structured, s.tools)
@@ -261,11 +262,6 @@ func grokCost(spend grokSpend) harness.Cost {
 		return harness.Cost{USD: *spend.CostUSD, Known: true}
 	}
 	return harness.Cost{}
-}
-
-func jsonAbsent(raw json.RawMessage) bool {
-	trimmed := bytes.TrimSpace(raw)
-	return len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null"))
 }
 
 // errGrokStopped reports that the launch was stopped because its stream showed
