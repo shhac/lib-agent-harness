@@ -15,15 +15,16 @@ import (
 // left it, such as a server an agent backgrounded. Build it with Command,
 // which wires the command's cancellation to Stop.
 type Process struct {
-	cmd        *exec.Cmd
-	mu         sync.Mutex
-	started    bool
-	finished   bool
-	stopped    bool
-	onStart    func(int)
-	token      string
-	launched   time.Time
-	background bool
+	cmd            *exec.Cmd
+	mu             sync.Mutex
+	started        bool
+	finished       bool
+	stopped        bool
+	onStart        func(int)
+	token          string
+	launched       time.Time
+	leaderIdentity string
+	background     bool
 }
 
 // Notify registers a callback invoked once, after the child is running and
@@ -57,6 +58,7 @@ func (p *Process) Run() error {
 	pid := 0
 	if err == nil {
 		pid = p.cmd.Process.Pid
+		p.leaderIdentity = processIdentity(pid)
 	}
 	if err == nil && p.background {
 		if lowerErr := lowerPriority(pid); lowerErr != nil {
@@ -78,6 +80,29 @@ func (p *Process) Run() error {
 	}
 	err = p.cmd.Wait()
 	p.mu.Lock()
+	// The leader may have been killed by its own child. Reap its still-owned
+	// group before releasing the handle, even when protected children hide
+	// their environment. A positively reused leader must never be signalled.
+	identity := processIdentity(pid)
+	if identity == "" || identity == p.leaderIdentity {
+		for _, member := range candidates(p.launched.Add(-time.Second)) {
+			if member.group != pid || member.pid == pid {
+				continue
+			}
+			// Revalidate both birth identity and group immediately before
+			// signalling its group. A live member anchors the pgid, so it
+			// cannot be recycled between validation and the group signal.
+			signalOwned(member.pid, member.identity, processIdentity, func(child int) {
+				leader := processIdentity(pid)
+				if leader != "" && leader != p.leaderIdentity {
+					return
+				}
+				if group, err := syscall.Getpgid(child); err == nil && group == pid {
+					_ = syscall.Kill(-pid, syscall.SIGKILL)
+				}
+			})
+		}
+	}
 	p.finished = true
 	p.mu.Unlock()
 	return err
@@ -93,7 +118,15 @@ func (p *Process) Stop() {
 	}
 	p.stopped = true
 	if p.started && !p.finished {
-		_ = syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
+		identity := processIdentity(p.cmd.Process.Pid)
+		if p.leaderIdentity == "" || identity == "" || identity == p.leaderIdentity {
+			_ = syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
+		} else {
+			// Only a positively different birth identity proves PID reuse.
+			// An exited leader or unavailable inspection does not mean its
+			// still-live group disappeared (children may hold output pipes).
+			_ = p.cmd.Process.Kill()
+		}
 	}
 	started := p.started
 	p.mu.Unlock()
@@ -104,9 +137,9 @@ func (p *Process) Stop() {
 
 // Close stops a live group and kills whatever marked descendants remain, also
 // after the CLI itself exited: what its agent started must not outlive the
-// handle. After Wait has reaped the leader, the numeric process-group ID may be
-// reused, so Close must not signal that group again; the sweep matches each
-// process by its own marker instead.
+// handle. Run checks remaining group members by birth identity when the
+// leader settles. After that, Close uses markers rather than signalling a
+// numeric process-group ID that may have been reused.
 func (p *Process) Close() {
 	p.Stop()
 	p.mu.Lock()

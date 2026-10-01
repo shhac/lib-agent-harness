@@ -45,6 +45,16 @@ func (w *workspace) worker() {
 }
 
 func (w *workspace) dispatch(ctx context.Context, run func() (ToolResult, error)) (ToolResult, error) {
+	return w.dispatchResult(ctx, run, false)
+}
+
+// A write's settled answer outranks cancellation: a committed rename must
+// finish durability and a pre-commit cancellation is a definite failure.
+func (w *workspace) dispatchWrite(ctx context.Context, run func() (ToolResult, error)) (ToolResult, error) {
+	return w.dispatchResult(ctx, run, true)
+}
+
+func (w *workspace) dispatchResult(ctx context.Context, run func() (ToolResult, error), keepAnswer bool) (ToolResult, error) {
 	job := workspaceJob{run: run, answer: make(chan workspaceAnswer, 1)}
 	select {
 	case <-w.stop:
@@ -61,8 +71,11 @@ func (w *workspace) dispatch(ctx context.Context, run func() (ToolResult, error)
 	timer := time.NewTimer(w.grace)
 	defer timer.Stop()
 	select {
-	case <-job.answer:
-		return ToolResult{}, ctx.Err()
+	case answer := <-job.answer:
+		if !keepAnswer {
+			return ToolResult{}, ctx.Err()
+		}
+		return answer.result, answer.err
 	case <-timer.C:
 		err := &TurnError{Engine: harness.OpenAICompatible, Code: WorkspaceIOStuck}
 		w.stuck.Store(err)

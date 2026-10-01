@@ -43,6 +43,8 @@ func call(t *testing.T, ws *workspace, tool string, args any) ToolResult {
 		err    error
 	)
 	switch tool {
+	case workbenchWriteFile, workbenchEditFile:
+		result, err = ws.writeFile(context.Background(), tool, raw)
 	case workbenchReadFile:
 		result, err = ws.readFile(context.Background(), raw)
 	case workbenchListFiles:
@@ -50,7 +52,7 @@ func call(t *testing.T, ws *workspace, tool string, args any) ToolResult {
 	case workbenchSearchFiles:
 		result, err = ws.searchFiles(context.Background(), raw)
 	}
-	if err != nil {
+	if err != nil && !errors.Is(err, errWorkbenchWriteUnknown) {
 		t.Fatalf("%s %s: %v", tool, raw, err)
 	}
 	if ws.handles.Load() != 0 {

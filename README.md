@@ -347,7 +347,7 @@ s, opened, err := session.Open(ctx, session.Options{
   Steering is composed.
 - **Not offered yet:** compaction, streamed text deltas, quota and account.
 
-### Workbench, stage 1
+### Workbench
 
 Set `Options.Workbench = &session.Workbench{}` for read-only workspace tools
 on an OpenAI-compatible session, on Linux, macOS or Windows. `WorkDir` must
@@ -373,8 +373,8 @@ resume reference. CLI engines refuse this option.
 Listings and searches skip `.git` and `.harness-workbench-*.tmp`, use bounded
 walks, retain partial results with an incomplete note, and state truncation.
 Neither observes `.gitignore`. Results also fit the host's `MaxResultBytes`,
-which must be at least 4,096. All six workbench tool names (including planned
-write and command tools) are reserved when the option is set.
+which must be at least 4,096. All six workbench tool names are reserved when
+the option is set.
 
 Opened handles must stay on the root's mount; regular files must have one
 link. Refusals include `file_linked`, `file_other_mount`, `file_not_regular`,
@@ -393,8 +393,8 @@ transcript records an unknown outcome, shutdown releases its lock, and
 worker and its read handle remain until the syscall returns. Health preserves
 an earlier session failure; Release still reports abandoned workspace I/O.
 
-`harness.Support` reports `WorkspaceRead` as `Composed`, `WorkspaceWrite`
-as `Unsupported`, and `RestrictTools` includes the library's workbench tools.
+`harness.Support` reports `WorkspaceRead` and `WorkspaceWrite` as `Composed`,
+and `RestrictTools` includes the library's workbench tools.
 A caller-supplied `CatalogModel` known to lack tools refuses before launch;
 unknown tool support proceeds.
 
@@ -405,8 +405,70 @@ workspace free of secrets, outside hard links and mounts. File tools reject
 multiply-linked files and other mounts. Keep other processes from injecting
 outside data while the session runs.
 
-Stage 2 remains planned: editing files and running commands under a sandbox
-proved before launch. See the [design](design-docs/2026-09-29-api-workbench.md).
+Set `Workbench.Write` to add `write_file(path, content)` and
+`edit_file(path, old, new, replace_all)`. Writes replace UTF-8 content up to
+1 MiB atomically, creating parents when needed. Edits require exactly one
+match unless `replace_all` is true. Neither follows symlinks or writes `.git`;
+edits also refuse hard links. Existing permission bits are preserved, with
+set-ID and sticky bits cleared; read-only files are refused. New files use
+`NewFileMode` (default 0600, only bits within 0666), independent of umask.
+New directories add execute wherever the mode has read. Windows inherits the
+directory ACL and does not sync directories. A writing session's effective
+mode is part of its reference; changing it on resume is refused.
+
+Before rename, a failed or cancelled write removes its temporary and returns
+`write_failed`. After rename it completes durability even if cancelled;
+failed durability returns `write_outcome_unknown`, records an unknown
+outcome and leaves the new content in place. Its tool event carries
+`ErrorFacts` with that code, family `turn`, and no automatic retry. Resume never repeats an
+interrupted call and removes only that session's temporaries in unanswered
+write targets' directories.
+
+On macOS, `Workbench.Commands = &session.Commands{}` adds
+`run_command(command, dir, timeout_seconds)`. It runs `/bin/sh -c` through a
+pinned Seatbelt profile, proved with disposable files before the session
+opens or resolves credentials. A failed proof refuses launch. Linux commands
+await the separate bubblewrap stage; Windows commands are unsupported. Both
+refuse before writing any session state. `Support` reports `Sandbox` and
+`Loopback` as `Unknown` on macOS because launch must prove them, and
+`Background` as `Composed`; those features are unsupported elsewhere.
+
+Commands can read WorkDir, private scratch, the pinned system runtime set
+(`/System` excluding `/System/Volumes/Data`, `/usr`, `/bin`, `/sbin`, CommandLineTools, resolved selected Xcode,
+Homebrew), selected public `/private/etc` files and minimal `/dev` nodes.
+Add toolchains or caches elsewhere through `Commands.Read`; it must not
+reopen home or overlap RuntimeHome. RuntimeHome must also lie outside the
+system read set; normalization refuses it before probing. A command workspace cannot contain home.
+Writes are restricted to scratch and, with Write, WorkDir, excluding `.git`.
+Commands cannot read, write or link file tools' reserved atomic temporaries.
+Commands follow the OS path sandbox: unlike file tools, they do not reject
+every hard link or injected mount. Keep outside links and mounts out of the
+workspace and explicit read set.
+
+Network is denied by default, including Unix sockets. `Commands.Loopback`
+allows localhost dev servers only, proved against a reachable off-machine
+witness and a local listener, as for Claude. `Commands.Env` accepts PATH,
+LANG and LC_*; HOME and TMPDIR always name private scratch. Timeout defaults
+to two minutes, is capped at ten, and the model can shorten it. Cancellation
+and timeout stop the process tree; timeout is a normal `timed_out` result.
+A lost private completion response records `command_outcome_unknown`, never
+an inferred success, and is not replayed after a crash.
+Late background stdout and stderr are drained and discarded until group
+settlement, so logging servers can continue after a command returns.
+Output is bounded (at most 64 KiB per stream, reduced to fit the host result
+limit), with a truncation note. Background launches run at nice 10.
+Session containment markers are synced before commands start and swept on
+recovery and Close. A retained supervisor with an argument marker keeps
+background jobs discoverable even when macOS hides their environment; the
+model's shell cannot access its private completion pipe. Empty groups are
+reaped after each command; supervisors retained for background jobs are reaped
+when their last group member exits. At most 64 live command groups are retained;
+further launches return `command_process_limit` until a group settles.
+As with the process package's existing sweep, a process
+that detaches may evade discovery when macOS hides its environment, even
+without erasing its marker; detached jobs are outside the supervisor group.
+Skill scripts still follow `SkillRun` and run outside this command sandbox.
+See the [design](design-docs/2026-09-29-api-workbench.md).
 
 ## Long-lived conversations: Open and caller context
 
@@ -738,6 +800,9 @@ fetched URL can carry data out. A reference records whether a sandbox had
 reference digest.
 
 ### Loopback networking
+
+API workbench sessions use `Workbench.Commands.Loopback`; see the Workbench
+section for their separately proved macOS sandbox.
 
 `Sandbox.Loopback` lets a sandboxed Claude session start a local server and
 request it: its shell may bind and connect to this machine's own addresses and
@@ -1167,6 +1232,7 @@ error:
 | Reading process status with `ps` | the cancelled-group and sweep tests (`process/`), which otherwise could not tell a live process from a gone one |
 | Lowering a process group's priority | `TestBackgroundLowersTheWholeTree` (`process/`) |
 | Writing `/tmp` and `TMPDIR` directly | `TestOpenCanaryEscapesAreEachDetected` (`session/`): an outer sandbox contains the unsandboxed canary too, which then rightly reports no escape |
+| A real macOS Seatbelt launch | workbench canary, edit-and-run, cancellation and crash-cleanup tests; the generated profile is parsed before an OS permission refusal can skip, and CI forbids that skip |
 
 Any other probe failure fails the test, so a real fault is never hidden behind a
 skip. `go test -v ./...` lists each skip with its reason, for example

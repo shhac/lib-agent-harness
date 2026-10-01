@@ -90,15 +90,19 @@ const (
 
 // workspace is one session's handle on its WorkDir.
 type workspace struct {
-	root     *os.Root
-	mount    wsfile.Mount
-	jobs     chan workspaceJob
-	stop     chan struct{}
-	stopped  chan struct{}
-	stopOnce sync.Once
-	stuck    atomic.Pointer[TurnError]
-	failed   func(error)
-	grace    time.Duration
+	id         string
+	mode       fs.FileMode
+	writeFault func(string) error
+	commands   *workbenchRunner
+	root       *os.Root
+	mount      wsfile.Mount
+	jobs       chan workspaceJob
+	stop       chan struct{}
+	stopped    chan struct{}
+	stopOnce   sync.Once
+	stuck      atomic.Pointer[TurnError]
+	failed     func(error)
+	grace      time.Duration
 	// budget is the smaller of a tool's own limit and the host's
 	// MaxResultBytes, so the host never cuts a result without it saying so.
 	budget int
@@ -146,7 +150,7 @@ func openWorkspace(o Options) (*workspace, error) {
 	if limit := o.Restriction.Tools.MaxResultBytes; limit > 0 && limit < budget {
 		budget = limit
 	}
-	w := &workspace{root: root, mount: mount, budget: budget, grace: workspaceGrace, jobs: make(chan workspaceJob), stop: make(chan struct{}), stopped: make(chan struct{})}
+	w := &workspace{mode: o.Workbench.NewFileMode, root: root, mount: mount, budget: budget, grace: workspaceGrace, jobs: make(chan workspaceJob), stop: make(chan struct{}), stopped: make(chan struct{})}
 	go w.worker()
 	return w, nil
 }

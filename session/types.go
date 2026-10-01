@@ -280,11 +280,13 @@ type SteerResult struct {
 // (except its own tool-channel credential) and applications apply their own
 // visibility rules before showing or storing them.
 type Event struct {
-	Kind   string `json:"kind"` // text_delta, text, tool_started, tool_completed, status, usage, context, quota, credits, account
-	TurnID string `json:"turn_id"`
-	ItemID string `json:"item_id,omitempty"`
-	Text   string `json:"text,omitempty"`
-	Tool   string `json:"tool,omitempty"`
+	// ErrorFacts describes a library-owned tool failure without provider text.
+	ErrorFacts *harness.Facts `json:"error_facts,omitempty"`
+	Kind       string         `json:"kind"` // text_delta, text, tool_started, tool_completed, status, usage, context, quota, credits, account
+	TurnID     string         `json:"turn_id"`
+	ItemID     string         `json:"item_id,omitempty"`
+	Text       string         `json:"text,omitempty"`
+	Tool       string         `json:"tool,omitempty"`
 	// Status on tool_completed is "completed", "failed", or the engine's own
 	// terminal word (Codex's "declined", an API session's "refused").
 	Status string `json:"status,omitempty"`

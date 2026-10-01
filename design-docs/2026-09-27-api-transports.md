@@ -247,10 +247,9 @@ a gateway may already have routed or retried.
 Superseded by increment 6 of
 [the unified-harness design](2026-09-27-unified-harness.md). The library runs
 the agent loop itself over only the caller's hosted tools. That makes the
-restricted tool surface hold by construction, and sandboxing is never claimed.
-[The API workbench design](2026-09-29-api-workbench.md) revises that last
-point: once its stage 2 lands, the library's own command tool runs in a
-sandbox proved before launch, and `Support` claims it as unknown.
+restricted tool surface hold by construction. Opt-in API workbench commands
+use a separately proved OS sandbox (see the API workbench design); caller
+tools still execute outside that sandbox.
 The reasoning below is kept for history.
 
 Do not add a remote endpoint to `session.Options`. A remote API has no evidence

@@ -7,3 +7,4 @@ import "time"
 // Other systems get the process-group kill only.
 func candidates(time.Time) []candidate { return nil }
 func environment(int) []string         { return nil }
+func processIdentity(int) string       { return "" }

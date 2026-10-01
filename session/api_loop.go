@@ -163,7 +163,12 @@ func (s *Session) runAPICall(ctx context.Context, t *Turn, response int, call co
 		}
 		// Output is what the model was answered: the handler's bounded result,
 		// its error, or the library's refusal.
-		s.emit(t, s.withToolPayload(Event{Kind: "tool_completed", ItemID: call.ID, Tool: name, Status: status}, nil, out.text))
+		event := Event{Kind: "tool_completed", ItemID: call.ID, Tool: name, Status: status}
+		if out.code != "" {
+			facts := (&TurnError{Engine: harness.OpenAICompatible, Code: out.code}).HarnessFacts()
+			event.ErrorFacts = &facts
+		}
+		s.emit(t, s.withToolPayload(event, nil, out.text))
 		return true
 	case <-ctx.Done():
 		// Workspace handlers bound their cancellation wait. Retain the turn

@@ -10,6 +10,15 @@ import (
 	harness "github.com/shhac/lib-agent-harness"
 )
 
+func TestWorkbenchWriteRefGolden(t *testing.T) {
+	o := Options{Provider: harness.Provider{Engine: harness.OpenAICompatible, API: harness.API{BaseURL: "https://gateway.invalid/v1", Dialect: harness.OpenAIChatCompletions}}, Model: "model", RuntimeHome: "/state", WorkDir: "/work", Restriction: &Restriction{Tools: ToolHost{Server: "work"}}, Workbench: &Workbench{Write: true}}
+	got, _ := json.Marshal(apiReference(o, "s1"))
+	const want = `{"engine":"openai-compatible","id":"s1","home":"/state","work_dir":"/work","config_hash":"115cddf1c3aaabdd46a89ce58a17b679a08821dd58de53b7d093bc09c92f83a8"}`
+	if string(got) != want {
+		t.Fatalf("write ref: %s", got)
+	}
+}
+
 // Callers persist Refs and resume from them later. These literals pin the
 // persisted form of defaulted configurations: if one moves, a stored session
 // stops resuming. They were recorded before the shared harness vocabulary

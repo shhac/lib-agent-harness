@@ -68,7 +68,7 @@ const (
 	AppendInstructions  Feature = "append_instructions"
 	ReplaceInstructions Feature = "replace_instructions"
 	RestrictTools       Feature = "restrict_tools" // only configured tools, proven before launch
-	Sandbox             Feature = "sandbox"        // native tools inside a proven OS sandbox
+	Sandbox             Feature = "sandbox"        // native tools or workbench commands inside a proven OS sandbox
 	CostReport          Feature = "cost"           // the harness values its token spend
 	CacheSplit          Feature = "cache_split"    // cached input is reported apart from fresh
 	ContextWindow       Feature = "context_window" // the serving model's window is stated
@@ -135,7 +135,13 @@ func Support(e Engine, op Operation, f Feature) Capability {
 // sandboxed hosting of a CLI harness are unavailable on Windows. An API
 // session has no process to contain, so it is unaffected.
 func platform(e Engine, op Operation, f Feature, c Capability) Capability {
-	if f == WorkspaceRead && runtime.GOOS != "darwin" && runtime.GOOS != "linux" && runtime.GOOS != "windows" {
+	if e == OpenAICompatible && op == Session && (f == Sandbox || f == Loopback || f == Background) && runtime.GOOS != "darwin" {
+		return Capability{Unsupported, "API commands require a proved macOS Seatbelt sandbox; Linux awaits bubblewrap and Windows has no command sandbox"}
+	}
+	if e == OpenAICompatible && op == Session && f == WorkspaceWrite && runtime.GOOS == "windows" {
+		c.Reason += "; not directory-synced; new files inherit the directory ACL"
+	}
+	if (f == WorkspaceRead || f == WorkspaceWrite) && runtime.GOOS != "darwin" && runtime.GOOS != "linux" && runtime.GOOS != "windows" {
 		return Capability{Unsupported, "workspace mount checks are unavailable on this platform"}
 	}
 	if runtime.GOOS == "windows" && op == Session && e.Transport() == CLITransport && (f == RestrictTools || f == Sandbox || f == Tools || f == Loopback) {
@@ -290,7 +296,7 @@ var supportTable = map[supportKey]Capability{
 
 	{OpenAICompatible, Run, Available}:               {Unsupported, "an API endpoint has no native agent; use Complete"},
 	{OpenAICompatible, Session, WorkspaceRead}:       {Composed, "the library's read_file, list_files and search_files: regular, singly linked files reached inside WorkDir on WorkDir's own mount"},
-	{OpenAICompatible, Session, WorkspaceWrite}:      {Unsupported, "not offered yet"},
+	{OpenAICompatible, Session, WorkspaceWrite}:      {Composed, "the library's write_file and edit_file, inside WorkDir on WorkDir's own mount; .git is never written; symlinks are refused, not written through; each write is an atomic, synced replacement"},
 	{OpenAICompatible, Session, Available}:           {Composed, "the library runs the agent loop over the endpoint, keeping the conversation in RuntimeHome"},
 	{OpenAICompatible, Session, Resume}:              {Composed, "the library reloads its own transcript; a call interrupted mid-run is answered as an unknown outcome, never re-run"},
 	{OpenAICompatible, Session, Interrupt}:           {Composed, "the library cancels the in-flight request and the running handler"},
@@ -302,7 +308,9 @@ var supportTable = map[supportKey]Capability{
 	{OpenAICompatible, Session, Effort}:              {Native, "requires API.EffortParameter"},
 	{OpenAICompatible, Session, ProvidedSkills}:      {Composed, "the library indexes provided skills and answers its read-only skill tool; a permitted skill's scripts run as SkillRun says"},
 	{OpenAICompatible, Session, IncludeGlobalSkills}: {Unsupported, "an API endpoint has no installed skills; only Default or Exclude is accepted"},
-	{OpenAICompatible, Session, Sandbox}:             {Unsupported, "an API session has no native tools to sandbox"},
+	{OpenAICompatible, Session, Sandbox}:             {Unknown, "Workbench.Commands proves its pinned Seatbelt profile before launch or refuses the session"},
+	{OpenAICompatible, Session, Loopback}:            {Unknown, "Workbench.Commands.Loopback requires a positive localhost and negative off-machine canary before launch"},
+	{OpenAICompatible, Session, Background}:          {Composed, "Workbench.Commands runs each contained process group at nice 10"},
 	{OpenAICompatible, Session, Compact}:             {Unsupported, "the library does not compact a composed session's history"},
 	{OpenAICompatible, Session, CacheSplit}:          cacheVaries,
 	{OpenAICompatible, Session, ContextWindow}:       {Unknown, "estimated from each response's input; Chat Completions states no window"},

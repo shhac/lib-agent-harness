@@ -46,7 +46,72 @@ And after a sixth review:
 
 **Status.** Stage 1 has shipped (LAH-2 and LAH-8): read-only tools,
 opened-handle checks on Linux, macOS and Windows, one bounded workspace
-worker, and the WorkspaceRead claim. Stage 2 (LAH-3) is not implemented.
+worker, and the WorkspaceRead claim. LAH-3 implements stage 2a and the macOS
+stage 2b command path. Linux stage 2c is split into LAH-9 and remains refused.
+The macOS profile, keychain and disk-image witnesses require the real CI run
+or the owner witness below before this implementation is considered proved.
+
+### LAH-3 implementation witnesses and containment
+
+The command and probe share a versioned profile builder and supervisor
+protocol, including its private completion descriptor. The probe also
+requires positive kernel marker evidence for that live supervisor, and verifies
+group inspection with both an empty group and a live background child. Recovery
+refuses admission when process enumeration is unavailable, rather than
+treating an unavailable scan as evidence that a launch is gone. Cache keys
+include the binary's content hash and the generated template's hash.
+The keychain witness discovers an existing path with `security list-keychains
+-d user` outside the sandbox, then runs `security show-keychain-info <path>`
+both outside and inside. The outside query must succeed and the inside query
+must fail. This avoids treating a scratch HOME's default search path as a
+keychain-service escape. Missing prerequisites refuse proof; no keychain
+contents are read.
+The broad `/System` grant excludes `/System/Volumes/Data`. The canary checks
+outside markers and private transcripts through their APFS data-volume
+spellings when those spellings identify the same files. It also proves denial
+of listing the real owner's home (and its data-volume spelling), after proving
+that listing works outside the sandbox. No credential contents are read.
+Unix socket proof uses a real `nc -U -w 2` connection with EOF input, never
+`nc -z -U`, which macOS does not support. The identical command must reach an
+owned socket outside Seatbelt first; the inside attempt must neither report
+success nor reach that listener.
+The keychain witness is a defence-in-depth file and Mach check, not an isolated
+Mach-service proof: the explicit profile allowlist excludes SecurityServer.
+A host without a usable login keychain refuses Commands.
+The mount witness uses a disposable 8 MiB HFS+ image
+created by `hdiutil create` outside the sandbox. An outside attach must change
+the mount device, then detach must restore the original directory identity,
+using the same scratch environment. Only then the canary attempts `hdiutil attach
+-nobrowse -mountpoint <workspace>/mount <scratch>/canary.dmg` inside it.
+A successful attach fails the proof and cleanup attempts to detach it. No
+owner image or keychain contents are read. Run `go test -race -v ./session -run
+'TestWorkbenchRealCanary|TestWorkbenchMacOSEditAndRunSession|TestWorkbenchCommand'
+` with `AGENT_HARNESS_TEST_NO_SKIP=1` on an unsandboxed Mac to exercise these
+witnesses. Missing runtime prerequisites fail; permission refusal skips only
+the nested-launch preflight when NO_SKIP is unset.
+
+Each session syncs an unpredictable marker and launch time in
+`workbench-token.json` before running commands. Open and Resume sweep an old
+marker before admitting work; Close closes all retained per-launch handles
+and sweeps the session marker. A shell supervisor stays alive after foreground
+completion with an argument marker that macOS exposes even for protected
+platform binaries. The command's shell receives no descriptor for the
+supervisor's completion pipe. Bounded stdout/stderr copiers drain until EOF or
+a two-second capture window, then discard output until group settlement;
+ordinary background servers
+continue beneath the supervisor until Close or crash recovery sweeps them.
+The supervisor waits using a shell builtin on a private pipe, without an idle
+sleep child. It retains the pipe's writer itself so launcher death cannot
+erase its live marker. After foreground completion, the parent reaps empty
+groups immediately and monitors groups with background jobs until the last
+member exits, inspecting at most once every two seconds per retained group.
+Run kills remaining group members if the supervisor is killed. Settled process handles are removed before the next command;
+a limit of 64 live command groups bounds resources even when inspection fails.
+Excess launches return `command_process_limit` without starting a process.
+Before signalling, the sweep rechecks the kernel process start identity to
+avoid PID reuse. As with the existing process sweep, descendants deliberately
+detaching and removing their markers may evade discovery. A sweep is never
+evidence of rollback.
 
 This supersedes one line in two earlier documents: "sandboxing is never
 claimed" for API sessions, in
@@ -1274,10 +1339,9 @@ directory. It reuses the existing outcome vocabulary and adds a few outcomes:
 | Linux: `privilege` (read `/proc/self/status`) | `CapEff`, `CapPrm`, `CapInh` and `CapAmb` all zero, and `NoNewPrivs: 1` |
 | Linux: `overlay` (with util-linux where the system set has it: `umount` and `umount -l` on `.git`, `mount -o remount,rw,bind` on `.git`, `mount --bind` of the workspace to `/tmp/x`, and `unshare -Urm` wrapping each, each followed by an append to `.git/config`) | every step refused. A missing tool is recorded as not attempted, because the adversarial CI test makes the same calls without util-linux |
 
-After every canary run the probe checks that the host's `.git/config` in the
-disposable workspace is byte-for-byte unchanged, whatever the script reported.
-A change fails the proof even if every line said "refused".
 | `home` (read a file the probe placed in a stand-in home, beside the parents the layout created) | refused |
+| macOS: `real-home` (list the real owner's home after an outside positive control) | refused |
+| macOS: `outside-data`, `runtime-data`, `real-home-data` (same witnesses through APFS data-volume spellings, when they identify the same paths) | refused |
 | `outside` (read marker files the probe placed beside the workspace and in a stand-in host-private directory; on Linux, stat an `/etc` file outside the list) | refused, or absent |
 | `system` (run `/bin/sh`, list `/usr/bin`, read `/etc/passwd`) | allowed |
 | `readset` (read a file in a `Commands.Read` directory, then try to write there) | read allowed, write refused |
@@ -1288,8 +1352,12 @@ A change fails the proof even if every line said "refused".
 | `network` (reach `offMachineWitness`) | refused; the listener the probe owns must count no connection |
 | loopback (`loopbackCanary`, only with `Loopback`) | reaches the probe's loopback listener and binds its own |
 | `canary-ran` | printed last; without it the check failed |
-| macOS: keychain (`security list-keychains -d user` returns nothing usable) | refused |
+| macOS: keychain (`security show-keychain-info` for a path positively queried outside) | refused |
 | macOS: `mount` (attach a disk image the probe made, at a mount point in the workspace) | refused, and nothing mounted afterwards |
+
+After every canary run the probe checks that the host's `.git/config` in the
+disposable workspace is byte-for-byte unchanged, whatever the script reported.
+A change fails the proof even if every line said "refused".
 
 The rules proved in the earlier sandbox work apply as they did there:
 
@@ -1315,7 +1383,7 @@ checked:
   read directory, its covering tmpfs, whether it is under home, and its depth.
 
 The cache lives only in memory, so a sysctl change is seen by the next process.
-The macOS keychain check needs a live confirmation that `list-keychains` is the
+The macOS keychain check needs a live confirmation that `show-keychain-info` is the
 right witness, because a `(deny default)` profile may make it fail for reasons
 other than the keychain. LAH-3 picks the witness and records it.
 
@@ -1358,7 +1426,7 @@ with restricted tokens) is out of scope.
 These are for `OpenAICompatible` / `Session`. The README's Support table
 changes with each stage when that stage lands, not before.
 
-| Feature | Today | Stage 1 | Stage 2 |
+| Feature | Before workbench | Stage 1 | Stage 2 (including planned 2c) |
 | --- | --- | --- | --- |
 | `WorkspaceRead` (new, `"workspace_read"`) | — | `Composed`, "the library's read_file, list_files and search_files: regular, singly linked files reached inside WorkDir on WorkDir's own mount" | same |
 | `WorkspaceWrite` (new, `"workspace_write"`) | — | `Unsupported`, "not offered yet" | `Composed`, "the library's write_file and edit_file, inside WorkDir on WorkDir's own mount; .git is never written; symlinks are refused, not written through; each write is an atomic, synced replacement"; on Windows the reason adds "not directory-synced; new files take the directory's ACL" |
@@ -1366,6 +1434,10 @@ changes with each stage when that stage lands, not before.
 | `Loopback` | no entry (unsupported) | unchanged | darwin: `Unknown`, proved by the canary; linux: `Unsupported` with the reason above (unless task 7 lands); windows: `Unsupported` |
 | `Background` | no entry (unsupported) | unchanged | darwin, linux: `Composed`, "the workbench's commands run at nice 10"; windows: `Unsupported` as for every engine |
 | `RestrictTools` | `Composed` | reason gains "and the library's workbench tools" | same |
+
+Stage 2a and 2b are implemented. Linux commands, Sandbox and Background remain
+unsupported until the separate stage 2c (LAH-9) lands; the Linux entries above
+describe that planned stage, not current capability claims.
 
 The Windows rows come from `platform()`, which already exempts API sessions
 from the refusal that applies to CLIs. It gains an `OpenAICompatible` case for
@@ -1654,7 +1726,7 @@ shapes, and the tests use synthetic responses in those shapes:
    refusal of a `WorkDir` that contains home, and the profile's refusal of mount
    operations with the canary's `mount` check, `run_command`'s request-shape case, `Sandbox`/`Loopback` for darwin,
    and a session test that edits and runs a command.
-6. **Stage 2c (LAH-3), Linux.** Add `bwrapArgs(layout)` with its five phases:
+6. **Stage 2c (LAH-9), Linux.** Add `bwrapArgs(layout)` with its five phases:
    - every tmpfs;
    - every directory, system destinations included;
    - the pinned Linux system set;
@@ -1685,3 +1757,6 @@ shapes, and the tests use synthetic responses in those shapes:
    data-policy notice. crew-code-review needs no change unless it adopts API
    sessions. Release each stage as a minor version, as breaking where options
    change.
+
+On macOS, a detached protected binary can hide its marker without erasing it.
+Such detached jobs are outside the supervisor group and may evade recovery.

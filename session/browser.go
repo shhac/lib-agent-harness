@@ -61,6 +61,9 @@ func normalizeBackground(o Options) error {
 	if !o.Background {
 		return nil
 	}
+	if o.Provider.Engine == harness.OpenAICompatible && (o.Workbench == nil || o.Workbench.Commands == nil) {
+		return &UnsupportedError{Engine: o.Provider.Engine, Operation: "background", Code: RefusedNotOffered, Capability: harness.Capability{Availability: harness.Unsupported, Reason: "API background priority requires Workbench.Commands"}}
+	}
 	if c := harness.Support(o.Provider.Engine, harness.Session, harness.Background); !c.Usable() {
 		return &UnsupportedError{Engine: o.Provider.Engine, Operation: "background", Code: RefusedNotOffered, Capability: c}
 	}

@@ -3,7 +3,9 @@ package process
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -18,11 +20,21 @@ func candidates(since time.Time) []candidate {
 	var out []candidate
 	for _, proc := range procs {
 		started := time.Unix(proc.Proc.P_starttime.Unix())
-		if !started.Before(since) {
-			out = append(out, candidate{pid: int(proc.Proc.P_pid), parent: int(proc.Eproc.Ppid)})
+		if !started.Before(since) && proc.Proc.P_stat != 5 { // SZOMB is not running.
+			sec, nsec := proc.Proc.P_starttime.Unix()
+			out = append(out, candidate{pid: int(proc.Proc.P_pid), parent: int(proc.Eproc.Ppid), group: int(proc.Eproc.Pgid), identity: fmt.Sprintf("%d:%d", sec, nsec)})
 		}
 	}
 	return out
+}
+
+func processIdentity(pid int) string {
+	p, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
+	if err != nil || p == nil || int(p.Proc.P_pid) != pid {
+		return ""
+	}
+	sec, nsec := p.Proc.P_starttime.Unix()
+	return fmt.Sprintf("%d:%d", sec, nsec)
 }
 
 // environment reads a process's environment from the kernel's copy of its
@@ -41,8 +53,12 @@ func environment(pid int) []string {
 	for i < len(fields) && len(fields[i]) == 0 {
 		i++
 	}
-	i += argc
 	var env []string
+	for end := i + argc; i < end && i < len(fields); i++ {
+		if token, ok := strings.CutPrefix(string(fields[i]), "--agent-harness-token="); ok && len(token) == 32 {
+			env = append(env, launchVariable+"="+token)
+		}
+	}
 	for ; i < len(fields) && len(fields[i]) > 0; i++ {
 		env = append(env, string(fields[i]))
 	}

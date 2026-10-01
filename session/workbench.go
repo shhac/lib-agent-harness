@@ -6,15 +6,20 @@ package session
 // the two lists cannot drift apart. The tools themselves are in
 // workbench_files.go.
 //
-// Stage 1 offers read-only tools with opened-handle checks and bounded I/O.
+// Read tools are always present. Writes are opt-in and atomic; shell commands
+// require a pre-launch proof of the pinned operating-system sandbox.
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
+	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/completion"
 )
 
@@ -23,7 +28,22 @@ import (
 // search_files, which run in the library's process, confined to WorkDir.
 //
 // Reads require singly linked regular files on the workspace mount.
-type Workbench struct{}
+type Workbench struct {
+	system []string // the pinned set selected and proved for this launch
+	// Write adds atomic write_file and edit_file tools.
+	Write bool
+	// NewFileMode defaults to 0600. Windows uses the parent directory ACL.
+	NewFileMode fs.FileMode
+	Commands    *Commands
+}
+
+// Commands configures sandboxed shell execution.
+type Commands struct {
+	Loopback bool
+	Read     []string
+	Env      []string
+	Timeout  time.Duration
+}
 
 // The workbench's tool names. All six are reserved whenever a workbench is
 // set, including those its options do not switch on, so no later tool can
@@ -69,6 +89,12 @@ func normalizeWorkbench(o Options) (Options, error) {
 	if o.Workbench == nil {
 		return o, nil
 	}
+	if o.Workbench.Commands != nil && runtime.GOOS != "darwin" {
+		return o, &UnsupportedError{Engine: o.Provider.Engine, Operation: "sandbox", Code: RefusedNotOffered, Capability: harness.Support(o.Provider.Engine, harness.Session, harness.Sandbox)}
+	}
+	if o.Workbench.NewFileMode & ^fs.FileMode(0666) != 0 {
+		return o, refuse(o, "workbench", RefusedLimit, "NewFileMode must contain only permission bits within 0666")
+	}
 	if o.WorkDir == "" {
 		return o, refuse(o, "work_dir", RefusedWorkDir, "a workbench requires WorkDir, the workspace its tools are confined to")
 	}
@@ -100,9 +126,12 @@ func normalizeWorkbench(o Options) (Options, error) {
 		return o, refuse(o, "tools", RefusedLimit, "a workbench needs ToolHost.MaxResultBytes of at least 4096, so its results can say where they were cut")
 	}
 	frozen := *o.Workbench
+	if frozen.NewFileMode == 0 {
+		frozen.NewFileMode = 0600
+	}
 	o.Workbench = &frozen
 	o.WorkDir = work
-	return o, nil
+	return normalizeWorkbenchCommands(o)
 }
 
 // nested reports whether inner is outer or lies inside it. Both are absolute
@@ -159,13 +188,29 @@ func workbenchDigest(o Options) any {
 	if o.Workbench == nil {
 		return nil
 	}
-	return struct {
+	base := struct {
 		WorkDir  string
 		Write    bool
 		Commands bool
 		Loopback bool
 		Read     []string
-	}{WorkDir: o.WorkDir}
+	}{WorkDir: o.WorkDir, Write: o.Workbench.Write}
+	if c := o.Workbench.Commands; c != nil {
+		base.Commands = true
+		base.Loopback = c.Loopback
+		base.Read = c.Read
+	}
+	if !o.Workbench.Write {
+		return base
+	}
+	mode := o.Workbench.NewFileMode
+	if mode == 0 {
+		mode = 0600
+	}
+	return struct {
+		Base        any
+		NewFileMode uint32
+	}{base, uint32(mode.Perm())}
 }
 
 // workbenchDefinitions are the workbench tools the options switch on. Both
@@ -174,7 +219,7 @@ func workbenchDefinitions(o Options) []ToolDefinition {
 	if o.Workbench == nil {
 		return nil
 	}
-	return []ToolDefinition{
+	defs := []ToolDefinition{
 		{
 			Name:        workbenchReadFile,
 			Description: "Read a UTF-8 text file in the workspace. Returns at most 2000 lines and 64 KiB per call, and says where to continue.",
@@ -212,6 +257,13 @@ func workbenchDefinitions(o Options) []ToolDefinition {
 			}, "required": []any{"pattern"}, "additionalProperties": false},
 		},
 	}
+	if o.Workbench.Write {
+		defs = append(defs, workbenchWriteDefinitions()...)
+	}
+	if o.Workbench.Commands != nil {
+		defs = append(defs, workbenchCommandDefinition())
+	}
+	return defs
 }
 
 // completionTools converts definitions to the request's function tools.
@@ -233,6 +285,14 @@ type workbenchHandler struct {
 
 func (h workbenchHandler) CallTool(ctx context.Context, call ToolCall) (ToolResult, error) {
 	switch call.Name {
+	case workbenchWriteFile, workbenchEditFile:
+		r, err := h.ws.dispatchWrite(ctx, func() (ToolResult, error) { return h.ws.writeFile(ctx, call.Name, call.Arguments) })
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return workbenchError(call.Name, wbWriteFailed, ""), nil
+		}
+		return r, err
+	case workbenchRunCommand:
+		return h.ws.runCommand(ctx, call.Arguments)
 	case workbenchReadFile:
 		return h.ws.dispatch(ctx, func() (ToolResult, error) { return h.ws.readFile(ctx, call.Arguments) })
 	case workbenchSearchFiles:

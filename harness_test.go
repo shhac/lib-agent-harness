@@ -179,7 +179,7 @@ func TestOpenAICompatibleSessionClaims(t *testing.T) {
 	if c := Support(OpenAICompatible, Session, MaxOutputTokens); c.Availability != Native {
 		t.Errorf("API session reply cap: %+v", c)
 	}
-	for _, f := range []Feature{Sandbox, Compact, IncludeGlobalSkills, CostReport} {
+	for _, f := range []Feature{Compact, IncludeGlobalSkills, CostReport} {
 		if c := Support(OpenAICompatible, Session, f); c.Usable() || c.Reason == "" {
 			t.Errorf("API session %s: %+v", f, c)
 		}
@@ -266,7 +266,7 @@ func TestLoopbackClaims(t *testing.T) {
 	}
 	for _, e := range Engines() {
 		for _, op := range Operations() {
-			if e == Claude && op == Session {
+			if op == Session && (e == Claude || (e == OpenAICompatible && runtime.GOOS == "darwin")) {
 				continue
 			}
 			if c := Support(e, op, Loopback); c.Usable() {
@@ -310,7 +310,7 @@ func TestBackgroundAndToolImageClaims(t *testing.T) {
 			}
 		}
 	}
-	if Support(OpenAICompatible, Session, Background).Usable() || Support(Claude, Complete, Background).Usable() {
+	if (Support(OpenAICompatible, Session, Background).Usable() != (runtime.GOOS == "darwin")) || Support(Claude, Complete, Background).Usable() {
 		t.Error("background claimed where nothing is launched for it")
 	}
 	if Support(Claude, Session, ToolImages).Availability != Native || Support(Codex, Session, ToolImages).Availability != Native || Support(Grok, Session, ToolImages).Availability != Unknown {
@@ -319,13 +319,25 @@ func TestBackgroundAndToolImageClaims(t *testing.T) {
 }
 
 func TestWorkbenchCapabilityClaims(t *testing.T) {
+	for _, feature := range []Feature{Sandbox, Loopback, Background} {
+		want := Unsupported
+		if runtime.GOOS == "darwin" {
+			want = Unknown
+			if feature == Background {
+				want = Composed
+			}
+		}
+		if got := Support(OpenAICompatible, Session, feature); got.Availability != want || got.Reason == "" {
+			t.Fatalf("%s: %+v", feature, got)
+		}
+	}
 	reason := "the library's read_file, list_files and search_files: regular, singly linked files reached inside WorkDir on WorkDir's own mount"
 	read := Support(OpenAICompatible, Session, WorkspaceRead)
 	supported := runtime.GOOS == "linux" || runtime.GOOS == "darwin" || runtime.GOOS == "windows"
 	if supported && (read.Availability != Composed || read.Reason != reason) || !supported && read.Usable() {
 		t.Fatal(read)
 	}
-	if write := Support(OpenAICompatible, Session, WorkspaceWrite); write.Availability != Unsupported || write.Reason != "not offered yet" {
+	if write := Support(OpenAICompatible, Session, WorkspaceWrite); write.Availability != Composed {
 		t.Fatal(write)
 	}
 	if c := Support(OpenAICompatible, Session, RestrictTools); c.Reason != "only the caller's hosted tools and the library's workbench tools exist: the library writes every request itself" {

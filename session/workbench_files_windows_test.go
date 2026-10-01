@@ -1,6 +1,8 @@
 package session
 
 import (
+	"github.com/shhac/lib-agent-harness/internal/testenv"
+	"io/fs"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -41,7 +43,7 @@ func TestWorkbenchShortNamesDoNotUnhide(t *testing.T) {
 	file := shortName(t, filepath.Join(work, reserved))
 	dir := shortName(t, filepath.Join(work, ".harness-workbench-dir.tmp"))
 	if git == "" || file == "" || dir == "" {
-		t.Skip("the temporary volume makes no 8.3 short names")
+		testenv.SkipIfRefused(t, "the temporary volume makes no 8.3 short names", fs.ErrPermission)
 	}
 	for _, path := range []string{git, git + "/objects", git + "/objects/pack", dir} {
 		refusedWith(t, call(t, ws, workbenchListFiles, map[string]any{"path": path}), wbNotListed)

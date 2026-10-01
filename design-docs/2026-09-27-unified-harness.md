@@ -304,10 +304,10 @@ releasable.
    - **Tools:** only the caller's hosted tools and composed skills exist. The
      library writes every request itself, so the restricted tool surface holds
      by construction rather than by probe. `Support` says `RestrictTools` is
-     composed and `Sandbox` unsupported: there are no native tools to
-     sandbox. ([The API workbench design](2026-09-29-api-workbench.md)
-     supersedes this for sessions given its workspace tools: stage 2's
-     command tool runs in a sandbox the library proves before launch.)
+     composed. Optional workbench file tools run through checked workspace
+     handles; macOS workbench commands use a Seatbelt sandbox proved before
+     launch (`Sandbox` Unknown). Linux and Windows commands are refused.
+     See [the API workbench design](2026-09-29-api-workbench.md).
    - **State:** each session keeps an append-only transcript under
      `RuntimeHome`, locked while a process has it open. The transcript holds
      messages, each tool call before it runs, each result after it returns, and

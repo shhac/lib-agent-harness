@@ -81,10 +81,11 @@ func (w *workspace) rootNode() (*dirNode, error) {
 // breadth-first listing opens about one directory per directory listed. It
 // holds at most one handle per level.
 type cursor struct {
-	w      *workspace
-	policy walkPolicy
-	nodes  []*dirNode
-	roots  []*os.Root
+	created []*os.Root // write-created directories remain private until commit
+	w       *workspace
+	policy  walkPolicy
+	nodes   []*dirNode
+	roots   []*os.Root
 }
 
 func (w *workspace) newCursor(root *dirNode, policy walkPolicy) *cursor {

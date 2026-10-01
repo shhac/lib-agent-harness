@@ -88,11 +88,17 @@ func (h *toolHost) execute(ready *admitted, turn string, settle func(toolOutcome
 	defer h.release()
 	result, err := h.cfg.Handler.CallTool(ready.call.ctx, ToolCall{TurnID: turn, Name: ready.name, Arguments: ready.arguments})
 	if err != nil {
+		if errors.Is(err, errWorkbenchCommandUnknown) {
+			return toolOutcome{text: result.Content, isError: true, ran: true, unknown: true, code: "command_outcome_unknown"}
+		}
+		if errors.Is(err, errWorkbenchWriteUnknown) {
+			return toolOutcome{text: result.Content, isError: true, ran: true, unknown: true, code: wbWriteUnknown}
+		}
 		if workspaceStuck(err) {
 			return toolOutcome{text: unknownOutcomeText, isError: true, ran: true, unknown: true}
 		}
-		if errors.Is(err, context.Canceled) {
-			return toolOutcome{text: "tool execution was cancelled; its effect is unknown and must be established from evidence", isError: true, ran: true}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return toolOutcome{text: "tool execution was cancelled; its effect is unknown and must be established from evidence", isError: true, ran: true, unknown: ready.name == workbenchRunCommand}
 		}
 		return toolOutcome{text: bound(err.Error(), 2048), isError: true, ran: true}
 	}
@@ -119,6 +125,7 @@ func (h *toolHost) bounded(text string) string { return bound(text, h.cfg.result
 // toolOutcome is what one call produced for the model. ran is false for a
 // refusal, whose reason is set: nothing was executed.
 type toolOutcome struct {
+	code    string
 	unknown bool
 	text    string
 	isError bool

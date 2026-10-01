@@ -189,13 +189,13 @@ type apiSession struct {
 func normalizeAPI(o Options) (Options, error) {
 	switch {
 	case o.Sandbox != nil:
-		return o, &UnsupportedError{Engine: o.Provider.Engine, Operation: "sandbox", Code: RefusedNotOffered, Capability: harness.Support(o.Provider.Engine, harness.Session, harness.Sandbox)}
+		return o, refuse(o, "sandbox", RefusedNotOffered, "API sessions use Workbench.Commands for their sandbox; Sandbox is for native sessions")
 	case o.Model == "":
 		return o, refuse(o, "model", RefusedModelRequired, "an API session requires an explicit model")
 	case o.WorkDir != "" && o.Workbench == nil:
 		return o, refuse(o, "work_dir", RefusedConflict, "an API session has no workspace: the caller's tools own theirs, and SkillRun.WorkDir says where skill scripts run; leave WorkDir unset")
 	case len(o.Env) > 0:
-		return o, refuse(o, "env", RefusedConflict, "an API session starts no process; leave Env unset")
+		return o, refuse(o, "env", RefusedConflict, "an API command environment belongs in Workbench.Commands.Env; leave Env unset")
 	case policySet(o.Policy):
 		return o, refuse(o, "policy", RefusedOtherEnginePolicy, "an API session reads no native policy; leave Policy unset")
 	}
@@ -407,6 +407,9 @@ func apiReference(o Options, id string) Ref {
 // openAPI starts or resumes a session whose loop the library runs. Its
 // options are already normalized and, for a resume, checked against r.
 func openAPI(ctx context.Context, o Options, r *Ref) (*Session, error) {
+	if err := proveWorkbench(ctx, o); err != nil {
+		return nil, err
+	}
 	var (
 		ref     Ref
 		store   *transcript
@@ -429,6 +432,28 @@ func openAPI(ctx context.Context, o Options, r *Ref) (*Session, error) {
 	if err != nil {
 		ws.close()
 		return nil, err
+	}
+	if ws != nil {
+		ws.id = ref.ID
+		if err = setupWorkbenchCommands(ws, o, ref.ID); err != nil {
+			store.close()
+			ws.close()
+			if r == nil {
+				_ = os.RemoveAll(sessionDir(o.RuntimeHome, ref.ID))
+			}
+			return nil, err
+		}
+		if err = ws.cleanupWrites(records); err != nil {
+			if ws.commands != nil {
+				ws.commands.close()
+			}
+			store.close()
+			ws.close()
+			if r == nil {
+				_ = os.RemoveAll(sessionDir(o.RuntimeHome, ref.ID))
+			}
+			return nil, err
+		}
 	}
 	s := &Session{options: o, ref: ref, caps: CapabilitiesFor(o.Provider.Engine), lifetime: ctx, done: make(chan struct{}), opGate: make(chan struct{}, 1), removeSkillFiles: func() {}}
 	complete := o.complete
@@ -617,6 +642,14 @@ func (a *apiSession) shutdown(host *toolHost) {
 			settled := host.settled
 			host.mu.Unlock()
 			<-settled
+		}
+		if a.workspace != nil {
+			_ = a.workspace.cleanupWrites(a.records)
+			if a.workspace.commands != nil {
+				if err := a.workspace.commands.close(); err != nil && a.workspace.failed != nil {
+					a.workspace.failed(err)
+				}
+			}
 		}
 		a.store.close()
 		a.workspace.close()

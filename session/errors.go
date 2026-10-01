@@ -135,19 +135,21 @@ func toolHostRefusal(o Options, err error) *UnsupportedError {
 const (
 	CapabilityUnsupportedPlatform = "restricted_session_unsupported_platform"
 	CapabilityNativeToolsPresent  = "native_tools_present"
-	CapabilityHostedToolsMissing  = "hosted_tools_missing"
-	CapabilityInstructionsMerged  = "inherited_instructions_merged"
-	CapabilityChangedModel        = "changed_model"
-	CapabilityChangedEffort       = "changed_effort"
-	CapabilityProbeNoRequest      = "probe_made_no_request"
-	CapabilityProbeUnreadable     = "probe_request_unreadable"
-	CapabilityProbeTimeout        = "probe_timed_out"
-	CapabilityProbeFailed         = "probe_could_not_run"
-	CapabilityCatalogUnavailable  = "model_catalog_unavailable"
-	CapabilityCatalogRestriction  = "model_catalog_restriction_failed"
-	CapabilityServerNotLoaded     = "tool_server_not_loaded"
-	CapabilityServerNameReserved  = "tool_server_name_reserved"
-	CapabilityLoginUnavailable    = "harness_login_unavailable"
+	// CapabilitySandboxToolMissing: the OS sandbox executable is unavailable.
+	CapabilitySandboxToolMissing = "sandbox_tool_missing"
+	CapabilityHostedToolsMissing = "hosted_tools_missing"
+	CapabilityInstructionsMerged = "inherited_instructions_merged"
+	CapabilityChangedModel       = "changed_model"
+	CapabilityChangedEffort      = "changed_effort"
+	CapabilityProbeNoRequest     = "probe_made_no_request"
+	CapabilityProbeUnreadable    = "probe_request_unreadable"
+	CapabilityProbeTimeout       = "probe_timed_out"
+	CapabilityProbeFailed        = "probe_could_not_run"
+	CapabilityCatalogUnavailable = "model_catalog_unavailable"
+	CapabilityCatalogRestriction = "model_catalog_restriction_failed"
+	CapabilityServerNotLoaded    = "tool_server_not_loaded"
+	CapabilityServerNameReserved = "tool_server_name_reserved"
+	CapabilityLoginUnavailable   = "harness_login_unavailable"
 	// CapabilityBrowserToolsMissing: startup did not advertise the configured
 	// browser integration's tools. This does not identify extension connectivity.
 	CapabilityBrowserToolsMissing       = "browser_tools_missing"
@@ -191,6 +193,7 @@ type CapabilityError struct {
 
 func (e *CapabilityError) Error() string {
 	message := map[string]string{
+		CapabilitySandboxToolMissing:        "the required OS sandbox tool is missing; install a supported runtime",
 		CapabilityUnsupportedPlatform:       "restricted worker sessions are not available on this platform",
 		CapabilityNativeToolsPresent:        "the installed harness kept tools this session did not configure",
 		CapabilityHostedToolsMissing:        "the installed harness did not offer the tools this session configured",

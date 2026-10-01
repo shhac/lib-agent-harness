@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -152,6 +153,56 @@ func TestLaunchTokensNest(t *testing.T) {
 	}
 }
 
+func TestStopKillsGroupAfterLeaderExit(t *testing.T) {
+	testenv.RequireProcessGroup(t)
+	testenv.RequireProcessStatus(t)
+	for _, unknown := range []bool{false, true} {
+		t.Run(strconv.FormatBool(unknown), func(t *testing.T) {
+			cmd, p, err := Command(context.Background(), "/bin/sh", "-c", "env -i /bin/sleep 30 & echo $!; exit 0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer p.Close()
+			out := &lockedBuffer{}
+			cmd.Stdout = out // child holds this pipe after Wait reaps the leader
+			cmd.WaitDelay = 10 * time.Second
+			started := make(chan int, 1)
+			p.Notify(func(pid int) { started <- pid })
+			done := make(chan error, 1)
+			go func() { done <- p.Run() }()
+			leader := <-started
+			deadline := time.Now().Add(3 * time.Second)
+			var child int
+			for time.Now().Before(deadline) {
+				child, _ = strconv.Atoi(strings.TrimSpace(out.String()))
+				if child > 1 && processIdentity(leader) == "" {
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			if child <= 1 || processIdentity(leader) != "" {
+				t.Fatal("leader did not exit before pipe drain")
+			}
+			t.Cleanup(func() { _ = syscall.Kill(child, syscall.SIGKILL) })
+			if !alive(child) {
+				t.Fatal("group member did not survive leader")
+			}
+			if unknown {
+				p.mu.Lock()
+				p.leaderIdentity = ""
+				p.mu.Unlock()
+			}
+			p.Stop()
+			select {
+			case <-done:
+			case <-time.After(3 * time.Second):
+				t.Fatal("group held pipes after Stop")
+			}
+			waitGone(t, child)
+		})
+	}
+}
+
 func TestSweepReachesUnreadableChildrenOfMarkedProcesses(t *testing.T) {
 	testenv.RequireProcessGroup(t)
 	testenv.RequireProcessStatus(t)
@@ -222,4 +273,28 @@ func TestBackgroundLowersTheWholeTree(t *testing.T) {
 	}
 	<-done
 	p.Close()
+}
+
+func TestRunReapsGroupWhenLeaderKilled(t *testing.T) {
+	testenv.RequireProcessGroup(t)
+	testenv.RequireProcessStatus(t)
+	path := filepath.Join(t.TempDir(), "pid")
+	_, p, err := Command(context.Background(), "/bin/sh", "-c", `env -i /bin/sleep 30 >/dev/null 2>&1 & echo $! > "$1"; kill -KILL $$`, "fixture", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	if err := p.Run(); err == nil {
+		t.Fatal("leader was not killed")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 1 {
+		t.Fatal("invalid child PID")
+	}
+	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
+	waitGone(t, pid)
 }

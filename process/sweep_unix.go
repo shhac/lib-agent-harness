@@ -52,7 +52,10 @@ func carriesToken(env []string, token string) bool {
 	return false
 }
 
-type candidate struct{ pid, parent int }
+type candidate struct {
+	pid, parent, group int
+	identity           string
+}
 
 // sweep kills this user's processes that carry token, or descend from one that
 // does, and started no earlier than since. It repeats while it still finds
@@ -64,8 +67,10 @@ func sweep(token string, since time.Time) {
 	self := os.Getpid()
 	for range 5 {
 		procs := candidates(since.Add(-time.Second))
+		identities := map[int]string{}
 		children := map[int][]int{}
 		for _, proc := range procs {
+			identities[proc.pid] = proc.identity
 			children[proc.parent] = append(children[proc.parent], proc.pid)
 		}
 		doomed := map[int]bool{}
@@ -88,11 +93,21 @@ func sweep(token string, since time.Time) {
 			return
 		}
 		for pid := range doomed {
-			if group, err := syscall.Getpgid(pid); err == nil && group == pid {
-				_ = syscall.Kill(-pid, syscall.SIGKILL)
-			}
-			_ = syscall.Kill(pid, syscall.SIGKILL)
+			// Re-establish the same live process immediately before signalling.
+			// A PID reused since enumeration must not inherit the old ownership.
+			signalOwned(pid, identities[pid], processIdentity, func(pid int) {
+				if group, err := syscall.Getpgid(pid); err == nil && group == pid {
+					_ = syscall.Kill(-pid, syscall.SIGKILL)
+				}
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			})
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func signalOwned(pid int, identity string, current func(int) string, signal func(int)) {
+	if identity != "" && current(pid) == identity {
+		signal(pid)
 	}
 }

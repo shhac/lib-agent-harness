@@ -125,3 +125,21 @@ func TestLoopAnswersFitMaxResultBytes(t *testing.T) {
 		t.Fatalf("a default limit changed the answers: %+v", full)
 	}
 }
+
+func TestWorkbenchCommandCancellationRecordsUnknown(t *testing.T) {
+	for _, failure := range []error{context.Canceled, context.DeadlineExceeded} {
+		t.Run(failure.Error(), func(t *testing.T) {
+			host := newDirectToolHost(ToolHost{Handler: ToolHandlerFunc(func(context.Context, ToolCall) (ToolResult, error) { return ToolResult{}, failure }), Tools: []ToolDefinition{{Name: workbenchRunCommand}}})
+			defer host.close()
+			ready, refusal := host.prepareCall("command", workbenchRunCommand, json.RawMessage(`{}`))
+			if refusal != nil {
+				t.Fatal(refusal)
+			}
+			var recorded toolOutcome
+			out := host.execute(ready, "turn", func(o toolOutcome) { recorded = o })
+			if !out.ran || !out.isError || !out.unknown || !recorded.unknown {
+				t.Fatalf("cancelled command could have side effects: %+v / %+v", out, recorded)
+			}
+		})
+	}
+}
