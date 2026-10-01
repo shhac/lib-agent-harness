@@ -198,7 +198,11 @@ func TestWorkbenchCommandBackgroundCloseAndRecovery(t *testing.T) {
 	// A second private runtime holds the durable crash snapshot. The original
 	// launch remains alive until the fresh session sweeps the copied marker.
 	ref := s.Ref()
-	crashed := privateHome(t)
+	// The reference names the canonical home, as the library resolves it.
+	crashed, err := filepath.EvalSymlinks(privateHome(t))
+	if err != nil {
+		t.Fatal(err)
+	}
 	dir := sessionDir(crashed, ref.ID)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
@@ -260,7 +264,7 @@ func TestWorkbenchSeatbeltProfile(t *testing.T) {
 		for _, loop := range []bool{false, true} {
 			l := workbenchLayout{Work: "/workspace", Home: "/runtime/home", Tmp: "/runtime/tmp", Read: []string{"/readset"}, System: []string{"/System", "/usr"}, Write: write, Loopback: loop}
 			profile := seatbeltProfile(l)
-			for _, required := range []string{"(deny default)", "(require-not (subpath \"/System/Volumes/Data\"))", "(allow process-exec)", "(allow process-fork)", "(target same-sandbox)", "(deny file-link", "(deny file-write*", "(subpath \"/readset\")", "(literal \"/private/etc/passwd\")"} {
+			for _, required := range []string{"(deny default)", "(require-not (subpath \"/System/Volumes/Data\"))", "(allow process-exec)", "(allow process-fork)", "(target same-sandbox)", "(deny file-link", "(deny file-write*", "(subpath \"/readset\")", "(literal \"/private/etc/passwd\")", "(allow file-read-data (literal \"/\"))"} {
 				// Public etc entries use subpath so an optional directory (ssl/certs)
 				// and regular files share one pinned list.
 				if required == "(literal \"/private/etc/passwd\")" {

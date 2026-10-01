@@ -28,9 +28,14 @@ func seatbeltProfile(l workbenchLayout) string {
 	b.WriteString("(version 1)\n(deny default)\n")
 	b.WriteString("; Shells and their children execute within this sandbox.\n(allow process-exec)\n(allow process-fork)\n(allow signal (target same-sandbox))\n")
 	b.WriteString("; Hardware and OS version queries needed by runtimes, excluding process arguments.\n(allow sysctl-read (sysctl-name-regex #\"^(hw[.]|kern[.]os|kern[.]max|machdep[.]cpu[.])\") (sysctl-name \"kern.argmax\"))\n; Minimal command-line runtime services, excluding keychains.\n(allow mach-lookup (global-name \"com.apple.system.logger\") (global-name \"com.apple.system.notification_center\"))\n")
-	for _, p := range []string{"/private", "/private/etc", "/etc", "/dev"} {
+	for _, p := range []string{"/private", "/private/etc", "/private/var", "/etc", "/dev"} {
 		fmt.Fprintf(&b, "; Resolve public runtime configuration without directory listings.\n(allow file-read-metadata (literal %s))\n", strconv.Quote(p))
 	}
+	// macOS 27 aborts a shell that cannot read the root directory's own
+	// entries, which name only the top-level folders; nothing below them is
+	// listed. /bin/sh reads which shell it runs from /private/var/select.
+	b.WriteString("; The root directory's own entries, which name only top-level folders: shells need them to start.\n(allow file-read-data (literal \"/\"))\n")
+	b.WriteString("; Which shell /bin/sh runs.\n(allow file-read* (subpath \"/private/var/select\"))\n")
 	paths := append([]string{}, l.System...)
 	paths = append(paths, l.Read...)
 	paths = append(paths, l.Work, l.Home, l.Tmp)
@@ -66,7 +71,13 @@ func seatbeltProfile(l workbenchLayout) string {
 		fmt.Fprintf(&b, "; Only private scratch and the opted-in workspace are writable.\n(allow file-write* (subpath %s))\n", strconv.Quote(p))
 	}
 	b.WriteString("; Repository metadata cannot be written, unlinked, moved or linked, including case aliases.\n(deny file-write* (regex #\"(^|/)[.][gG][iI][tT][ .]*(/|$)\"))\n(deny file-link (regex #\"(^|/)[.][gG][iI][tT][ .]*(/|$)\"))\n")
-	b.WriteString("; Background commands cannot inspect or disturb atomic file-tool temporaries.\n(deny file-read-data (regex #\"(^|/)[.]harness-workbench-[0-9a-f]{32}-[0-9a-f]{16}[.]tmp$\"))\n(deny file-write* (regex #\"(^|/)[.]harness-workbench-[0-9a-f]{32}-[0-9a-f]{16}[.]tmp$\"))\n(deny file-link (regex #\"(^|/)[.]harness-workbench-[0-9a-f]{32}-[0-9a-f]{16}[.]tmp$\"))\n")
+	// Seatbelt's regular expressions have no counted repetition, so each
+	// hex digit of the temporary's name is spelled out.
+	temporary := `(^|/)[.]harness-workbench-` + strings.Repeat("[0-9a-f]", 32) + "-" + strings.Repeat("[0-9a-f]", 16) + `[.]tmp$`
+	b.WriteString("; Background commands cannot inspect or disturb atomic file-tool temporaries.\n")
+	for _, op := range []string{"file-read-data", "file-write*", "file-link"} {
+		fmt.Fprintf(&b, "(deny %s (regex #\"%s\"))\n", op, temporary)
+	}
 	if l.Loopback {
 		b.WriteString("; Local development servers only, never Unix-domain or off-machine sockets.\n(allow network-bind (local ip \"localhost:*\"))\n(allow network-inbound (local ip \"localhost:*\"))\n(allow network-outbound (remote ip \"localhost:*\"))\n")
 	}
