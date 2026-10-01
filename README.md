@@ -773,8 +773,9 @@ and configuration. It is never implied by another option:
   The extension alone does not configure that bridge. The working local setup
   uses the ChatGPT application's native Node REPL MCP bridge (`node_repl`),
   browser plugins and native host. Restart the CLI after installing the extension.
-  The library does not install plugins, copy another home's configuration,
-  enable desktop control, or change site permissions.
+  The library does not install plugins, enable desktop control, or change site
+  permissions. A sandboxed session copies only the narrowed bridge declaration
+  described below.
 
 Codex 0.159.2's app-server and exec flags and deferred Node REPL tools were
 checked with disposable homes, dummy credentials and a local provider that
@@ -782,9 +783,40 @@ refuses inference. Chrome control was separately checked in a configured CLI
 session by filling and validating a disposable local form. This establishes
 browser control; it does not establish a video recording API or hidden-window
 capture. Grok 1.0.41, API sessions and restricted sessions are refused.
-Sandboxed Codex sessions are also refused: their isolated home cannot inherit
-the owner's browser bridge safely. Use an ordinary native Codex session, or
-leave `Browser` unset. `harness.Support(e, Session, SandboxedBrowser)` says
+Sandboxed Codex sessions admit the ChatGPT app's `node_repl` bridge from the
+selected owner home (`codex mcp get node_repl --json`). Their private
+`RuntimeHome` declares only this bridge, plus any caller-hosted tools. The
+bridge enables only the `chrome` backend, with no in-app browser or MCP apps;
+its trusted services include only `browser`, with no desktop-control service.
+No other owner MCP servers, plugins, hooks or settings are inherited. Both
+browser features are enabled; computer use stays disabled.
+
+Before a credentialed launch, one real app-server turn runs against a local
+fake model provider with a disposable home and dummy credential. The provider
+scripts exactly one `js` call that tries to write a canary outside its workspace
+and all writable temp roots, then reads the tool result from the next request.
+The result must report an OS permission denial and the canary must be absent.
+A successful write produces `browser_sandbox_not_enforced`; a missing result or
+failed proof produces `browser_sandbox_unproven`. Both are typed pre-launch
+`session.CapabilityError` failures. `VerifySandbox` runs this proof too. Evidence
+is cached only for the same CLI, bridge installation, configuration and sandbox
+in this process; an upgrade or restart re-proves. There is no bypass.
+
+The real confinement proof passed with the ChatGPT app on 2026-10-01 and
+refused a bridge whose session confinement was disabled. A sandboxed session
+connected to Chrome and created a tab, but page navigation was refused by
+browser-origin permissions. The headless session client declines browser
+approval requests; this proof does not grant origin access or establish that
+a page can be opened in a fresh private runtime home.
+
+Verified on 2026-10-01 with codex-cli 0.159.2: Codex passes its session sandbox
+policy to `node_repl` through `codex/sandbox-state-meta`. JavaScript inside
+`codex exec -s workspace-write` was denied a home-directory write (`EPERM`)
+while a `/tmp` write succeeded. Started by hand outside Codex, the same `js`
+tool is unconfined and can read files and run commands. The library's stricter
+profile excludes `/tmp` and `$TMPDIR` writes and proves the bridge under that
+profile before admitting it. This is JavaScript confinement, not browser
+profile isolation. `harness.Support(e, Session, SandboxedBrowser)` says
 which engines admit the browser in a sandboxed session, for a caller that
 sandboxes every session and must decide before offering the browser.
 
@@ -797,7 +829,7 @@ are loaded, not that Chrome is connected. Native runs have no equivalent
 startup check and retain the CLI's own diagnostics. Neither check executes a
 browser action.
 
-That browser is not sandboxed. It runs outside the OS sandbox, with that
+Chrome itself runs outside the OS sandbox, with that
 Chrome profile's logins, and reaches whatever the extension's site
 permissions allow. For agents:
 

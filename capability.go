@@ -155,7 +155,7 @@ var (
 	unverified = Capability{Unknown, "not verified against the installed harness"}
 	// Claude in Chrome is not a sandboxed browser: it is the operator's own.
 	claudeBrowser = Capability{Native, "Claude in Chrome (--chrome) drives the operator's real Chrome through its extension, outside any sandbox, reaching whatever the extension's site permissions allow with that profile's logins"}
-	codexBrowser  = Capability{Native, "codex-cli browser_use and browser_use_external features select the configured native browser bridge; requires that bridge in the selected CLI home and the ChatGPT Chrome extension; uses the browser profile's logins and site permissions outside the shell sandbox; not available with session.Sandbox or Restriction"}
+	codexBrowser  = Capability{Native, "codex-cli browser_use and browser_use_external features select the configured native browser bridge; requires that bridge in the selected CLI home and the ChatGPT Chrome extension; uses the browser profile's logins and site permissions outside the shell sandbox; sandboxed sessions require an isolated bridge and a pre-launch JavaScript confinement proof; not available with Restriction"}
 	cacheVaries   = Capability{Unknown, "reported only by endpoints that split cached input"}
 	background    = Capability{Native, "the process group is niced to 10, which descendants inherit"}
 	// Constrained completion has no native tools, so no engine loads skills
@@ -330,7 +330,7 @@ var supportTable = map[supportKey]Capability{
 	{Codex, Run, Browser}:               codexBrowser,
 	{Grok, Session, Browser}:            {Unsupported, "Grok 1.0.41 ships no browser integration"},
 	{Claude, Session, SandboxedBrowser}: {Native, "a sandboxed Claude session admits the browser's tools beside its own, except those that would read local files or start another agent; the browser itself runs outside the sandbox"},
-	{Codex, Session, SandboxedBrowser}:  {Unsupported, "a sandboxed Codex session cannot inherit the owner's browser bridge safely"},
+	{Codex, Session, SandboxedBrowser}:  {Native, "the ChatGPT app node_repl bridge runs JavaScript confined by the session sandbox, proven before launch; drives the owner's real Chrome with its logins; Chrome backend only, no computer use"},
 	{Grok, Run, Browser}:                {Unsupported, "Grok 1.0.41 ships no browser integration"},
 
 	{Codex, Account, Available}:  unverified,

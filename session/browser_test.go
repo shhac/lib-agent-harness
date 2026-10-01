@@ -19,7 +19,6 @@ func TestBrowserIsRefusedWhereItCannotBeHonoured(t *testing.T) {
 		o    Options
 		code string
 	}{
-		"codex sandbox":    {Options{Provider: harness.Provider{Engine: harness.Codex}, WorkDir: work, Browser: true, Sandbox: &Sandbox{}}, RefusedConflict},
 		"codex restricted": {Options{Provider: harness.Provider{Engine: harness.Codex}, WorkDir: work, Browser: true, Restriction: &Restriction{}}, RefusedConflict},
 		"grok":             {Options{Provider: harness.Provider{Engine: harness.Grok}, WorkDir: work, Browser: true}, RefusedNotOffered},
 		"restricted":       {Options{Provider: harness.Provider{Engine: harness.Claude}, WorkDir: work, Browser: true, Restriction: &Restriction{}}, RefusedConflict},

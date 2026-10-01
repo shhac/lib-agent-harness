@@ -36,18 +36,12 @@ func TestCodexBrowserArgsAndReference(t *testing.T) {
 	if reference(o, plain.ID).ConfigHash == plain.ConfigHash {
 		t.Fatal("browser opt-in did not change the resume contract")
 	}
-	for _, restricted := range []bool{false, true} {
-		limited := base
-		if restricted {
-			limited.Restriction = &Restriction{}
-		} else {
-			limited.Sandbox = &Sandbox{}
-		}
-		_, err := normalize(limited)
-		var refusal *UnsupportedError
-		if !errors.As(err, &refusal) || refusal.Code != RefusedConflict {
-			t.Fatalf("restricted %t: %v", restricted, err)
-		}
+	limited := base
+	limited.Restriction = &Restriction{}
+	_, err = normalize(limited)
+	var refusal *UnsupportedError
+	if !errors.As(err, &refusal) || refusal.Code != RefusedConflict {
+		t.Fatalf("restricted: %v", err)
 	}
 }
 

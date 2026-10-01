@@ -22,8 +22,9 @@ import (
 // that people dismantle their own tools.
 //
 // So the session gets its own durable runtime home, with configuration this
-// library writes, and shares exactly one thing from the source home: the
-// credential. internal/sharedlogin decides which copy is authoritative; this
+// library writes, and shares the source home's credential
+// and, only when opted in, a browser bridge narrowed and proved by browser_codex.go.
+// internal/sharedlogin decides which credential copy is authoritative; this
 // file says what a Codex runtime home holds and how its failures read here.
 
 const (

@@ -155,7 +155,9 @@ type Options struct {
 	// or start another agent. The browser itself runs outside the OS sandbox,
 	// with that Chrome profile's logins, and reaches whatever the extension's
 	// site permissions allow. A restricted session is refused: its tools are
-	// exactly the caller's. Sandboxed Codex browser sessions are also refused.
+	// exactly the caller's. A sandboxed Codex session loads only node_repl
+	// from the selected home, with Chrome only and no computer use; JavaScript
+	// confinement by the session sandbox is proved before launch.
 	// It is part of a Ref.
 	Browser bool
 	// Background runs the harness, and everything it starts, at background

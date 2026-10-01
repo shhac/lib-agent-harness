@@ -103,6 +103,17 @@ func invocations(t *testing.T, log, kind string) int {
 func runFakeHarness(scenario string) int {
 	args := os.Args[1:]
 	switch {
+	case len(args) > 0 && args[0] == "mcp":
+		logInvocation("browser-config")
+		raw, err := os.ReadFile(filepath.Join(os.Getenv("CODEX_HOME"), "fake-browser-bridge.json"))
+		if err != nil {
+			return 2
+		}
+		_, err = os.Stdout.Write(raw)
+		if err != nil {
+			return 2
+		}
+		return 0
 	case len(args) > 0 && args[0] == "sandbox":
 		return fakeCodexCanary(scenario, args)
 	case slices.Contains(args, "sandbox") && slices.Contains(args, "status"):
@@ -400,6 +411,12 @@ func fakeCodex(scenario string, args []string) int {
 			}
 			if scenario == fakeListed && !fakeListTools(overrides) {
 				return 2
+			}
+			if strings.Contains(overrides["model_providers.harness_probe"], "browser confinement") {
+				if status := fakeBrowserProof(provider[1]+"/responses", scenario); status != 0 {
+					return status
+				}
+				continue
 			}
 			if status := fakePost(provider[1]+"/responses", fakeCodexRequest()); status != 0 {
 				return status

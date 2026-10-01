@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/nativecli"
 )
 
 // Sandbox opts an ordinary native session — its own tools intact — into the
@@ -65,7 +66,9 @@ type Sandbox struct {
 	// Every other MCP server stays off: Claude Code loads only this one, with
 	// claude.ai connectors disabled and any other server's tools refused by
 	// dontAsk, and its startup report must list this server's tools and no
-	// other server's. Codex's private runtime home declares no other server.
+	// other server's. Codex's private runtime home declares no other server
+	// except node_repl when Browser is set, with JavaScript confinement proved
+	// before launch.
 	Tools *ToolHost
 }
 
@@ -194,7 +197,7 @@ func validateSandboxTools(o Options) error {
 	if err := tools.validate(); err != nil {
 		return toolHostRefusal(o, err)
 	}
-	if o.Provider.Engine == harness.Claude && reservedClaudeServer(tools.Server) {
+	if (o.Provider.Engine == harness.Claude && reservedClaudeServer(tools.Server)) || (o.Provider.Engine == harness.Codex && o.Browser && tools.Server == "node_repl") {
 		return &CapabilityError{Engine: o.Provider.Engine, Code: CapabilityServerNameReserved, Phase: BeforeLaunch, Tools: []string{tools.Server}}
 	}
 	// The channel's credential and lock live in Dir. Inside the workspace a
@@ -237,7 +240,9 @@ func codexSandboxArgs(s Sandbox) []string {
 		`analytics.enabled=false`,
 	}
 	// Surfaces that reach past the sandbox — connectors, plugins, hooks, a
-	// browser or the desktop — are switched off. The shell and file tools stay,
+	// browser or the desktop — are switched off. Browser opts into exactly
+	// two browser features after its private bridge is assembled. The shell
+	// and file tools stay,
 	// and so does the code-mode host: on codex 0.154.0 every native tool call
 	// runs through it, and disabling it leaves a session unable to do anything.
 	for _, feature := range sandboxDisabledFeatures {
@@ -372,7 +377,11 @@ func claudeSandboxArgs(o Options) []string {
 // and are what its check proves.
 func sandboxArgs(o Options) []string {
 	if o.Provider.Engine == harness.Codex {
-		return codexSandboxArgs(*o.Sandbox)
+		args := codexSandboxArgs(*o.Sandbox)
+		if o.Browser {
+			args = append(args, nativecli.CodexBrowserArgs()...)
+		}
+		return args
 	}
 	return claudeSandboxArgs(o)
 }
@@ -385,8 +394,23 @@ func prepareSandbox(ctx context.Context, o Options, lease *os.File) (*launch, er
 	refuse := func(err error) (*launch, error) { _ = lease.Close(); return nil, err }
 	l := &launch{extra: sandboxArgs(o)}
 	if o.Provider.Engine == harness.Codex {
-		if _, err := prepareRuntimeHome(o.Provider.CLI.Home, o.RuntimeHome); err != nil {
-			return refuse(err)
+		if o.Browser {
+			bridge, err := readCodexBrowserBridge(ctx, o)
+			if err != nil {
+				return refuse(err)
+			}
+			l.browser = bridge
+		}
+		home := codexRuntime(o.Provider.CLI.Home, o.RuntimeHome)
+		if l.browser != nil {
+			config, err := l.browser.config(o.RuntimeHome)
+			if err != nil {
+				return refuse(err)
+			}
+			home.Files[codexConfigFile] = config
+		}
+		if err := home.Prepare(); err != nil {
+			return refuse(runtimeFailure(err))
 		}
 		if err := syncRuntimeSkills(o); err != nil {
 			return refuse(err)
@@ -438,5 +462,12 @@ func VerifySandbox(ctx context.Context, o Options) error {
 			return &CapabilityError{Engine: harness.Codex, Code: CapabilityLoginUnavailable, Phase: BeforeLaunch}
 		}
 	}
-	return verifySandbox(ctx, o, &launch{extra: sandboxArgs(o)})
+	l := &launch{extra: sandboxArgs(o)}
+	if o.Provider.Engine == harness.Codex && o.Browser {
+		l.browser, err = readCodexBrowserBridge(ctx, o)
+		if err != nil {
+			return err
+		}
+	}
+	return verifySandbox(ctx, o, l)
 }

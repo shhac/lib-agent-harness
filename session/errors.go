@@ -150,7 +150,10 @@ const (
 	CapabilityLoginUnavailable    = "harness_login_unavailable"
 	// CapabilityBrowserToolsMissing: startup did not advertise the configured
 	// browser integration's tools. This does not identify extension connectivity.
-	CapabilityBrowserToolsMissing = "browser_tools_missing"
+	CapabilityBrowserToolsMissing       = "browser_tools_missing"
+	CapabilityBrowserBridgeUnavailable  = "browser_bridge_unavailable"
+	CapabilityBrowserSandboxUnproven    = "browser_sandbox_unproven"
+	CapabilityBrowserSandboxNotEnforced = "browser_sandbox_not_enforced"
 )
 
 // Sandbox capability failures.
@@ -188,23 +191,26 @@ type CapabilityError struct {
 
 func (e *CapabilityError) Error() string {
 	message := map[string]string{
-		CapabilityUnsupportedPlatform: "restricted worker sessions are not available on this platform",
-		CapabilityNativeToolsPresent:  "the installed harness kept tools this session did not configure",
-		CapabilityHostedToolsMissing:  "the installed harness did not offer the tools this session configured",
-		CapabilityInstructionsMerged:  "the installed harness merged inherited instructions into its request",
-		CapabilityChangedModel:        "the installed harness requested a different model",
-		CapabilityChangedEffort:       "the installed harness requested a different reasoning effort",
-		CapabilityProbeNoRequest:      "the installed harness made no request during the capability check",
-		CapabilityProbeUnreadable:     "the capability check could not read the harness's request",
-		CapabilityProbeTimeout:        "the capability check did not finish in time",
-		CapabilityProbeFailed:         "the capability check could not be run",
-		CapabilityCatalogUnavailable:  "the installed harness did not supply a model catalog to restrict",
-		CapabilityCatalogRestriction:  "the selected model could not be restricted in the installed harness catalog",
-		CapabilityServerNotLoaded:     "the installed harness did not load this session's tool server",
-		CapabilityServerNameReserved:  "the installed harness reserves this tool server name; choose another",
-		CapabilityLoginUnavailable:    "the selected harness home has no file-backed login to share with a restricted session; log in to that home first",
-		CapabilitySandboxUnavailable:  "the installed harness could not be run under the requested sandbox",
-		CapabilitySandboxNotEnforced:  "the installed harness's sandbox allowed writes or network access the session must not have",
+		CapabilityUnsupportedPlatform:       "restricted worker sessions are not available on this platform",
+		CapabilityNativeToolsPresent:        "the installed harness kept tools this session did not configure",
+		CapabilityHostedToolsMissing:        "the installed harness did not offer the tools this session configured",
+		CapabilityInstructionsMerged:        "the installed harness merged inherited instructions into its request",
+		CapabilityChangedModel:              "the installed harness requested a different model",
+		CapabilityChangedEffort:             "the installed harness requested a different reasoning effort",
+		CapabilityProbeNoRequest:            "the installed harness made no request during the capability check",
+		CapabilityProbeUnreadable:           "the capability check could not read the harness's request",
+		CapabilityProbeTimeout:              "the capability check did not finish in time",
+		CapabilityProbeFailed:               "the capability check could not be run",
+		CapabilityCatalogUnavailable:        "the installed harness did not supply a model catalog to restrict",
+		CapabilityCatalogRestriction:        "the selected model could not be restricted in the installed harness catalog",
+		CapabilityServerNotLoaded:           "the installed harness did not load this session's tool server",
+		CapabilityServerNameReserved:        "the installed harness reserves this tool server name; choose another",
+		CapabilityLoginUnavailable:          "the selected harness home has no file-backed login to share with a restricted session; log in to that home first",
+		CapabilityBrowserBridgeUnavailable:  "the selected Codex home has no usable ChatGPT node_repl bridge; configure the ChatGPT app browser bridge and Chrome extension, then restart the CLI",
+		CapabilityBrowserSandboxUnproven:    "the node_repl JavaScript confinement proof could not complete; update Codex and the ChatGPT app, or leave Browser unset",
+		CapabilityBrowserSandboxNotEnforced: "node_repl JavaScript escaped the session sandbox; update Codex and the ChatGPT app, or leave Browser unset",
+		CapabilitySandboxUnavailable:        "the installed harness could not be run under the requested sandbox",
+		CapabilitySandboxNotEnforced:        "the installed harness's sandbox allowed writes or network access the session must not have",
 	}[e.Code]
 	if message == "" {
 		message = "the restricted session configuration could not be established"

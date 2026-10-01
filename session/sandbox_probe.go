@@ -34,6 +34,9 @@ func verifySandbox(ctx context.Context, o Options, l *launch) error {
 	defer cancel()
 	if o.Provider.Engine == harness.Codex {
 		err = probeCodexSandbox(ctx, o)
+		if err == nil && o.Browser {
+			err = probeCodexBrowserSandbox(ctx, o, l)
+		}
 	} else {
 		err = probeClaudeSandbox(ctx, o)
 		if err == nil && o.Sandbox.Loopback {
@@ -54,17 +57,34 @@ func sandboxKey(o Options, l *launch) (string, error) {
 	if err != nil {
 		return "", &CapabilityError{Engine: o.Provider.Engine, Code: CapabilitySandboxUnavailable, Phase: BeforeLaunch}
 	}
+	bridge := ""
+	if o.Browser && o.Provider.Engine == harness.Codex {
+		if l.browser == nil {
+			return "", browserCapability(CapabilityBrowserBridgeUnavailable)
+		}
+		bridge, err = l.browser.identity()
+		if err != nil {
+			return "", err
+		}
+	}
 	payload, _ := json.Marshal(struct {
-		Kind     string
-		Engine   harness.Engine
-		Binary   string
-		Size     int64
-		Modified time.Time
-		Write    bool
-		Read     []string
-		Args     []string
-		TempDir  string
-	}{"sandbox", o.Provider.Engine, binary, info.Size(), info.ModTime(), o.Sandbox.Write, o.Sandbox.Read, l.extra, sessionTempDir()})
+		Kind         string
+		Engine       harness.Engine
+		Binary       string
+		Size         int64
+		Modified     time.Time
+		Write        bool
+		Read         []string
+		Args         []string
+		TempDir      string
+		Browser      string
+		WorkDir      string
+		RuntimeHome  string
+		Env          []string
+		Model        string
+		Effort       string
+		Instructions Instructions
+	}{"sandbox", o.Provider.Engine, binary, info.Size(), info.ModTime(), o.Sandbox.Write, o.Sandbox.Read, l.extra, sessionTempDir(), bridge, o.WorkDir, o.RuntimeHome, o.Env, o.Model, o.Effort, effectiveInstructions(o)})
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:]), nil
 }

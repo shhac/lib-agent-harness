@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -340,13 +341,16 @@ func TestWorkbenchCapabilityClaims(t *testing.T) {
 }
 
 // Which engines admit the browser in a sandboxed session, as the session
-// package refuses it: Claude does, Codex doesn't, and an engine without a
+// package refuses it: Claude and Codex do, and an engine without a
 // browser doesn't either.
 func TestSandboxedBrowserClaims(t *testing.T) {
 	if c := Support(Claude, Session, SandboxedBrowser); c.Availability != Native || c.Reason == "" {
 		t.Fatalf("claude: %+v", c)
 	}
-	for _, e := range []Engine{Codex, Grok, OpenAICompatible} {
+	if c := Support(Codex, Session, SandboxedBrowser); c.Availability != Native || !strings.Contains(c.Reason, "proven before launch") || !strings.Contains(c.Reason, "no computer use") {
+		t.Fatalf("codex: %+v", c)
+	}
+	for _, e := range []Engine{Grok, OpenAICompatible} {
 		if c := Support(e, Session, SandboxedBrowser); c.Usable() || c.Reason == "" {
 			t.Fatalf("%s: %+v", e, c)
 		}

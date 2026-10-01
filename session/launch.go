@@ -91,8 +91,9 @@ func prepareLaunch(ctx context.Context, o Options, lease *os.File) (*launch, err
 // launch describes one restricted or sandboxed session's prepared runtime: the
 // tool channel it serves, if any, and the arguments it adds.
 type launch struct {
-	host  *toolHost
-	extra []string
+	host    *toolHost
+	extra   []string
+	browser *codexBrowserBridge
 }
 
 func commandArgs(o Options, nativeID string, resuming bool, l *launch) []string {

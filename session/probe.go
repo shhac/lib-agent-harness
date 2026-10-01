@@ -204,12 +204,17 @@ func driveCodexProbe(ctx context.Context, o Options, args []string, dir string, 
 		return err
 	}
 	defer func() { w.close(); <-w.reaped }()
-	if err = codexHandshake(ctx, w, false); err != nil {
+	if err = codexHandshake(ctx, w, o.Sandbox != nil); err != nil {
 		return err
 	}
 	body, err := w.request(ctx, "thread/start", codexThreadParams(o, dir, false, ""))
 	if err != nil {
 		return err
+	}
+	if o.Sandbox != nil {
+		if err = checkCodexSandbox(o, body); err != nil {
+			return err
+		}
 	}
 	var started struct {
 		Thread struct {
@@ -219,13 +224,21 @@ func driveCodexProbe(ctx context.Context, o Options, args []string, dir string, 
 	if json.Unmarshal(body, &started) != nil || started.Thread.ID == "" {
 		return ErrProtocol
 	}
+	if o.Browser {
+		if err = checkCodexBrowser(ctx, w, started.Thread.ID); err != nil {
+			return err
+		}
+	}
 	turn := codexTurnParams(started.Thread.ID, "Capability check only.", o.Effort)
 	// turn/start is acknowledged before the harness contacts its provider, so
 	// returning here would close the transport during the very request the check
 	// exists to read. Wait instead: the caller cancels this context as soon as a
 	// request has been captured, or when the check's own bound expires.
 	go func() { _, _ = w.request(ctx, "turn/start", turn) }()
-	<-ctx.Done()
+	select {
+	case <-ctx.Done():
+	case <-w.done:
+	}
 	return nil
 }
 
