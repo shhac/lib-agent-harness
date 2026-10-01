@@ -249,10 +249,13 @@ func probeWorkbench(ctx context.Context, o Options, system []string) error {
 	if ae != nil {
 		return unavailable
 	}
+	// hdiutil leaves a disk-image helper in its group that serves the mount,
+	// and closing the handle reaps the group, so the handle stays open until
+	// the probe is done; the detach below ends the helper first.
+	defer ap.Close()
 	attach.Env = cmd.Env
 	attach.WaitDelay = time.Second
 	ae = ap.Run()
-	ap.Close()
 	after, statErr := os.Stat(mount)
 	if ae != nil || statErr != nil || before.Sys().(*syscall.Stat_t).Dev == after.Sys().(*syscall.Stat_t).Dev {
 		return unavailable
