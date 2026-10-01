@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -259,6 +260,20 @@ func probeWorkbench(ctx context.Context, o Options, system []string) error {
 	ap.Close()
 	fmt.Fprintf(os.Stderr, "PROBEDEBUG attach err=%v env=%v out=%q\n", ae, attach.Env, attachOut.text())
 	after, statErr := os.Stat(mount)
+	if statErr == nil {
+		fmt.Fprintf(os.Stderr, "PROBEDEBUG dev before=%d after=%d\n", before.Sys().(*syscall.Stat_t).Dev, after.Sys().(*syscall.Stat_t).Dev)
+	} else {
+		fmt.Fprintf(os.Stderr, "PROBEDEBUG statErr=%v\n", statErr)
+	}
+	time.Sleep(time.Second)
+	if later, e := os.Stat(mount); e == nil {
+		fmt.Fprintf(os.Stderr, "PROBEDEBUG dev later=%d\n", later.Sys().(*syscall.Stat_t).Dev)
+	} else {
+		fmt.Fprintf(os.Stderr, "PROBEDEBUG later statErr=%v\n", e)
+	}
+	if mo, e := exec.Command("/sbin/mount").Output(); e == nil {
+		fmt.Fprintf(os.Stderr, "PROBEDEBUG mounts=%q\n", string(mo))
+	}
 	if ae != nil || statErr != nil || before.Sys().(*syscall.Stat_t).Dev == after.Sys().(*syscall.Stat_t).Dev {
 		return probeFail(unavailable)
 	}
