@@ -218,9 +218,11 @@ func (s *Session) resumeFailure(resuming bool, err error) error {
 	if w == nil {
 		return err
 	}
+	// The confirmed exit is reported whether the stream's end or a failed
+	// write noticed it first; it is the transport failure, made specific.
 	var exit *ProcessError
 	if errors.As(w.processError(), &exit) && exit.Code == ProcessExited {
-		return fmt.Errorf("%w: %w", errConversationGone, err)
+		return fmt.Errorf("%w: %w", errConversationGone, exit)
 	}
 	return err
 }
