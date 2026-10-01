@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -66,28 +67,28 @@ func probeWorkbench(ctx context.Context, o Options, system []string) error {
 	unavailable := workbenchCapability(CapabilitySandboxUnavailable)
 	root, err := os.MkdirTemp("", "agent-harness-workbench-")
 	if err != nil {
-		return unavailable
+		return probeFail(unavailable)
 	}
 	defer os.RemoveAll(root)
 	root, err = filepath.EvalSymlinks(root)
 	if err != nil {
-		return unavailable
+		return probeFail(unavailable)
 	}
 	work := filepath.Join(root, "workspace")
 	scratch := filepath.Join(root, "runtime", "sessions", "probe", "workbench")
 	read := filepath.Join(root, "readset")
 	for _, dir := range []string{filepath.Join(work, ".git"), filepath.Join(scratch, "home"), filepath.Join(scratch, "tmp"), read, filepath.Join(root, "owner"), filepath.Join(root, "private")} {
 		if os.MkdirAll(dir, 0700) != nil {
-			return unavailable
+			return probeFail(unavailable)
 		}
 	}
 	for _, p := range []string{filepath.Join(work, ".git", "config"), filepath.Join(read, "marker"), filepath.Join(root, "owner", "marker"), filepath.Join(root, "private", "marker"), filepath.Join(root, "runtime", "transcript")} {
 		if os.WriteFile(p, []byte("marker\n"), 0600) != nil {
-			return unavailable
+			return probeFail(unavailable)
 		}
 	}
 	if os.WriteFile(filepath.Join(work, ".harness-workbench-00000000000000000000000000000000-0000000000000000.tmp"), []byte("private temporary"), 0600) != nil {
-		return unavailable
+		return probeFail(unavailable)
 	}
 	l := workbenchLayout{Work: work, Home: filepath.Join(scratch, "home"), Tmp: filepath.Join(scratch, "tmp"), Read: append(append([]string{}, o.Workbench.Commands.Read...), read), System: system, Write: o.Workbench.Write, Loopback: o.Workbench.Commands.Loopback}
 	// Test launch first. Nested Seatbelt refusal must not trigger any network
@@ -96,41 +97,41 @@ func probeWorkbench(ctx context.Context, o Options, system []string) error {
 		if ctx.Err() != nil {
 			return workbenchCapability(CapabilityProbeTimeout)
 		}
-		return unavailable
+		return probeFail(unavailable)
 	}
 	// Prove group inspection positively as well: an empty scan must not let
 	// the reaper kill a real background job or retain every empty supervisor.
 	if _, err = runWorkbenchProbe(ctx, l, "/bin/sleep 30 >/dev/null 2>&1 & echo canary-ran", true); err != nil {
-		return unavailable
+		return probeFail(unavailable)
 	}
 	// A sibling fixture cannot witness the owner's home. Prove that directory
 	// enumeration works outside the sandbox, without reading credential files.
 	ownerHome, err := os.UserHomeDir()
 	if err != nil {
-		return unavailable
+		return probeFail(unavailable)
 	}
 	ownerHome, err = filepath.EvalSymlinks(ownerHome)
 	if err != nil {
-		return unavailable
+		return probeFail(unavailable)
 	}
 	homeDir, err := os.Open(ownerHome)
 	if err != nil {
-		return unavailable
+		return probeFail(unavailable)
 	}
 	_, err = homeDir.ReadDir(1)
 	homeDir.Close()
 	if err != nil {
-		return unavailable
+		return probeFail(unavailable)
 	}
 	witness, ok := offMachineWitness(ctx)
 	if !ok {
-		return unavailable
+		return probeFail(unavailable)
 	}
 	// Discover metadata only, then positively query one existing keychain.
 	// Merely listing a scratch HOME's default search path would prove nothing.
 	keychainCmd, keychainProcess, e := process.Command(ctx, "/usr/bin/security", "list-keychains", "-d", "user")
 	if e != nil {
-		return unavailable
+		return probeFail(unavailable)
 	}
 	keychainOut := &workbenchOutput{limit: 4096}
 	keychainCmd.Stdout = keychainOut
@@ -138,7 +139,7 @@ func probeWorkbench(ctx context.Context, o Options, system []string) error {
 	e = keychainProcess.Run()
 	keychainProcess.Close()
 	if e != nil || strings.TrimSpace(keychainOut.text()) == "" {
-		return unavailable
+		return probeFail(unavailable)
 	}
 	keychain := ""
 	for _, line := range strings.Split(keychainOut.text(), "\n") {
@@ -149,22 +150,22 @@ func probeWorkbench(ctx context.Context, o Options, system []string) error {
 		}
 	}
 	if keychain == "" {
-		return unavailable
+		return probeFail(unavailable)
 	}
 	keychainCheck := "/usr/bin/security show-keychain-info " + workbenchShellQuote(keychain)
 	cmdCheck, procCheck, e := process.Command(ctx, "/bin/sh", "-c", keychainCheck)
 	if e != nil {
-		return unavailable
+		return probeFail(unavailable)
 	}
 	cmdCheck.WaitDelay = 2 * time.Second
 	e = procCheck.Run()
 	procCheck.Close()
 	if e != nil {
-		return unavailable
+		return probeFail(unavailable)
 	}
 	listener, wg, reached, err := countingListener("127.0.0.1:0")
 	if err != nil {
-		return unavailable
+		return probeFail(unavailable)
 	}
 	defer func() { listener.Close(); wg.Wait() }()
 	port := listener.Addr().(*net.TCPAddr).Port
@@ -172,13 +173,13 @@ func probeWorkbench(ctx context.Context, o Options, system []string) error {
 	// sockaddr_un; the probe root may be deep on CI.
 	socketDir, err := os.MkdirTemp("/tmp", "wb-s-")
 	if err != nil {
-		return unavailable
+		return probeFail(unavailable)
 	}
 	defer os.RemoveAll(socketDir)
 	socket := filepath.Join(socketDir, "socket")
 	unixListener, err := net.Listen("unix", socket)
 	if err != nil {
-		return unavailable
+		return probeFail(unavailable)
 	}
 	defer unixListener.Close()
 	socketReached := make(chan struct{}, 1)
@@ -199,35 +200,35 @@ func probeWorkbench(ctx context.Context, o Options, system []string) error {
 	// client must refuse proof rather than masquerade as socket isolation.
 	connect, connectProcess, e := process.Command(ctx, "/bin/sh", "-c", workbenchUnixConnect(socket))
 	if e != nil {
-		return unavailable
+		return probeFail(unavailable)
 	}
 	connect.WaitDelay = 2 * time.Second
 	e = connectProcess.Run()
 	connectProcess.Close()
 	if e != nil {
-		return unavailable
+		return probeFail(unavailable)
 	}
 	select {
 	case <-socketReached:
 	case <-ctx.Done():
-		return unavailable
+		return probeFail(unavailable)
 	}
 	// A disposable image is readable to the command; mounting it is not. No
 	// owner image is used. Setup positively attaches and detaches this image.
 	image := filepath.Join(l.Tmp, "canary.dmg")
 	cmd, p, e := process.Command(ctx, "/usr/bin/hdiutil", "create", "-size", "8m", "-fs", "HFS+", "-volname", "HarnessCanary", image)
 	if e != nil {
-		return unavailable
+		return probeFail(unavailable)
 	}
 	cmd.Env = []string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin", "HOME=" + l.Home, "TMPDIR=" + l.Tmp}
 	e = p.Run()
 	p.Close()
 	if e != nil {
-		return unavailable
+		return probeFail(unavailable)
 	}
 	mount := filepath.Join(work, "mount")
 	if os.Mkdir(mount, 0700) != nil {
-		return unavailable
+		return probeFail(unavailable)
 	}
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -243,11 +244,11 @@ func probeWorkbench(ctx context.Context, o Options, system []string) error {
 	// and mount point. An unavailable disk-image service proves nothing.
 	before, statErr := os.Stat(mount)
 	if statErr != nil {
-		return unavailable
+		return probeFail(unavailable)
 	}
 	attach, ap, ae := process.Command(ctx, "/usr/bin/hdiutil", "attach", "-nobrowse", "-mountpoint", mount, image)
 	if ae != nil {
-		return unavailable
+		return probeFail(unavailable)
 	}
 	attach.Env = cmd.Env
 	attach.WaitDelay = time.Second
@@ -255,11 +256,11 @@ func probeWorkbench(ctx context.Context, o Options, system []string) error {
 	ap.Close()
 	after, statErr := os.Stat(mount)
 	if ae != nil || statErr != nil || before.Sys().(*syscall.Stat_t).Dev == after.Sys().(*syscall.Stat_t).Dev {
-		return unavailable
+		return probeFail(unavailable)
 	}
 	detach, dp, de := process.Command(ctx, "/usr/bin/hdiutil", "detach", mount)
 	if de != nil {
-		return unavailable
+		return probeFail(unavailable)
 	}
 	detach.Env = cmd.Env
 	detach.WaitDelay = time.Second
@@ -267,7 +268,7 @@ func probeWorkbench(ctx context.Context, o Options, system []string) error {
 	dp.Close()
 	restored, statErr := os.Stat(mount)
 	if de != nil || statErr != nil || !os.SameFile(before, restored) {
-		return unavailable
+		return probeFail(unavailable)
 	}
 	script := workbenchCanary(l, root, read, socket, image, mount, witness, port)
 	script += workbenchReadWitnesses(root, ownerHome)
@@ -275,7 +276,7 @@ func probeWorkbench(ctx context.Context, o Options, system []string) error {
 	if l.Loopback {
 		bind, e := freeLoopbackPort()
 		if e != nil {
-			return unavailable
+			return probeFail(unavailable)
 		}
 		script += "\n" + loopbackCanary(port, witness, 443, bind)
 		script += "\nkill \"$!\" >/dev/null 2>&1; wait \"$!\" 2>/dev/null\n"
@@ -286,7 +287,7 @@ func probeWorkbench(ctx context.Context, o Options, system []string) error {
 		return workbenchCapability(CapabilityProbeTimeout)
 	}
 	if err != nil {
-		return unavailable
+		return probeFail(unavailable)
 	}
 	// Observations outside the sandbox take precedence over scripted reports.
 	postMount, statErr := os.Stat(mount)
@@ -354,6 +355,7 @@ func runWorkbenchProbe(ctx context.Context, l workbenchLayout, script string, ex
 	children, inspectErr := p.GroupHasChildren()
 	p.Stop()
 	err = <-done
+	fmt.Fprintf(os.Stderr, "PROBEDEBUG supervisor line=%q owned=%v inspectErr=%v children=%v expect=%v runErr=%v out=%q\n", line, owned, inspectErr, children, expectBackground, err, out.text())
 	if line != "0\n" || !owned || inspectErr != nil || children != expectBackground {
 		return out.text(), fmt.Errorf("sandbox supervisor protocol unavailable")
 	}
@@ -393,7 +395,14 @@ func workbenchCanary(l workbenchLayout, root, read, socket, image, mount, witnes
 	return s
 }
 
+func probeFail(err error) error {
+	_, file, line, _ := runtime.Caller(1)
+	fmt.Fprintf(os.Stderr, "PROBEDEBUG unavailable at %s:%d\n", file, line)
+	return err
+}
+
 func judgeWorkbench(output string, write, loopback, reached bool) error {
+	fmt.Fprintf(os.Stderr, "PROBEDEBUG output write=%v loopback=%v reached=%v:\n%s\nPROBEDEBUG end\n", write, loopback, reached, output)
 	completed := strings.TrimSpace(output)
 	last := completed
 	if i := strings.LastIndexByte(completed, '\n'); i >= 0 {
