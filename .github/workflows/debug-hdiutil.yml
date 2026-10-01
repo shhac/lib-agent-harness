@@ -1,0 +1,23 @@
+name: debug-hdiutil
+on:
+  pull_request:
+jobs:
+  probe:
+    runs-on: macos-latest
+    steps:
+      - run: |
+          sw_vers; uname -a
+          T=$(mktemp -d); cd $T
+          for fs in HFS+ APFS; do
+            for mp in custom default; do
+              echo "=== $fs $mp"
+              img=$T/img-$fs-$mp.dmg; rm -f $img
+              hdiutil create -size 8m -fs $fs -volname Canary$mp -quiet $img || { echo create failed; continue; }
+              if [ $mp = custom ]; then mkdir -p $T/m-$fs; dir=$T/m-$fs; hdiutil attach -nobrowse -mountpoint $dir $img; else hdiutil attach -nobrowse $img; dir=$(mount | awk '/Canary/ {print $3}' | tail -1); fi
+              echo "rc=$? dir=$dir"; mount | grep -E "Canary|m-$fs|disk[5-9]" || echo "not in mount"
+              stat -f "%d %N" "$T" "$dir" 2>&1
+              hdiutil info | tail -8
+              hdiutil detach "$dir" -force >/dev/null 2>&1 || true
+            done
+          done
+          log show --last 3m --predicate 'process == "diskarbitrationd" OR process == "diskimagesiod" OR sender == "hfs"' 2>/dev/null | tail -30
