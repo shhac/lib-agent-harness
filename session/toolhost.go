@@ -37,7 +37,10 @@ type toolHost struct {
 	closed  bool
 	probing bool
 	stopped bool
-	running int
+	// closeDone closes only after listener workers and the assignment lease
+	// have settled. A concurrent close must wait for that same cleanup.
+	closeDone chan struct{}
+	running   int
 	// pending holds every admitted call, queued or executing, keyed by the
 	// connection and request that asked for it.
 	pending map[string]*hostedCall
@@ -166,10 +169,14 @@ func (h *toolHost) environment() map[string]string {
 func (h *toolHost) close() {
 	h.mu.Lock()
 	if h.stopped {
+		done := h.closeDone
 		h.mu.Unlock()
+		<-done
 		return
 	}
 	h.stopped = true
+	h.closeDone = make(chan struct{})
+	defer close(h.closeDone)
 	lease := h.lease
 	h.lease = nil
 	h.mu.Unlock()

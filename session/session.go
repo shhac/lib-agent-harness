@@ -249,6 +249,9 @@ func (s *Session) settleFailedLaunch(l *launch) {
 			return
 		}
 	}
+	// An EOF callback may already be closing the host while initialize returns
+	// its failure. Process reaping alone does not mean its lease was released.
+	l.host.close()
 	record, err := readLaunchRecord(l.host.cfg.Dir)
 	if err != nil {
 		return

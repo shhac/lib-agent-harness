@@ -13,6 +13,36 @@ import (
 	"time"
 )
 
+func TestConcurrentHostCloseWaitsForLeaseCleanup(t *testing.T) {
+	h := testHost(t, echoHandler(t))
+	// Hold one channel worker after shutdown starts, exposing the interval
+	// between stopping admission and releasing the assignment lease.
+	h.wg.Add(1)
+	first := make(chan struct{})
+	go func() { h.close(); close(first) }()
+	<-h.done
+	second := make(chan struct{})
+	go func() { h.close(); close(second) }()
+	select {
+	case <-second:
+		t.Error("concurrent close returned before lease cleanup settled")
+	case <-time.After(100 * time.Millisecond):
+	}
+	h.wg.Done()
+	for _, done := range []chan struct{}{first, second} {
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("host close did not settle")
+		}
+	}
+	lease, err := holdLease(leasePath(h.cfg.Dir))
+	if err != nil {
+		t.Fatal("close retained the assignment lease:", err)
+	}
+	_ = lease.Close()
+}
+
 // A call withdrawn before it ever reached the gate must not run because the gate
 // happened to be free. A select offered both a ready gate and an already-
 // cancelled context picks either one, so testing only the gate's readiness lets
