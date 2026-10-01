@@ -252,8 +252,12 @@ func probeWorkbench(ctx context.Context, o Options, system []string) error {
 	}
 	attach.Env = cmd.Env
 	attach.WaitDelay = time.Second
+	attachOut := &workbenchOutput{limit: 4096}
+	attach.Stdout = attachOut
+	attach.Stderr = attachOut
 	ae = ap.Run()
 	ap.Close()
+	fmt.Fprintf(os.Stderr, "PROBEDEBUG attach err=%v env=%v out=%q\n", ae, attach.Env, attachOut.text())
 	after, statErr := os.Stat(mount)
 	if ae != nil || statErr != nil || before.Sys().(*syscall.Stat_t).Dev == after.Sys().(*syscall.Stat_t).Dev {
 		return probeFail(unavailable)
