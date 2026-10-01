@@ -232,6 +232,10 @@ func resolveName(rel string, root bool) (clean, code string) {
 func rootFailure(err error) string {
 	var pathErr *fs.PathError
 	switch {
+	case errors.Is(err, errHidden):
+		// A directory the tool's policy hides, such as .git reached by its
+		// Windows short name, is reserved, not merely unreadable.
+		return wbReserved
 	case errors.Is(err, errOtherMount):
 		return wbOtherMount
 	case errors.Is(err, errLinked):
