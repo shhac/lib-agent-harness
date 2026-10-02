@@ -588,14 +588,14 @@ func TestWorkbenchListSaysWhenADirectoryFailed(t *testing.T) {
 
 	// A subdirectory that is gone by the time it is opened is reported the
 	// same way, not skipped silently.
-	ws.dirFault = func(native string, batch int) error {
-		// After tree's entries were read, before its subdirectories are.
-		if filepath.ToSlash(native) == "tree" && batch == 1 {
+	ws.dirFault = nil
+	ws.listed = func(rel string) {
+		// After tree's entries were taken in, before its subdirectories are.
+		if rel == "tree" {
 			if err := os.RemoveAll(filepath.Join(work, "tree", "bad")); err != nil {
 				t.Fatal(err)
 			}
 		}
-		return nil
 	}
 	r = call(t, ws, workbenchListFiles, map[string]any{"path": "tree"})
 	if r.Content != "tree/bad/\ntree/ok/\ntree/ok/kept.txt\n"+incomplete {

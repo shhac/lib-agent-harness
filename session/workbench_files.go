@@ -118,6 +118,10 @@ type workspace struct {
 	// use it to stand in for an I/O error part-way through a listing. rel is
 	// the directory's slash path from the root.
 	dirFault func(rel string, batch int) error
+	// listed, when set, runs once list_files has taken in a directory's
+	// entries and before it reads any of its subdirectories; tests use it to
+	// change the tree in that gap.
+	listed func(rel string)
 	// maxVisited, when set, replaces maxListVisited; tests use it.
 	maxVisited int
 }
@@ -528,6 +532,7 @@ func (w *workspace) listFiles(ctx context.Context, raw json.RawMessage) (ToolRes
 		}
 		seen := 0
 		handle, err := c.to(d.node)
+		var names []string
 		if err == nil {
 			err = w.eachName(ctx, handle, d.node.rel, func(name string) (bool, error) {
 				if visited >= limit {
@@ -543,45 +548,59 @@ func (w *workspace) listFiles(ctx context.Context, raw json.RawMessage) (ToolRes
 				} else if err := ctx.Err(); err != nil {
 					return false, err
 				}
-				if hiddenName(name) {
-					return true, nil
-				}
-				rel := path.Join(d.node.rel, name)
-				line, info, exists := describe(handle, name, rel)
-				if info != nil && info.Mode().IsRegular() && w.fileOtherMount(handle, name, info) {
-					line = rel + " [mount]"
-					info = nil
-				}
-				if info != nil && info.IsDir() {
-					probe := d.node.child(name, info)
-					r, e := c.enter(handle, probe)
-					if e == nil {
-						r.Close()
-						w.handles.Add(-1)
-					}
-					if errors.Is(e, errOtherMount) {
-						line = rel + "/ [mount]"
-						info = nil
-					}
-				}
-				if !exists {
-					// Gone since the directory was read: nothing to list.
-					return true, nil
-				}
-				if info != nil && info.IsDir() && d.level < depth {
-					queue = append(queue, dir{d.node.child(name, info), d.level + 1})
-				}
-				if len(entries) < maxListEntries && used+len(line)+1 <= room {
-					entries = append(entries, line)
-					used += len(line) + 1
-				} else {
-					omitted++
-				}
+				names = append(names, name)
 				return true, nil
 			})
 		}
+		// A directory's names are taken in order, so what a cut keeps never
+		// depends on the order the filesystem returned them in.
+		slices.Sort(names)
+		for i, name := range names {
+			if (i+1)%listCheckEvery == 0 {
+				if err := w.checkpoint(ctx); err != nil {
+					return ToolResult{}, err
+				}
+			}
+			if hiddenName(name) {
+				continue
+			}
+			rel := path.Join(d.node.rel, name)
+			line, info, exists := describe(handle, name, rel)
+			if info != nil && info.Mode().IsRegular() && w.fileOtherMount(handle, name, info) {
+				line = rel + " [mount]"
+				info = nil
+			}
+			if info != nil && info.IsDir() {
+				probe := d.node.child(name, info)
+				r, e := c.enter(handle, probe)
+				if e == nil {
+					r.Close()
+					w.handles.Add(-1)
+				}
+				if errors.Is(e, errOtherMount) {
+					line = rel + "/ [mount]"
+					info = nil
+				}
+			}
+			if !exists {
+				// Gone since the directory was read: nothing to list.
+				continue
+			}
+			if info != nil && info.IsDir() && d.level < depth {
+				queue = append(queue, dir{d.node.child(name, info), d.level + 1})
+			}
+			if len(entries) < maxListEntries && used+len(line)+1 <= room {
+				entries = append(entries, line)
+				used += len(line) + 1
+			} else {
+				omitted++
+			}
+		}
 		if ctx.Err() != nil {
 			return ToolResult{}, ctx.Err()
+		}
+		if w.listed != nil {
+			w.listed(d.node.rel)
 		}
 		switch {
 		case errors.Is(err, errHidden) && d.level == 1:
