@@ -42,7 +42,8 @@ jobs:
           sudo mount --bind "$witness/source/marker" "$witness/work/parent/filemount"
           echo "AGENT_HARNESS_TEST_BIND_MOUNT=$witness/work" >> "$GITHUB_ENV"
       - run: go test -race ./...
-  linux-bwrap-0.8.0:
+  linux-bwrap-080:
+    name: linux (bubblewrap 0.8.0)
     runs-on: ubuntu-latest
     env:
       AGENT_HARNESS_TEST_NO_SKIP: '1'
