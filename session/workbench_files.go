@@ -385,6 +385,13 @@ func (w *workspace) openRegular(c *cursor, top *dirNode, clean string) (*os.File
 				w.release(f)
 				return nil, wbUnreadable
 			}
+			// Linux drops a hard link's count before its name goes, so both
+			// checks above can see one link on a file whose other name is
+			// outside. The name must still be that one-link file once open.
+			if again, err := dir.Lstat(part); err != nil || !os.SameFile(again, info) || wsfile.LinkCount(again) > 1 {
+				w.release(f)
+				return nil, wbLinked
+			}
 			if aliasedNames {
 				if name, err := realName(f); err != nil || c.policy.hides(name) {
 					w.release(f)
