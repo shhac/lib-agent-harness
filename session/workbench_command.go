@@ -88,9 +88,8 @@ func normalizeWorkbenchCommands(o Options) (Options, error) {
 	slices.Sort(c.Read)
 	c.Read = slices.Compact(c.Read)
 	for _, entry := range c.Env {
-		key, _, ok := strings.Cut(entry, "=")
-		if !ok || strings.ContainsRune(entry, 0) || !(key == "PATH" || key == "LANG" || strings.HasPrefix(key, "LC_")) {
-			return o, refuse(o, "commands", RefusedConflict, "Commands.Env accepts only PATH, LANG and LC_*; HOME and TMPDIR are private scratch")
+		if why := workbenchEnvRefusal(entry); why != "" {
+			return o, refuse(o, "commands", RefusedConflict, "Commands.Env "+why)
 		}
 	}
 	o.Workbench.Commands = &c
@@ -153,4 +152,52 @@ func (w *workspace) runCommand(ctx context.Context, raw json.RawMessage) (ToolRe
 	}
 	c.close()
 	return w.commands.run(ctx, in.Command, rel, timeout)
+}
+
+// workbenchEnvRefusal says why a Commands.Env entry is refused, or "" when it
+// is an ordinary setting the caller may pass to commands. What it refuses
+// either belongs to the library, acts before the sandbox exists, runs ahead
+// of the supervisor script, or would hand a credential to the model, which
+// can print its environment.
+func workbenchEnvRefusal(entry string) string {
+	key, _, ok := strings.Cut(entry, "=")
+	switch {
+	case !ok || !workbenchEnvName(key) || strings.ContainsRune(entry, 0):
+		return "entries must be NAME=value with a portable name"
+	case key == "HOME" || key == "TMPDIR":
+		return "cannot set HOME or TMPDIR: they name private scratch"
+	case strings.HasPrefix(key, "AGENT_HARNESS_"):
+		return "cannot set AGENT_HARNESS_* variables: they belong to the library"
+	case strings.HasPrefix(key, "DYLD_") || strings.HasPrefix(key, "LD_"):
+		return "cannot set dynamic loader variables: they act before the sandbox applies"
+	case slices.Contains([]string{"BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS", "IFS", "CDPATH"}, key):
+		return "cannot set shell start-up variables: they run ahead of the command supervisor"
+	case workbenchEnvCredential(key):
+		return "cannot set credential-like variables: commands' output reaches the model"
+	}
+	return ""
+}
+
+// workbenchEnvName is a portable environment variable name, which also keeps
+// out Bash's exported functions (BASH_FUNC_name%%).
+func workbenchEnvName(key string) bool {
+	for i, r := range key {
+		letter := r == '_' || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z')
+		if !letter && (i == 0 || r < '0' || r > '9') {
+			return false
+		}
+	}
+	return key != ""
+}
+
+// workbenchEnvCredential reports a name with a credential-like segment, such
+// as OPENAI_API_KEY, GITHUB_TOKEN or SSH_AUTH_SOCK.
+func workbenchEnvCredential(key string) bool {
+	for _, segment := range strings.Split(strings.ToUpper(key), "_") {
+		switch segment {
+		case "KEY", "APIKEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "CREDENTIALS", "AUTH":
+			return true
+		}
+	}
+	return false
 }

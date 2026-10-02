@@ -533,6 +533,8 @@ func TestWorkbenchCommandsNormalize(t *testing.T) {
 		{"timeout", func(o *Options) { o.Workbench.Commands.Timeout = 11 * time.Minute }},
 		{"environment", func(o *Options) { o.Workbench.Commands.Env = []string{"API_KEY=secret"} }},
 		{"scratch environment", func(o *Options) { o.Workbench.Commands.Env = []string{"HOME=/elsewhere"} }},
+		{"loader environment", func(o *Options) { o.Workbench.Commands.Env = []string{"DYLD_INSERT_LIBRARIES=/tmp/x.dylib"} }},
+		{"library environment", func(o *Options) { o.Workbench.Commands.Env = []string{"AGENT_HARNESS_LAUNCH=x"} }},
 		{"runtime read", func(o *Options) { o.Workbench.Commands.Read = []string{o.RuntimeHome} }},
 		{"home read", func(o *Options) { home, _ := os.UserHomeDir(); o.Workbench.Commands.Read = []string{home} }},
 		{"data-volume home read", func(o *Options) { o.Workbench.Commands.Read = []string{"/System/Volumes"} }},
@@ -734,6 +736,34 @@ func TestWorkbenchMacOSEditAndRunSession(t *testing.T) {
 	}
 	if harness.Support(harness.OpenAICompatible, harness.Session, harness.Sandbox).Availability != harness.Unknown {
 		t.Fatal("unproved native claim")
+	}
+}
+
+// The caller's ordinary settings reach every command, beside the private
+// scratch HOME and TMPDIR the library always sets.
+func TestWorkbenchCommandEnvironment(t *testing.T) {
+	requireWorkbenchSeatbelt(t)
+	o := workbenchOptions(t, nopHandler())
+	o.Workbench = &Workbench{Commands: &Commands{Env: []string{"GOFLAGS=-mod=mod", "PORT=4321", "npm_config_cache=/nowhere/npm"}}}
+	o, err := normalize(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := proveWorkbench(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	s := startAPI(t, o)
+	defer closeAPI(t, s)
+	r, err := s.api.workspace.commands.run(context.Background(), `printf '%s|%s|%s|%s' "$GOFLAGS" "$PORT" "$npm_config_cache" "$HOME"`, ".", 5*time.Second)
+	var out struct {
+		Stdout string `json:"stdout"`
+	}
+	if err != nil || r.IsError || json.Unmarshal([]byte(r.Content), &out) != nil {
+		t.Fatalf("%+v %v", r, err)
+	}
+	fields := strings.Split(out.Stdout, "|")
+	if len(fields) != 4 || fields[0] != "-mod=mod" || fields[1] != "4321" || fields[2] != "/nowhere/npm" || !strings.HasPrefix(fields[3], o.RuntimeHome) {
+		t.Fatalf("environment %q", out.Stdout)
 	}
 }
 

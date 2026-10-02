@@ -501,8 +501,17 @@ workspace and explicit read set.
 IP and abstract-socket network access is denied by default. macOS also
 denies Unix sockets; Linux pathname sockets follow the directory rule above. `Commands.Loopback`
 allows localhost dev servers on macOS only, proved against a reachable off-machine
-witness and a local listener, as for Claude. `Commands.Env` accepts PATH,
-LANG and LC_*; HOME and TMPDIR always name private scratch. Timeout defaults
+witness and a local listener, as for Claude. `Commands.Env` sets
+ordinary variables for every command, such as build caches, `GOFLAGS` or a
+`PORT`. HOME and TMPDIR always name private scratch. Normalization refuses
+`AGENT_HARNESS_*` (the library's own), dynamic-loader variables (`DYLD_*`,
+`LD_*`), shell start-up variables (`BASH_ENV`, `ENV`, `SHELLOPTS`,
+`BASHOPTS`, `IFS`, `CDPATH`), names that aren't portable (which keeps out
+Bash's exported functions), and credential-like names (a `KEY`, `TOKEN`,
+`SECRET`, `PASSWORD`, `CREDENTIAL` or `AUTH` segment), because the model sees
+what its commands print. A path an Env value names gains no access: only
+`Commands.Read`, the workspace and scratch are reachable. Env grants no power,
+so it is not part of a session's reference and may change between resumes. Timeout defaults
 to two minutes, is capped at ten, and the model can shorten it. Cancellation
 and timeout stop the process tree; timeout is a normal `timed_out` result.
 A lost private completion response records `command_outcome_unknown`, never
