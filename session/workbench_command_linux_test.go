@@ -76,8 +76,10 @@ func TestWorkbenchLinuxStructuralProof(t *testing.T) {
 	if e != nil || !strings.Contains(output, "proved") {
 		t.Fatalf("%s %v", output, e)
 	}
-	// Each failed or unreadable observation must fail the conjunction.
-	for _, replacement := range [][2]string{{"/proc/self/ns/net", "/proc/absent"}, {"/proc/net/dev", "/proc/absent"}, {"[ ! -e " + workbenchShellQuote(socket) + " ]", "[ ! -e /etc/passwd ]"}, {workbenchShellQuote(namespace), "\"$n\""}} {
+	// Each failed or unreadable observation must fail the conjunction. The
+	// socket's own parent is absent inside, which already proves it out of
+	// reach, so its check is broken by naming a path the sandbox can see.
+	for _, replacement := range [][2]string{{"/proc/self/ns/net", "/proc/absent"}, {"/proc/net/dev", "/proc/absent"}, {linuxSocketAbsent(socket), linuxSocketAbsent("/etc/passwd")}, {workbenchShellQuote(namespace), "\"$n\""}} {
 		broken := strings.Replace(script, replacement[0], replacement[1], 1)
 		output, e := runLinuxProbe(ctx, binary, l, "( "+broken+" ) && echo proved; exit 0", false)
 		if e != nil || strings.Contains(output, "proved") {
@@ -107,7 +109,7 @@ func TestWorkbenchLinuxWidenedSandbox(t *testing.T) {
 	script := linuxWorkbenchCanary(l, hidden, read, filepath.Join(hidden, "socket"), namespace, workbenchLinuxWitness{"structural", "structural", "structural"}, "", "") + "echo canary-ran\n"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cmd, p, e := process.Command(ctx, binary, "--bind", "/", "/", "--chdir", l.Work, "--", "/bin/sh", "-c", script)
+	cmd, p, e := process.Command(ctx, binary, "--bind", "/", "/", "--dev", "/dev", "--chdir", l.Work, "--", "/bin/sh", "-c", script)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -180,7 +182,7 @@ func TestWorkbenchLinuxEditAndRunSession(t *testing.T) {
 	defer closeAPI(t, resumed)
 }
 
-func linuxCommandRunner(t *testing.T, background bool) (*workspace, Options) {
+func linuxCommandRunner(t *testing.T, background bool, edits ...func(*Options)) (*workspace, Options) {
 	t.Helper()
 	binary, _ := requireWorkbenchBwrap(t)
 	w, work, _ := testWorkspace(t)
@@ -194,6 +196,9 @@ func linuxCommandRunner(t *testing.T, background bool) (*workspace, Options) {
 		t.Fatal(e)
 	}
 	o.Workbench.commandIdentity = identity
+	for _, edit := range edits {
+		edit(&o)
+	}
 	id := newID()
 	if e := os.MkdirAll(sessionDir(o.RuntimeHome, id), 0700); e != nil {
 		t.Fatal(e)
@@ -364,6 +369,23 @@ func waitLinuxTreeGone(t *testing.T, observed map[int]linuxProcessWitness) {
 			t.Fatal("a positively identified command descendant survived settlement")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// The caller's ordinary settings reach every command, beside the private
+// scratch HOME and TMPDIR the library always sets.
+func TestWorkbenchLinuxCommandEnvironment(t *testing.T) {
+	w, o := linuxCommandRunner(t, false, func(o *Options) {
+		o.Workbench.Commands.Env = []string{"GOFLAGS=-mod=mod", "PORT=4321", "npm_config_cache=/nowhere/npm"}
+	})
+	r, e := w.commands.run(context.Background(), `printf '%s|%s|%s|%s' "$GOFLAGS" "$PORT" "$npm_config_cache" "$HOME"`, ".", 5*time.Second)
+	var out struct{ Stdout string }
+	if e != nil || r.IsError || json.Unmarshal([]byte(r.Content), &out) != nil {
+		t.Fatalf("%+v %v", r, e)
+	}
+	fields := strings.Split(out.Stdout, "|")
+	if len(fields) != 4 || fields[0] != "-mod=mod" || fields[1] != "4321" || fields[2] != "/nowhere/npm" || fields[3] == "" || fields[3] == os.Getenv("HOME") {
+		t.Fatalf("environment %q (runtime %s)", out.Stdout, o.RuntimeHome)
 	}
 }
 
