@@ -17,12 +17,6 @@ import (
 // A versioned template is shared by commands and the disposable canary.
 const workbenchSeatbeltVersion = "seatbelt-workbench-v3"
 
-type workbenchLayout struct {
-	Work, Home, Tmp string
-	Read, System    []string
-	Write, Loopback bool
-}
-
 func seatbeltProfile(l workbenchLayout) string {
 	var b strings.Builder
 	b.WriteString("(version 1)\n(deny default)\n")

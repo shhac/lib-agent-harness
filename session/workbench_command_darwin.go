@@ -3,7 +3,6 @@ package session
 import (
 	"bufio"
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -20,88 +19,14 @@ import (
 	"github.com/shhac/lib-agent-harness/process"
 )
 
-type workbenchToken struct {
-	Token string
-	Since time.Time
-}
-
 func setupWorkbenchCommands(w *workspace, o Options, id string) error {
 	if o.Workbench.Commands == nil {
 		return nil
 	}
-	dir := filepath.Join(o.RuntimeHome, "sessions", id)
-	tokenPath := filepath.Join(dir, "workbench-token.json")
-	if data, err := os.ReadFile(tokenPath); err == nil {
-		var old workbenchToken
-		if json.Unmarshal(data, &old) != nil || len(old.Token) != 32 || old.Since.IsZero() || old.Since.After(time.Now().Add(time.Second)) {
-			return stateError(StateUnusable)
-		}
-		if _, err := hex.DecodeString(old.Token); err != nil {
-			return stateError(StateUnusable)
-		}
-		if process.SweepToken(old.Token, old.Since) != nil {
-			return stateError(StateUnusable)
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return stateError(StateUnusable)
-	}
-	scratch := filepath.Join(dir, "workbench")
-	if err := os.RemoveAll(scratch); err != nil {
-		return stateError(StateUnusable)
-	}
-	for _, name := range []string{"home", "tmp"} {
-		if err := os.MkdirAll(filepath.Join(scratch, name), 0700); err != nil {
-			os.RemoveAll(scratch)
-			return stateError(StateUnusable)
-		}
-	}
-	system := o.Workbench.system
-	if len(system) == 0 {
-		os.RemoveAll(scratch)
-		return stateError(StateUnusable)
-	}
-	token := workbenchToken{process.NewToken(), time.Now()}
-	data, _ := json.Marshal(token)
-	// Preserve the previous durable marker if a replacement is interrupted.
-	tokenTemp := filepath.Join(dir, "workbench-token.tmp")
-	_ = os.Remove(tokenTemp)
-	f, err := os.OpenFile(tokenTemp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if err == nil {
-		_, err = f.Write(data)
-		if err == nil {
-			err = f.Sync()
-		}
-		closeErr := f.Close()
-		if err == nil {
-			err = closeErr
-		}
-	}
-	if err == nil {
-		err = os.Rename(tokenTemp, tokenPath)
-	}
+	layout, env, token, scratch, err := prepareWorkbenchCommands(o, id)
 	if err != nil {
-		_ = os.Remove(tokenTemp)
+		return err
 	}
-	if err == nil {
-		r, e := os.OpenRoot(dir)
-		if e == nil {
-			err = syncWorkbenchDir(r)
-			r.Close()
-		} else {
-			err = e
-		}
-	}
-	if err != nil {
-		os.RemoveAll(scratch)
-		return stateError(StateUnusable)
-	}
-	layout := workbenchLayout{Work: o.WorkDir, Home: filepath.Join(scratch, "home"), Tmp: filepath.Join(scratch, "tmp"), System: system, Read: o.Workbench.Commands.Read, Write: o.Workbench.Write, Loopback: o.Workbench.Commands.Loopback}
-	env, err := skills.Environment(os.Environ(), append(append([]string{}, o.Workbench.Commands.Env...), "HOME="+layout.Home, "TMPDIR="+layout.Tmp))
-	if err != nil {
-		os.RemoveAll(scratch)
-		return stateError(StateUnusable)
-	}
-	env = process.TokenEnvironment(env, token.Token)
 	var mu sync.Mutex
 	type running struct {
 		p       *process.Process
@@ -307,48 +232,6 @@ func setupWorkbenchCommands(w *workspace, o Options, id string) error {
 		return ToolResult{Content: string(payload)}, nil
 	}
 	return nil
-}
-
-type workbenchOutput struct {
-	mu        sync.Mutex
-	frozen    bool
-	data      []byte
-	limit     int
-	truncated bool
-}
-
-func (b *workbenchOutput) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	n := len(p)
-	if b.frozen {
-		return n, nil
-	}
-	left := b.limit - len(b.data)
-	if left < len(p) {
-		p = p[:left]
-		b.truncated = true
-	}
-	b.data = append(b.data, p...)
-	return n, nil
-}
-func (b *workbenchOutput) text() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.textLocked()
-}
-func (b *workbenchOutput) textLocked() string {
-	s := string(b.data)
-	if b.truncated {
-		s += "\n[output truncated]"
-	}
-	return s
-}
-func (b *workbenchOutput) finish() (string, bool) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.frozen = true
-	return b.textLocked(), b.truncated
 }
 
 const workbenchSupervisor = `trap '' PIPE

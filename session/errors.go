@@ -136,20 +136,22 @@ const (
 	CapabilityUnsupportedPlatform = "restricted_session_unsupported_platform"
 	CapabilityNativeToolsPresent  = "native_tools_present"
 	// CapabilitySandboxToolMissing: the OS sandbox executable is unavailable.
-	CapabilitySandboxToolMissing = "sandbox_tool_missing"
-	CapabilityHostedToolsMissing = "hosted_tools_missing"
-	CapabilityInstructionsMerged = "inherited_instructions_merged"
-	CapabilityChangedModel       = "changed_model"
-	CapabilityChangedEffort      = "changed_effort"
-	CapabilityProbeNoRequest     = "probe_made_no_request"
-	CapabilityProbeUnreadable    = "probe_request_unreadable"
-	CapabilityProbeTimeout       = "probe_timed_out"
-	CapabilityProbeFailed        = "probe_could_not_run"
-	CapabilityCatalogUnavailable = "model_catalog_unavailable"
-	CapabilityCatalogRestriction = "model_catalog_restriction_failed"
-	CapabilityServerNotLoaded    = "tool_server_not_loaded"
-	CapabilityServerNameReserved = "tool_server_name_reserved"
-	CapabilityLoginUnavailable   = "harness_login_unavailable"
+	CapabilitySandboxToolMissing           = "sandbox_tool_missing"
+	CapabilitySandboxToolOutdated          = "sandbox_tool_outdated"
+	CapabilitySandboxNamespacesUnavailable = "sandbox_namespaces_unavailable"
+	CapabilityHostedToolsMissing           = "hosted_tools_missing"
+	CapabilityInstructionsMerged           = "inherited_instructions_merged"
+	CapabilityChangedModel                 = "changed_model"
+	CapabilityChangedEffort                = "changed_effort"
+	CapabilityProbeNoRequest               = "probe_made_no_request"
+	CapabilityProbeUnreadable              = "probe_request_unreadable"
+	CapabilityProbeTimeout                 = "probe_timed_out"
+	CapabilityProbeFailed                  = "probe_could_not_run"
+	CapabilityCatalogUnavailable           = "model_catalog_unavailable"
+	CapabilityCatalogRestriction           = "model_catalog_restriction_failed"
+	CapabilityServerNotLoaded              = "tool_server_not_loaded"
+	CapabilityServerNameReserved           = "tool_server_name_reserved"
+	CapabilityLoginUnavailable             = "harness_login_unavailable"
 	// CapabilityBrowserToolsMissing: startup did not advertise the configured
 	// browser integration's tools. This does not identify extension connectivity.
 	CapabilityBrowserToolsMissing       = "browser_tools_missing"
@@ -215,6 +217,16 @@ func (e *CapabilityError) Error() string {
 		CapabilitySandboxUnavailable:        "the installed harness could not be run under the requested sandbox",
 		CapabilitySandboxNotEnforced:        "the installed harness's sandbox allowed writes or network access the session must not have",
 	}[e.Code]
+	if len(e.Tools) == 1 && e.Tools[0] == "bwrap" {
+		switch e.Code {
+		case CapabilitySandboxToolMissing:
+			message = "bubblewrap is required; install it with apt install bubblewrap, dnf install bubblewrap or pacman -S bubblewrap"
+		case CapabilitySandboxToolOutdated:
+			message = "bubblewrap 0.8.0 or later is required for --disable-userns; install the distribution's package or a newer build"
+		case CapabilitySandboxNamespacesUnavailable:
+			message = "bubblewrap cannot create unprivileged user namespaces; check kernel.unprivileged_userns_clone, user.max_user_namespaces and Ubuntu 24.04+'s kernel.apparmor_restrict_unprivileged_userns and AppArmor profile for bwrap"
+		}
+	}
 	if message == "" {
 		message = "the restricted session configuration could not be established"
 	}

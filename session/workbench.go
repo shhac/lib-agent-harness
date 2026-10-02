@@ -29,7 +29,9 @@ import (
 //
 // Reads require singly linked regular files on the workspace mount.
 type Workbench struct {
-	system []string // the pinned set selected and proved for this launch
+	system          []string // the pinned set selected and proved for this launch
+	commandBinary   string   // selected by the pre-launch command proof
+	commandIdentity string   // evidence must still name the binary being launched
 	// Write adds atomic write_file and edit_file tools.
 	Write bool
 	// NewFileMode defaults to 0600. Windows uses the parent directory ACL.
@@ -89,7 +91,7 @@ func normalizeWorkbench(o Options) (Options, error) {
 	if o.Workbench == nil {
 		return o, nil
 	}
-	if o.Workbench.Commands != nil && runtime.GOOS != "darwin" {
+	if o.Workbench.Commands != nil && runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
 		return o, &UnsupportedError{Engine: o.Provider.Engine, Operation: "sandbox", Code: RefusedNotOffered, Capability: harness.Support(o.Provider.Engine, harness.Session, harness.Sandbox)}
 	}
 	if o.Workbench.NewFileMode & ^fs.FileMode(0666) != 0 {

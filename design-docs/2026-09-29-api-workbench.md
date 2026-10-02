@@ -47,9 +47,117 @@ And after a sixth review:
 **Status.** Stage 1 has shipped (LAH-2 and LAH-8): read-only tools,
 opened-handle checks on Linux, macOS and Windows, one bounded workspace
 worker, and the WorkspaceRead claim. LAH-3 implements stage 2a and the macOS
-stage 2b command path. Linux stage 2c is split into LAH-9 and remains refused.
+stage 2b command path. LAH-9 implements Linux stage 2c with bubblewrap 0.8.0+,
+proved before each launch. The distribution and minimum-version Linux CI
+jobs must pass before landing.
 The macOS profile, keychain and disk-image witnesses require the real CI run
 or the owner witness below before this implementation is considered proved.
+
+### LAH-9 implementation
+
+Linux normalization refuses resolved Read paths overlapping `/run` or
+containing `/tmp` with `RefusedSandboxRead`; `/var/run` aliases are resolved
+first. Pathname sockets within WorkDir or an allowed Read remain connectable:
+network namespaces only isolate abstract sockets and IP. Callers must exclude
+host service sockets from these directories. The socket positive-control
+listener is closed and joined, observations drained, and the same path
+reopened before the canary; a connecting client that exits nonzero cannot
+produce a false escape after selecting structural proof.
+
+The probe-key template inspects a newly created private fixture with a `.git`
+overlay and canonicalizes its random root before hashing; it never inspects
+a host `/workspace`. Proof roots named `wb-proof-*` are removed on normal
+return, but a crash or SIGKILL may leave dummy fixtures in the owner's home
+or other covering location. No automatic sweep is attempted; remove abandoned
+roots after stopping the library. Shallow outside-home layouts remain refused
+as described below and in the README.
+
+Linux commands and the disposable canary share the five-phase `bwrapArgs`
+builder. All privilege and namespace flags in §2c are mandatory. Missing
+optional system entries are skipped, symlinks are recreated, and identity
+ancestry is checked only for existing entries: an absent `/lib32` must not
+classify every workspace as inside the system set. Redundant system reads
+are dropped. No tmpfs follows a directory and no directory follows a bind.
+
+Version output is bounded and parsed numerically after a successful
+`bwrap --version` exit. The full-flags trial must exit zero. Stderr never
+classifies a refusal. The fixed actionable missing, outdated and namespace
+refusals precede workspace state, transcript and credentials. Timeout gives
+`probe_timed_out`; disposable roots and sockets are removed and no evidence
+is recorded after failed or interrupted proof.
+
+The owner's Linux structural witness rule requires all three readable
+observations to pass: the inside `/proc/self/ns/net` inode differs from the
+host's, `/proc/net/dev` names only `lo`, and the probe socket path is absent
+(including dangling symlinks). `nc -U -w 2` is tried outside first; missing
+nc or unusable `-U` selects structural proof. Successful clients must reach
+the owned listener, then the identical inside connect must fail. TCP uses
+`/usr/bin/bash` and `/dev/tcp`, with identical outside positive controls for
+both the reachable off-machine address and the owned localhost listener.
+Judgment call for the clipped question: absent bash selects the same complete
+structural proof for TCP; a failed installed bash positive control refuses
+launch. macOS witnesses and its no-nc refusal remain unchanged. The result
+and output record `connect` or `structural` separately for each witness.
+Socket absence is checked top-down through readable, searchable parents;
+plain `test -e` cannot distinguish absence from an unreadable path.
+
+Fixtures reproduce covering tmpfs, home placement and path depth, preserving
+containment between workspace and read directories. They never bind real
+session directories. A read covering `/tmp` exposes the mapped probe socket
+and must fail proof. Outside listener counts and byte-for-byte `.git/config`
+checks take precedence over script output. Privilege proof requires zero
+effective, permitted, inheritable and ambient capabilities and NoNewPrivs 1.
+Util-linux overlay attacks are attempted individually; absent utilities are
+recorded as not attempted. The raw-syscall CI helper covers them independently.
+The transcript fixture sits beside the scratch under its mapped RuntimeHome.
+A second sibling attempt checks the workspace's actual parent: writes to that
+private tmpfs may succeed, but a corresponding host sibling must remain absent.
+If a disposable path cannot be created at the required covering location and
+depth, proof is unavailable; the library does not substitute a shallower layout.
+Go's multithreaded runtime cannot positively witness successful user-namespace
+unshare: the adversary uses raw clone with NEWUSER and NEWNS, then only raw
+syscalls in the child. Without the controls, that child must exist and the
+inherited-mount nonrecursive rebind must fail with EINVAL.
+
+Evidence keys include binary path, size, mtime and content hash, version,
+template, system metadata and symlink targets, Write, Read, environment,
+Background, path shapes and witnesses. Judgment call: Linux re-runs its full
+trial and canary for every launch and resume; it does not reuse cached evidence
+after possible sysctl or mount changes. Concurrent probes have separate roots
+and listeners.
+The version/trial and canary must retain the same binary fingerprint. Commands
+also compare the binary's content and metadata before launch; a removed or
+replaced executable gives `command_start_failed`, with no fallback. Trial and
+canary environments exclude owner credentials and shell startup hooks.
+
+Commands use `--json-status-fd 3`: no child-pid gives `command_start_failed`;
+a child-pid without a settled exit-code gives `command_outcome_unknown`.
+Neither falls back. Background runs through pinned `/usr/bin/nice` before
+bwrap forks. Short exec wrappers calculate the relative adjustment in the
+child (not a Go thread that may migrate) and verify nice 10 before admitting
+bwrap, even if nice warns and continues after a refused priority change. The
+Background canary requires exactly nice 10 inside. Shared Unix preparation
+preserves LAH-3's atomic token write, scratch environment and recovery sweep.
+Linux retains no supervisor: its PID namespace and die-with-parent end jobs
+with each command. Cancellation waits for process and pipe settlement before
+returning admission.
+The canary also uses that status descriptor, requires a positive child-pid and
+settled exit-code, and tries writing fd 3 from the inner shell. This proves the
+installed protocol and the private pipe before a real command is admitted.
+
+Judgment call: writable Linux Commands need an existing non-symlink `.git`
+directory or regular file. Otherwise bwrap must create a metadata destination
+on the host workspace or leave future `.git` creation unprotected. Launch is
+refused with RefusedWorkDir; the runtime builder also refuses a missing overlay.
+Read-only Commands need no metadata destination. Pre-existing outside links
+and injected mounts must stay out of the workspace/read set, as for LAH-3.
+
+CI installs distribution bwrap and builds upstream 0.8.0 from Debian 12's
+original release tarball. apt authenticates the Debian source index; the build
+explicitly checks the tarball's SHA-256 against that source package's checksum.
+Both Linux jobs run vet and the full race suite with NO_SKIP: four real canary
+layouts, raw syscall controls, edit-and-run and process cleanup. Local checks
+cross-compile Windows tests; its pre-launch Commands refusal is retained.
 
 ### LAH-3 implementation witnesses and containment
 
@@ -1426,7 +1534,7 @@ with restricted tokens) is out of scope.
 These are for `OpenAICompatible` / `Session`. The README's Support table
 changes with each stage when that stage lands, not before.
 
-| Feature | Before workbench | Stage 1 | Stage 2 (including planned 2c) |
+| Feature | Before workbench | Stage 1 | Stage 2 (including 2c) |
 | --- | --- | --- | --- |
 | `WorkspaceRead` (new, `"workspace_read"`) | — | `Composed`, "the library's read_file, list_files and search_files: regular, singly linked files reached inside WorkDir on WorkDir's own mount" | same |
 | `WorkspaceWrite` (new, `"workspace_write"`) | — | `Unsupported`, "not offered yet" | `Composed`, "the library's write_file and edit_file, inside WorkDir on WorkDir's own mount; .git is never written; symlinks are refused, not written through; each write is an atomic, synced replacement"; on Windows the reason adds "not directory-synced; new files take the directory's ACL" |
@@ -1435,9 +1543,8 @@ changes with each stage when that stage lands, not before.
 | `Background` | no entry (unsupported) | unchanged | darwin, linux: `Composed`, "the workbench's commands run at nice 10"; windows: `Unsupported` as for every engine |
 | `RestrictTools` | `Composed` | reason gains "and the library's workbench tools" | same |
 
-Stage 2a and 2b are implemented. Linux commands, Sandbox and Background remain
-unsupported until the separate stage 2c (LAH-9) lands; the Linux entries above
-describe that planned stage, not current capability claims.
+Stage 2a, 2b and Linux 2c are implemented. Linux Sandbox is Unknown (proved
+per launch), Background is Composed, and Loopback remains Unsupported.
 
 The Windows rows come from `platform()`, which already exempts API sessions
 from the refusal that applies to CLIs. It gains an `OpenAICompatible` case for

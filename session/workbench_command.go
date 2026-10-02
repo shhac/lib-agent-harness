@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -57,6 +58,9 @@ func normalizeWorkbenchCommands(o Options) (Options, error) {
 		return o, err
 	}
 	for _, dir := range read {
+		if runtime.GOOS == "linux" && linuxCommandSocketRead(dir) {
+			return o, refuse(o, "commands", RefusedSandboxRead, "command read paths must not overlap /run or contain /tmp: read-only binds expose host Unix sockets")
+		}
 		if info, e := os.Stat(dir); e != nil || !info.IsDir() {
 			return o, refuse(o, "commands", RefusedSandboxRead, "command read paths must be existing directories")
 		}
@@ -93,6 +97,11 @@ func normalizeWorkbenchCommands(o Options) (Options, error) {
 	return o, nil
 }
 
+// Paths have already been resolved, including /var/run aliases.
+func linuxCommandSocketRead(dir string) bool {
+	return lexicallyWithin(dir, "/run") || lexicallyWithin("/run", dir) || lexicallyWithin(dir, "/tmp")
+}
+
 func workbenchDataAliases(p string) []string {
 	aliases := []string{p}
 	const data = "/System/Volumes/Data"
@@ -109,25 +118,6 @@ func workbenchDataAliases(p string) []string {
 		aliases = append(aliases, other)
 	}
 	return aliases
-}
-
-func workbenchSystemDirs() []string {
-	return []string{"/System", "/usr", "/bin", "/sbin", "/Library/Developer/CommandLineTools", "/opt/homebrew"}
-}
-
-func workbenchSystemContains(system, dir string) bool {
-	if system == "/System" && lexicallyWithin("/System/Volumes/Data", dir) {
-		return false
-	}
-	if lexicallyWithin(system, dir) {
-		return true
-	}
-	// APFS firmlinks need not be resolved by EvalSymlinks. Identity-based
-	// ancestry catches a runtime reached through the data-volume spelling.
-	if _, err := os.Stat(system); err != nil {
-		return false
-	}
-	return nested(system, dir)
 }
 
 func workbenchCommandDefinition() ToolDefinition {

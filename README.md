@@ -424,41 +424,95 @@ outcome and leaves the new content in place. Its tool event carries
 interrupted call and removes only that session's temporaries in unanswered
 write targets' directories.
 
-On macOS, `Workbench.Commands = &session.Commands{}` adds
-`run_command(command, dir, timeout_seconds)`. It runs `/bin/sh -c` through a
-pinned Seatbelt profile, proved with disposable files before the session
-opens or resolves credentials. A failed proof refuses launch. Linux commands
-await the separate bubblewrap stage; Windows commands are unsupported. Both
-refuse before writing any session state. `Support` reports `Sandbox` and
-`Loopback` as `Unknown` on macOS because launch must prove them, and
-`Background` as `Composed`; those features are unsupported elsewhere.
+On macOS and Linux, `Workbench.Commands = &session.Commands{}` adds
+`run_command(command, dir, timeout_seconds)`. macOS runs `/bin/sh -c` through
+a pinned Seatbelt profile; Linux uses bubblewrap 0.8.0 or later. Both prove
+the sandbox with disposable files before opening session state or resolving
+credentials, and refuse a failed proof. Windows Commands remain unsupported.
+`Support` reports `Sandbox` as `Unknown` on macOS and Linux (proved per
+launch), `Background` as `Composed`, and `Loopback` as `Unknown` on macOS
+and `Unsupported` on Linux.
 
-Commands can read WorkDir, private scratch, the pinned system runtime set
+Linux requires `bwrap` on the library process's PATH. Install it with
+`apt install bubblewrap`, `dnf install bubblewrap` or `pacman -S bubblewrap`.
+Ubuntu 22.04's 0.6.1 is too old; install a newer build. Ubuntu 24.04+ also
+needs an AppArmor profile permitting bwrap's unprivileged user namespaces,
+or the host administrator's `kernel.apparmor_restrict_unprivileged_userns=0`
+setting. The library never changes host sysctls. It checks the version and
+the complete namespace/privilege flags with a trial run, then runs its canary.
+The fixed pre-launch codes are `sandbox_tool_missing`,
+`sandbox_tool_outdated` and `sandbox_namespaces_unavailable`; diagnostics
+never include bwrap stderr and no refusal falls back to unsandboxed execution.
+
+Linux starts with an empty root, private `/tmp` and `/run`, minimal `/dev`
+and `/proc`, and a read-only pinned system set: `/usr`, `/bin`, `/sbin`,
+`/lib`, `/lib32`, `/lib64`, `/libx32`; `/etc/passwd`, `group`, `nsswitch.conf`,
+`hosts`, `localtime`, `ld.so.cache`, `ld.so.conf`, `ld.so.conf.d`, `ssl/certs`,
+`ca-certificates`, `alternatives` and `os-release`. Missing system entries
+are skipped; host symlinks are recreated. WorkDir, RuntimeHome and scratch
+cannot be inside that system set or `/etc`. Writable Linux Commands require
+an existing non-symlink `.git` directory or file for the final read-only
+overlay; a missing overlay refuses launch rather than allowing metadata
+creation. Each command has its own PID and network namespaces, no
+capabilities or nested user namespaces, and `--die-with-parent`. Everything
+it starts ends with that command, including background servers.
+`Commands.Loopback` is refused on Linux; a single command may still start
+and request its own server in its private namespace.
+
+Linux `Commands.Read` refuses paths overlapping `/run` (including resolved
+`/var/run` aliases) or containing `/tmp`, with `sandbox_read_path_invalid` refusal.
+Read-only binds do not prevent pathname Unix-socket connections: sockets
+already inside WorkDir or an allowed Read directory remain connectable.
+Keep host service sockets out of those directories.
+
+The Linux proof must reproduce each path's depth and covering location.
+Outside home, `/tmp` and `/run`, disposable proofs start under `/var/tmp`;
+shallower placements such as `/workspace`, `/app` or `/srv/x` cannot be
+reproduced and refuse with `sandbox_unavailable`. Use a deeper workspace
+and RuntimeHome. Proofs under home create `~/wb-proof-*` directories;
+normal cleanup removes them, but a crash or SIGKILL can leave dummy fixtures
+(including `.git/config`). After stopping the library, remove abandoned
+proof directories; the library does not sweep them automatically.
+
+The Linux canary prefers actual TCP connects through bash's `/dev/tcp` and
+a Unix socket connect through `nc -U`. If nc is missing or lacks usable `-U`
+(or bash is absent for TCP), all three structural observations must succeed:
+a different `/proc/self/ns/net` inode, only `lo` in `/proc/net/dev`, and an
+absent probe socket path. An unreadable or failed observation refuses launch.
+The result records `connect` or `structural` for each witness.
+Socket absence requires readable, searchable parents; an unreadable path
+cannot count as absent. A removed or replaced proved bwrap binary refuses
+subsequent commands with `command_start_failed`.
+
+On macOS, commands can read WorkDir, private scratch, the pinned system runtime set
 (`/System` excluding `/System/Volumes/Data`, `/usr`, `/bin`, `/sbin`, CommandLineTools, resolved selected Xcode,
 Homebrew), selected public `/private/etc` files and minimal `/dev` nodes.
 Add toolchains or caches elsewhere through `Commands.Read`; it must not
 reopen home or overlap RuntimeHome. RuntimeHome must also lie outside the
 system read set; normalization refuses it before probing. A command workspace cannot contain home.
 Writes are restricted to scratch and, with Write, WorkDir, excluding `.git`.
-Commands cannot read, write or link file tools' reserved atomic temporaries.
+The macOS profile also hides file tools' reserved atomic temporaries. Linux
+commands see the explicitly bound workspace; file operations and commands
+are serialized, and ordinary completion removes those temporaries.
 Commands follow the OS path sandbox: unlike file tools, they do not reject
 every hard link or injected mount. Keep outside links and mounts out of the
 workspace and explicit read set.
 
-Network is denied by default, including Unix sockets. `Commands.Loopback`
-allows localhost dev servers only, proved against a reachable off-machine
+IP and abstract-socket network access is denied by default. macOS also
+denies Unix sockets; Linux pathname sockets follow the directory rule above. `Commands.Loopback`
+allows localhost dev servers on macOS only, proved against a reachable off-machine
 witness and a local listener, as for Claude. `Commands.Env` accepts PATH,
 LANG and LC_*; HOME and TMPDIR always name private scratch. Timeout defaults
 to two minutes, is capped at ten, and the model can shorten it. Cancellation
 and timeout stop the process tree; timeout is a normal `timed_out` result.
 A lost private completion response records `command_outcome_unknown`, never
 an inferred success, and is not replayed after a crash.
-Late background stdout and stderr are drained and discarded until group
+On macOS, late background stdout and stderr are drained and discarded until group
 settlement, so logging servers can continue after a command returns.
 Output is bounded (at most 64 KiB per stream, reduced to fit the host result
 limit), with a truncation note. Background launches run at nice 10.
 Session containment markers are synced before commands start and swept on
-recovery and Close. A retained supervisor with an argument marker keeps
+recovery and Close. On macOS, a retained supervisor with an argument marker keeps
 background jobs discoverable even when macOS hides their environment; the
 model's shell cannot access its private completion pipe. Empty groups are
 reaped after each command; supervisors retained for background jobs are reaped
@@ -1232,6 +1286,7 @@ error:
 | Reading process status with `ps` | the cancelled-group and sweep tests (`process/`), which otherwise could not tell a live process from a gone one |
 | Lowering a process group's priority | `TestBackgroundLowersTheWholeTree` (`process/`) |
 | Writing `/tmp` and `TMPDIR` directly | `TestOpenCanaryEscapesAreEachDetected` (`session/`): an outer sandbox contains the unsandboxed canary too, which then rightly reports no escape |
+| A real Linux bubblewrap launch | five-phase mount simulation, fixed refusals, four canary layouts, raw syscall attacks, edit-and-run and cleanup; distribution and SHA-256-checked upstream 0.8.0 CI jobs forbid skips |
 | A real macOS Seatbelt launch | workbench canary, edit-and-run, cancellation and crash-cleanup tests; the generated profile is parsed before an OS permission refusal can skip, and CI forbids that skip |
 
 Any other probe failure fails the test, so a real fault is never hidden behind a

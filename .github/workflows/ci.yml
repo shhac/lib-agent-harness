@@ -23,6 +23,13 @@ jobs:
           go-version-file: go.mod
           cache: true
       - run: go vet ./...
+      - name: Install Linux command sandbox
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Prepare workspace bind-mount witness
         if: runner.os == 'Linux'
         shell: bash
@@ -35,3 +42,58 @@ jobs:
           sudo mount --bind "$witness/source/marker" "$witness/work/parent/filemount"
           echo "AGENT_HARNESS_TEST_BIND_MOUNT=$witness/work" >> "$GITHUB_ENV"
       - run: go test -race ./...
+  linux-bwrap-0.8.0:
+    runs-on: ubuntu-latest
+    env:
+      AGENT_HARNESS_TEST_NO_SKIP: '1'
+      AGENT_HARNESS_TEST_BWRAP_080: '1'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build the oldest supported bubblewrap from its upstream tarball
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y meson ninja-build pkg-config libcap-dev libselinux1-dev libglib2.0-dev xsltproc docbook-xsl debian-archive-keyring
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          # Debian 12 preserves the upstream 0.8.0 tarball. apt authenticates
+          # the source index with the Debian archive keyring; then explicitly
+          # check the tarball's SHA-256 from that authenticated source package.
+          printf '%s\n' 'deb-src [signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] https://deb.debian.org/debian bookworm main' > "$RUNNER_TEMP/bookworm.sources.list"
+          sudo apt-get -o Dir::Etc::sourcelist="$RUNNER_TEMP/bookworm.sources.list" -o Dir::Etc::sourceparts=- update
+          mkdir "$RUNNER_TEMP/bwrap-source"
+          cd "$RUNNER_TEMP/bwrap-source"
+          apt-get -o Dir::Etc::sourcelist="$RUNNER_TEMP/bookworm.sources.list" -o Dir::Etc::sourceparts=- source --download-only bubblewrap
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, subprocess
+          dsc = next(Path('.').glob('bubblewrap_*.dsc')).read_text()
+          checksums = dsc.split('Checksums-Sha256:\n', 1)[1].split('\n\n', 1)[0]
+          tarball = next(p for p in Path('.').glob('bubblewrap_0.8.0.orig.tar.*')
+                         if p.suffix in {'.xz', '.gz', '.bz2'})
+          expected = next(line.split()[0] for line in checksums.splitlines()
+                          if len(line.split()) == 3 and line.split()[2] == tarball.name)
+          if hashlib.sha256(tarball.read_bytes()).hexdigest() != expected:
+              raise SystemExit('upstream bubblewrap tarball SHA-256 mismatch')
+          Path('upstream').mkdir()
+          subprocess.run(['tar', '-xf', str(tarball), '-C', 'upstream',
+                          '--strip-components=1'], check=True)
+          PY
+          meson setup upstream/build upstream --prefix="$RUNNER_TEMP/bwrap-0.8.0" --buildtype=release
+          meson compile -C upstream/build
+          meson install -C upstream/build
+          echo "$RUNNER_TEMP/bwrap-0.8.0/bin" >> "$GITHUB_PATH"
+      - run: go vet ./...
+      - name: Minimum-version sandbox, canary, syscall and session tests
+        shell: bash
+        run: |
+          witness="$RUNNER_TEMP/workbench-mount"
+          mkdir -p "$witness/source" "$witness/work/parent/mount"
+          printf 'OUTSIDE-BIND-MOUNT-MARKER' > "$witness/source/marker"
+          touch "$witness/work/parent/filemount"
+          sudo mount --bind "$witness/source" "$witness/work/parent/mount"
+          sudo mount --bind "$witness/source/marker" "$witness/work/parent/filemount"
+          AGENT_HARNESS_TEST_BIND_MOUNT="$witness/work" go test -race ./...

@@ -434,7 +434,7 @@ func TestWorkbenchCleanupOnlyOwnTemporary(t *testing.T) {
 }
 
 func TestWorkbenchCommandsUnsupportedPlatforms(t *testing.T) {
-	if runtime.GOOS == "darwin" {
+	if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
 		t.Skip("darwin proves commands")
 	}
 	o := workbenchOptions(t, nopHandler())

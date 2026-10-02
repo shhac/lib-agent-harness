@@ -135,8 +135,18 @@ func Support(e Engine, op Operation, f Feature) Capability {
 // sandboxed hosting of a CLI harness are unavailable on Windows. An API
 // session has no process to contain, so it is unaffected.
 func platform(e Engine, op Operation, f Feature, c Capability) Capability {
+	if e == OpenAICompatible && op == Session && runtime.GOOS == "linux" {
+		switch f {
+		case Sandbox:
+			return Capability{Unknown, "Workbench.Commands proves bubblewrap 0.8.0+ without capabilities or nested user namespaces before launch or refuses the session"}
+		case Loopback:
+			return Capability{Unsupported, "each command runs in its own bubblewrap network namespace, so a server one command starts is gone before the next; a single command may still start and request its own server"}
+		case Background:
+			return Capability{Composed, "Workbench.Commands runs each contained process group at nice 10"}
+		}
+	}
 	if e == OpenAICompatible && op == Session && (f == Sandbox || f == Loopback || f == Background) && runtime.GOOS != "darwin" {
-		return Capability{Unsupported, "API commands require a proved macOS Seatbelt sandbox; Linux awaits bubblewrap and Windows has no command sandbox"}
+		return Capability{Unsupported, "API commands require a proved macOS Seatbelt sandbox; this platform has no command sandbox"}
 	}
 	if e == OpenAICompatible && op == Session && f == WorkspaceWrite && runtime.GOOS == "windows" {
 		c.Reason += "; not directory-synced; new files inherit the directory ACL"

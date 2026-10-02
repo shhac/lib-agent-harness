@@ -310,7 +310,7 @@ func TestBackgroundAndToolImageClaims(t *testing.T) {
 			}
 		}
 	}
-	if (Support(OpenAICompatible, Session, Background).Usable() != (runtime.GOOS == "darwin")) || Support(Claude, Complete, Background).Usable() {
+	if (Support(OpenAICompatible, Session, Background).Usable() != (runtime.GOOS == "darwin" || runtime.GOOS == "linux")) || Support(Claude, Complete, Background).Usable() {
 		t.Error("background claimed where nothing is launched for it")
 	}
 	if Support(Claude, Session, ToolImages).Availability != Native || Support(Codex, Session, ToolImages).Availability != Native || Support(Grok, Session, ToolImages).Availability != Unknown {
@@ -321,7 +321,7 @@ func TestBackgroundAndToolImageClaims(t *testing.T) {
 func TestWorkbenchCapabilityClaims(t *testing.T) {
 	for _, feature := range []Feature{Sandbox, Loopback, Background} {
 		want := Unsupported
-		if runtime.GOOS == "darwin" {
+		if runtime.GOOS == "darwin" || (runtime.GOOS == "linux" && feature != Loopback) {
 			want = Unknown
 			if feature == Background {
 				want = Composed

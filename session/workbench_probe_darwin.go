@@ -13,13 +13,8 @@ import (
 	"syscall"
 	"time"
 
-	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/process"
 )
-
-func workbenchCapability(code string) *CapabilityError {
-	return &CapabilityError{Engine: harness.OpenAICompatible, Code: code, Phase: BeforeLaunch}
-}
 
 func proveWorkbench(ctx context.Context, o Options) error {
 	if o.Workbench == nil || o.Workbench.Commands == nil {
@@ -397,19 +392,9 @@ func workbenchCanary(l workbenchLayout, root, read, socket, image, mount, witnes
 }
 
 func judgeWorkbench(output string, write, loopback, reached bool) error {
-	completed := strings.TrimSpace(output)
-	last := completed
-	if i := strings.LastIndexByte(completed, '\n'); i >= 0 {
-		last = strings.TrimSpace(completed[i+1:])
-	}
-	lines := map[string]bool{}
-	for _, line := range strings.Split(output, "\n") {
-		lines[strings.TrimSpace(line)] = true
-	}
-	for _, escape := range []string{"sibling", "gitdir", "gitcase", "reserved-temp", "gitmove", "gitlink", "githardlink", "home", "real-home", "outside", "runtime", "outside-data", "runtime-data", "real-home-data", "readset-write", "link", "socket", "network", "localhost", "keychain", "mount"} {
-		if lines[escape] {
-			return workbenchCapability(CapabilitySandboxNotEnforced)
-		}
+	lines, last := workbenchCanaryLines(output)
+	if workbenchCanaryEscaped(lines, "gitcase", "reserved-temp", "real-home", "outside-data", "runtime-data", "real-home-data", "keychain", "mount") {
+		return workbenchCapability(CapabilitySandboxNotEnforced)
 	}
 	if !write && (lines["inside"] || lines["nested"]) {
 		return workbenchCapability(CapabilitySandboxNotEnforced)
@@ -427,8 +412,6 @@ func judgeWorkbench(output string, write, loopback, reached bool) error {
 	}
 	return nil
 }
-
-func workbenchShellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
 
 // macOS nc's zero-I/O scan (-z) does not support Unix sockets. A real connect
 // with bounded lifetime and EOF input exercises the installed socket client.
