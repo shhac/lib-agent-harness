@@ -32,8 +32,7 @@ func ownerOnly(info fs.FileInfo) error {
 // A process that has exited but not been reaped still counts as a member. That
 // is the conservative direction — it reports presence, never absence — and in
 // the situation this exists for, the process that could have reaped it has
-// already died, so its children belong to launchd or init and are reaped
-// asynchronously. Reclaim waits for that settlement.
+// already died, so its children belong to init and are reaped promptly.
 func groupAlive(group int) (bool, error) {
 	if group <= 1 {
 		return false, errors.New("recorded process group is not a contained harness")

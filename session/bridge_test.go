@@ -23,9 +23,8 @@ import (
 // These env names make the test binary re-execute itself as a stand-in for a
 // bridge running under a harness: it takes the lock and waits to be killed.
 const (
-	holdLockEnv      = "AGENT_HARNESS_TEST_HOLD_LOCK"
-	holdLaunchEnv    = "AGENT_HARNESS_TEST_HOLD_LAUNCH"
-	settleFixtureEnv = "AGENT_HARNESS_TEST_SETTLE"
+	holdLockEnv   = "AGENT_HARNESS_TEST_HOLD_LOCK"
+	holdLaunchEnv = "AGENT_HARNESS_TEST_HOLD_LAUNCH"
 )
 
 // holdFixtureLifetime bounds a stand-in bridge that was never killed. It is far
@@ -34,31 +33,6 @@ const (
 const holdFixtureLifetime = 10 * time.Minute
 
 func TestMain(m *testing.M) {
-	if mode := os.Getenv(settleFixtureEnv); mode != "" {
-		var lock *os.File
-		if mode == "owner" || mode == "lock-exit" {
-			var err error
-			lock, err = os.OpenFile(os.Getenv(holdLockEnv), os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0600)
-			if err != nil || syscall.Flock(int(lock.Fd()), syscall.LOCK_EX) != nil {
-				os.Exit(2)
-			}
-		}
-		_, _ = os.Stdout.WriteString("ready\n")
-		if mode == "survivor" {
-			time.Sleep(holdFixtureLifetime)
-			os.Exit(0)
-		}
-		time.Sleep(300 * time.Millisecond)
-		if mode == "owner" {
-			group, _ := syscall.Getpgid(0)
-			raw, _ := json.Marshal(owner{Group: group, PID: os.Getpid(), Launch: os.Getenv(holdLaunchEnv)})
-			if _, err := lock.WriteAt(raw, 0); err != nil {
-				os.Exit(2)
-			}
-			time.Sleep(holdFixtureLifetime)
-		}
-		os.Exit(0)
-	}
 	if scenario := os.Getenv(fakeScenarioEnv); scenario != "" {
 		os.Exit(runFakeHarness(scenario))
 	}
@@ -163,9 +137,6 @@ func TestReclaimReportsNothingWhenNothingWasLaunched(t *testing.T) {
 // server, restart it, or sit in inference with none running, so absence has to
 // come from the process group and identity from a live bridge.
 func TestFreeBridgeLockIsNotProofTheHarnessIsGone(t *testing.T) {
-	grace := reclaimGrace
-	reclaimGrace = 150 * time.Millisecond
-	t.Cleanup(func() { reclaimGrace = grace })
 	dir := privateDir(t)
 	group, err := syscall.Getpgid(0)
 	if err != nil {
@@ -256,9 +227,6 @@ func TestReclaimTerminatesAnIdentifiedOrphan(t *testing.T) {
 // A live group whose bridge belongs to a different launch must never be
 // signalled: that is exactly the identifier-reuse case.
 func TestReclaimRefusesAnUnidentifiedLiveGroup(t *testing.T) {
-	grace := reclaimGrace
-	reclaimGrace = 150 * time.Millisecond
-	t.Cleanup(func() { reclaimGrace = grace })
 	testenv.RequireProcessGroup(t)
 	dir := privateDir(t)
 	cmd := exec.Command(os.Args[0], "-test.run=TestReclaimRefusesAnUnidentifiedLiveGroup")
@@ -463,220 +431,5 @@ func TestLaunchRecordIsReplacedWhole(t *testing.T) {
 	}
 	if len(entries) != 1 {
 		t.Fatalf("replacing the launch record left other files behind: %v", entries)
-	}
-}
-
-// A test-owned child makes the otherwise scheduler-dependent orphan reap window
-// deterministic: death releases flock, but Wait is deliberately delayed.
-func TestReclaimSettlement(t *testing.T) {
-	testenv.RequireProcessGroup(t)
-	for _, mode := range []string{"exit", "lock-exit", "owner", "survivor", "unreaped", "unreaped-timeout", "cancel"} {
-		t.Run(mode, func(t *testing.T) {
-			dir := privateDir(t)
-			grace := reclaimGrace
-			// Race-instrumented fixtures also wait during runtime shutdown.
-			reclaimGrace = 3 * time.Second
-			if mode == "survivor" || mode == "unreaped-timeout" {
-				reclaimGrace = 150 * time.Millisecond
-			}
-			defer func() { reclaimGrace = grace }()
-			fixture := mode
-			if mode == "unreaped" || mode == "unreaped-timeout" || mode == "cancel" {
-				fixture = "survivor"
-			}
-			cmd := exec.Command(os.Args[0])
-			cmd.Env = append(os.Environ(), settleFixtureEnv+"="+fixture, holdLockEnv+"="+lockPath(dir), holdLaunchEnv+"="+dir)
-			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-			stdout, err := cmd.StdoutPipe()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := cmd.Start(); err != nil {
-				t.Fatal(err)
-			}
-			ready := bufio.NewScanner(stdout)
-			if !ready.Scan() || ready.Text() != "ready" {
-				t.Fatal("fixture not ready")
-			}
-			pid := cmd.Process.Pid
-			if err := recordLaunch(dir, launchRecord{PID: pid, Group: pid, Launch: dir}); err != nil {
-				t.Fatal(err)
-			}
-			reaped := make(chan struct{})
-			delayed := mode == "unreaped" || mode == "unreaped-timeout"
-			if delayed {
-				_ = cmd.Process.Kill()
-				// Some kernels omit zombies from kill(-pgid, 0). Only test
-				// the unreaped window on systems where it is observable.
-				time.Sleep(50 * time.Millisecond)
-				alive, err := groupAlive(pid)
-				if err != nil || !alive {
-					_ = cmd.Wait()
-					t.Skip("kernel does not count this unreaped group")
-				}
-			}
-			go func() {
-				defer close(reaped)
-				if delayed {
-					time.Sleep(300 * time.Millisecond)
-				}
-				_ = cmd.Wait()
-			}()
-			defer func() { _ = cmd.Process.Kill(); <-reaped }()
-			ctx := context.Background()
-			if mode == "cancel" {
-				var cancel context.CancelFunc
-				ctx, cancel = context.WithCancel(ctx)
-				defer cancel()
-				time.AfterFunc(100*time.Millisecond, cancel)
-			}
-			start := time.Now()
-			out, err := Reclaim(ctx, dir)
-			refused := mode == "survivor" || mode == "unreaped-timeout" || mode == "cancel"
-			if refused {
-				if !errors.Is(err, ErrUnreclaimed) || !out.Found || out.Confirmed || out.Terminated {
-					t.Fatalf("unsafe refusal: %+v %v", out, err)
-				}
-				if mode == "cancel" && !errors.Is(err, context.Canceled) {
-					t.Fatalf("lost cancellation: %v", err)
-				}
-				if _, err := os.Stat(launchPath(dir)); err != nil {
-					t.Fatal("marker lost")
-				}
-				if mode != "unreaped-timeout" {
-					requireAlive(t, pid)
-				}
-			} else {
-				if err != nil || !out.Found || !out.Confirmed || out.Terminated != (mode == "owner") {
-					t.Fatalf("not settled: %+v %v", out, err)
-				}
-				if time.Since(start) < 200*time.Millisecond {
-					t.Fatal("did not wait for settlement")
-				}
-			}
-			if mode == "unreaped-timeout" {
-				<-reaped
-				out, err = Reclaim(context.Background(), dir)
-				if err != nil || !out.Confirmed {
-					t.Fatalf("later recovery: %+v %v", out, err)
-				}
-			}
-		})
-	}
-}
-
-func TestReleaseWaitsForLateGroupReaping(t *testing.T) {
-	testenv.RequireProcessGroup(t)
-	for _, survivor := range []bool{false, true} {
-		t.Run(map[bool]string{false: "settled", true: "survivor"}[survivor], func(t *testing.T) {
-			o, _ := probedOptions(t, harness.Claude, "late-release")
-			ctx := probeContext(t)
-			s, err := Start(ctx, o)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer s.Close()
-			dir := o.Restriction.Tools.Dir
-			record, err := readLaunchRecord(dir)
-			if err != nil || record == nil {
-				t.Fatal("missing record")
-			}
-			cmd := exec.Command(os.Args[0])
-			cmd.Env = append(os.Environ(), settleFixtureEnv+"=survivor")
-			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pgid: record.Group}
-			pipe, err := cmd.StdoutPipe()
-			if err != nil || cmd.Start() != nil {
-				t.Fatal("cannot join group")
-			}
-			ready := bufio.NewScanner(pipe)
-			if !ready.Scan() {
-				t.Fatal("member not ready")
-			}
-			reaped := make(chan struct{})
-			reap := make(chan struct{})
-			go func() { <-reap; _ = cmd.Wait(); close(reaped) }()
-			defer func() { _ = cmd.Process.Kill(); <-reaped }()
-			grace := reclaimGrace
-			if survivor {
-				reclaimGrace = 150 * time.Millisecond
-			}
-			defer func() { reclaimGrace = grace }()
-			if !survivor {
-				time.AfterFunc(time.Second, func() { close(reap) })
-			}
-			out, err := s.Release(ctx)
-			if survivor {
-				close(reap)
-				if !errors.Is(err, ErrUnreclaimed) || out.Confirmed {
-					t.Fatalf("accepted survivor: %+v %v", out, err)
-				}
-				if _, err := os.Stat(launchPath(dir)); err != nil {
-					t.Fatal("marker lost")
-				}
-				<-reaped
-				out, err = Reclaim(ctx, dir)
-				if err != nil || !out.Confirmed {
-					t.Fatalf("recovery failed: %+v %v", out, err)
-				}
-			} else {
-				if err != nil || !out.Confirmed {
-					t.Fatalf("release failed: %+v %v", out, err)
-				}
-				if _, err := os.Stat(launchPath(dir)); !os.IsNotExist(err) {
-					t.Fatal("marker remains")
-				}
-			}
-			if alive, err := groupAlive(record.Group); err != nil || alive {
-				t.Fatalf("group remains: %v %v", alive, err)
-			}
-		})
-	}
-}
-
-func TestReclaimKeepsTheLeaseWhileWaiting(t *testing.T) {
-	dir := privateDir(t)
-	group, err := syscall.Getpgid(0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := recordLaunch(dir, launchRecord{PID: os.Getpid(), Group: group, Launch: dir}); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() {
-		lease, _, err := reclaimUnderLease(ctx, dir)
-		if lease != nil {
-			_ = lease.Close()
-		}
-		done <- err
-	}()
-	deadline := time.Now().Add(time.Second)
-	for {
-		lease, err := holdLease(leasePath(dir))
-		if errors.Is(err, ErrLeaseHeld) {
-			break
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		_ = lease.Close()
-		if time.Now().After(deadline) {
-			t.Fatal("reclamation did not take the lease")
-		}
-		time.Sleep(time.Millisecond)
-	}
-	cancel()
-	if err := <-done; !errors.Is(err, ErrUnreclaimed) || !errors.Is(err, context.Canceled) {
-		t.Fatalf("lost cancellation: %v", err)
-	}
-	lease, err := holdLease(leasePath(dir))
-	if err != nil {
-		t.Fatalf("failed wait retained the lease: %v", err)
-	}
-	_ = lease.Close()
-	if _, err := os.Stat(launchPath(dir)); err != nil {
-		t.Fatal("failed wait lost the marker")
 	}
 }

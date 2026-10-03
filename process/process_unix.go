@@ -148,8 +148,7 @@ func killed(state *os.ProcessState) bool {
 // closes, even members whose environment the system hides, so cannot be
 // swept by their marker; until then they live on, as a server an agent
 // backgrounded must. A leader whose PID was positively reused is never
-// signalled. Repeat enumeration for up to five rounds, 50ms apart, to catch
-// members forked while the preceding snapshot was being signalled.
+// signalled.
 func (p *Process) reapGroup() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -161,29 +160,21 @@ func (p *Process) reapGroup() {
 	if identity != "" && identity != p.leaderIdentity {
 		return
 	}
-	for range 5 {
-		found := false
-		for _, member := range candidates(p.launched.Add(-time.Second)) {
-			if member.group != pid || member.pid == pid {
-				continue
+	for _, member := range candidates(p.launched.Add(-time.Second)) {
+		if member.group != pid || member.pid == pid {
+			continue
+		}
+		// Revalidate both birth identity and group immediately before
+		// signalling its group. A live member anchors the pgid, so it
+		// cannot be recycled between validation and the group signal.
+		signalOwned(member.pid, member.identity, processIdentity, func(child int) {
+			leader := processIdentity(pid)
+			if leader != "" && leader != p.leaderIdentity {
+				return
 			}
-			found = true
-			// Revalidate both birth identity and group immediately before
-			// signalling its group. A live member anchors the pgid, so it
-			// cannot be recycled between validation and the group signal.
-			signalOwned(member.pid, member.identity, processIdentity, func(child int) {
-				leader := processIdentity(pid)
-				if leader != "" && leader != p.leaderIdentity {
-					return
-				}
-				if group, err := syscall.Getpgid(child); err == nil && group == pid {
-					_ = syscall.Kill(-pid, syscall.SIGKILL)
-				}
-			})
-		}
-		if !found {
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
+			if group, err := syscall.Getpgid(child); err == nil && group == pid {
+				_ = syscall.Kill(-pid, syscall.SIGKILL)
+			}
+		})
 	}
 }

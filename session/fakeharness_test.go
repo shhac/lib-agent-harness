@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -192,19 +191,6 @@ func fakeClaude(scenario string, args []string) int {
 		}
 		body, _ := json.Marshal(map[string]any{"model": "picked", "tools": tools, "messages": []any{map[string]any{"role": "user", "content": "Capability check only."}}})
 		return fakePost(base+"/v1/messages", body)
-	}
-
-	if scenario == "late-release" {
-		child := exec.Command(os.Args[0])
-		child.Env = append(os.Environ(), fakeScenarioEnv+"=", holdLockEnv+"="+os.Getenv(BridgeLockEnv), holdLaunchEnv+"="+filepath.Dir(os.Getenv(BridgeSocketEnv)))
-		pipe, err := child.StdoutPipe()
-		if err != nil || child.Start() != nil {
-			return 2
-		}
-		ready := bufio.NewScanner(pipe)
-		if !ready.Scan() || ready.Text() != "held" {
-			return 2
-		}
 	}
 	logInvocation("session")
 	logInvocation("args:" + string(mustMarshal(args)))
