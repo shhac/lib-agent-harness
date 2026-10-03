@@ -5,10 +5,12 @@ package session
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -192,6 +194,39 @@ func fakeClaude(scenario string, args []string) int {
 		body, _ := json.Marshal(map[string]any{"model": "picked", "tools": tools, "messages": []any{map[string]any{"role": "user", "content": "Capability check only."}}})
 		return fakePost(base+"/v1/messages", body)
 	}
+
+	if scenario == "late-release" {
+		env := fakeClaudeBridgeEnv(args)
+		if env[BridgeLockEnv] == "" || env[BridgeSocketEnv] == "" {
+			return 2
+		}
+		child := exec.Command(os.Args[0], "-test.run=^$")
+		child.Env = append(os.Environ(), fakeScenarioEnv+"=", settleFixtureEnv+"=", holdLockEnv+"="+env[BridgeLockEnv], holdLaunchEnv+"="+filepath.Dir(env[BridgeSocketEnv]))
+		pipe, err := child.StdoutPipe()
+		if err != nil || child.Start() != nil {
+			return 2
+		}
+		ready := make(chan bool, 1)
+		go func() {
+			scanner := bufio.NewScanner(pipe)
+			ready <- scanner.Scan() && scanner.Text() == "held"
+		}()
+		timer := time.NewTimer(10 * time.Second)
+		defer timer.Stop()
+		select {
+		case held := <-ready:
+			if !held {
+				_ = child.Process.Kill()
+				_ = child.Wait()
+				return 2
+			}
+		case <-timer.C:
+			_ = child.Process.Kill()
+			_ = child.Wait()
+			return 2
+		}
+		defer func() { _ = child.Process.Kill(); _ = child.Wait() }()
+	}
 	logInvocation("session")
 	logInvocation("args:" + string(mustMarshal(args)))
 	out := json.NewEncoder(os.Stdout)
@@ -270,6 +305,68 @@ func fakeClaudeToolSearch(args []string) bool {
 		}
 	}
 	return true
+}
+
+// fakeClaudeBridgeEnv reads bridge paths from MCP configuration.
+// Bridge variables belong to the MCP server, not the CLI environment.
+func fakeClaudeBridgeEnv(args []string) map[string]string {
+	for i, arg := range args {
+		var raw string
+		if strings.HasPrefix(arg, "--mcp-config=") {
+			raw = strings.TrimPrefix(arg, "--mcp-config=")
+		} else if arg == "--mcp-config" && i+1 < len(args) {
+			raw = args[i+1]
+		} else {
+			continue
+		}
+		var config struct {
+			Servers map[string]struct {
+				Env map[string]string `json:"env"`
+			} `json:"mcpServers"`
+		}
+		if json.Unmarshal([]byte(raw), &config) != nil {
+			return nil
+		}
+		for _, server := range config.Servers {
+			if server.Env[BridgeLockEnv] != "" && server.Env[BridgeSocketEnv] != "" {
+				return server.Env
+			}
+		}
+	}
+	return nil
+}
+
+// TestLateReleaseMissingBridgeEnvFailsFast checks invalid launch configuration.
+func TestLateReleaseMissingBridgeEnvFailsFast(t *testing.T) {
+	for _, config := range []string{"", "--mcp-config={}", "--mcp-config=invalid"} {
+		t.Run(config, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, os.Args[0], "-p", "-test.run=^$", config)
+			cmd.Env = append(os.Environ(), fakeScenarioEnv+"=late-release", settleFixtureEnv+"=", holdLockEnv+"=")
+			start := time.Now()
+			err := cmd.Run()
+			exit, ok := err.(*exec.ExitError)
+			if !ok || exit.ExitCode() != 2 {
+				t.Fatalf("expected exit 2: %v", err)
+			}
+			if time.Since(start) >= 10*time.Second {
+				t.Fatal("missing bridge env did not fail fast")
+			}
+		})
+	}
+}
+
+// TestFakeClaudeBridgeEnv checks both supported MCP flag forms.
+func TestFakeClaudeBridgeEnv(t *testing.T) {
+	// Use the exported names so this test also follows bridge protocol changes.
+	raw := string(mustMarshal(map[string]any{"mcpServers": map[string]any{"workspace": map[string]any{"env": map[string]string{BridgeLockEnv: "lock", BridgeSocketEnv: "socket"}}}}))
+	for _, args := range [][]string{{"--mcp-config=" + raw}, {"--mcp-config", raw}} {
+		env := fakeClaudeBridgeEnv(args)
+		if env[BridgeLockEnv] != "lock" || env[BridgeSocketEnv] != "socket" {
+			t.Fatalf("missing bridge paths: %v", env)
+		}
+	}
 }
 
 // fakeClaudeProject is where the installed CLI keeps a working directory's

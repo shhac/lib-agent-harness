@@ -298,3 +298,34 @@ func TestRunReapsGroupWhenLeaderKilled(t *testing.T) {
 	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
 	waitGone(t, pid)
 }
+
+// Exercise final containment while an unmarked member keeps creating children.
+// Environment sweeping cannot account for this fixture; the group must do it.
+func TestCloseReapsForkingGroupMembers(t *testing.T) {
+	testenv.RequireProcessGroup(t)
+	testenv.RequireProcessStatus(t)
+	cmd, p, err := Command(context.Background(), "/bin/sh", "-c",
+		"env -i PATH=/usr/bin:/bin /bin/sh -c 'while :; do sleep 10 & sleep 0.01; done' >/dev/null 2>&1 & echo $!; exit 0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := p.Run(); err != nil {
+		t.Fatal(err)
+	}
+	member, err := strconv.Atoi(strings.TrimSpace(out.String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) })
+	if !alive(member) {
+		t.Fatal("forking member exited before Close")
+	}
+	p.Close()
+	for _, proc := range candidates(p.launched.Add(-time.Second)) {
+		if proc.group == cmd.Process.Pid && alive(proc.pid) {
+			t.Fatalf("live group member %d survived Close", proc.pid)
+		}
+	}
+}
