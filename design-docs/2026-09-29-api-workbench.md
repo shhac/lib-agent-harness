@@ -1458,7 +1458,8 @@ directory. It reuses the existing outcome vocabulary and adds a few outcomes:
 | `nested` (write a file in the workspace, nested at the session's covering location and depth, when `Write`) | allowed, and the probe sees it on the real disk afterwards |
 | `socket` (connect to a Unix socket the probe listens on in a hidden directory) | refused |
 | `network` (reach `offMachineWitness`) | refused; the listener the probe owns must count no connection |
-| loopback (`loopbackCanary`, only with `Loopback`) | reaches the probe's loopback listener and binds its own |
+| macOS loopback (`loopbackCanary`, only with `Loopback`) | reaches the probe's loopback listener, binds its own, and serves a nonce to the outside probe (`inbound`) |
+| Linux standalone Run with `Loopback`: `own-loopback` | binds and connects to its own private localhost; the host's listener stays unreachable |
 | `canary-ran` | printed last; without it the check failed |
 | macOS: keychain (`security show-keychain-info` for a path positively queried outside) | refused |
 | macOS: `mount` (attach a disk image the probe made, at a mount point in the workspace) | refused, and nothing mounted afterwards |
@@ -1478,8 +1479,9 @@ The rules proved in the earlier sandbox work apply as they did there:
 A failure is `CapabilitySandboxNotEnforced`. A canary that could not be run or
 did not finish is `CapabilitySandboxUnavailable` or `CapabilityProbeTimeout`.
 
-The result is cached in the existing `verified` set, keyed by what was
-checked:
+The result is recorded in the existing `verified` set, keyed by what was
+checked. macOS reuses matching evidence; Linux records it but always repeats
+the full trial and canary on every launch and resume:
 
 - `Kind: "workbench"`;
 - the sandbox binary's identity;
@@ -1490,12 +1492,16 @@ checked:
 - the layout's shape: for the workspace, the scratch, `RuntimeHome` and each
   read directory, its covering tmpfs, whether it is under home, and its depth.
 
-The cache lives only in memory, so a sysctl change is seen by the next process.
+The macOS cache lives only in memory. Linux does not reuse evidence because
+sysctl, listener and mount changes are not fully represented by the key.
 The macOS keychain check needs a live confirmation that `show-keychain-info` is the
 right witness, because a `(deny default)` profile may make it fail for reasons
 other than the keychain. LAH-3 picks the witness and records it.
 
 ### Loopback
+
+The standalone command API is described in [Command sandbox](2026-10-03-command-sandbox.md). It adds a macOS inbound proof and accepts Linux Run with a proved private localhost, while refusing Linux Start with Loopback. A Linux command always has its own private localhost and never the host's, even without Loopback. Workbench session support remains as below.
+
 
 - **macOS:** the profile allows `localhost` only, and the canary proves it as
   Claude's does: the command reaches the probe's listener, binds its own, and
@@ -1855,7 +1861,10 @@ shapes, and the tests use synthetic responses in those shapes:
      under `/tmp`), on the distribution's bwrap and on bwrap 0.8.0 built from
      source;
    - one that runs the adversarial raw-syscall helper test on both.
-7. **Linux shared loopback (optional).** Design and prove a session-long
+7. **Linux shared loopback (optional).** The
+   [standalone command sandbox](2026-10-03-command-sandbox.md) does not implement
+   a shared session namespace or promote session Loopback support.
+   Design and prove a session-long
    namespace with a two-command canary, then promote `Loopback` on Linux. Do
    this only if a consumer needs dev servers across commands on Linux.
 8. **Consumers.** Update crew-assistant to use `WorkspaceRead`,

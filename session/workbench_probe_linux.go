@@ -147,7 +147,7 @@ func workbenchLinuxProbeKey(o Options, binary, version string, w workbenchLinuxW
 	for _, p := range o.Workbench.Commands.Read {
 		shapes = append(shapes, linuxShape(p))
 	}
-	payload, _ := json.Marshal([]any{"workbench-linux", workbenchBwrapVersion, binary, info.Size(), info.ModTime(), binaryHash, version, template, system, shapes, o.Workbench.Write, o.Workbench.Commands.Read, o.Workbench.Commands.Env, o.Background, w})
+	payload, _ := json.Marshal([]any{"workbench-linux", workbenchBwrapVersion, binary, info.Size(), info.ModTime(), binaryHash, version, template, system, shapes, o.Workbench.Write, o.Workbench.Commands.Read, o.Workbench.Commands.Env, o.Workbench.Commands.Loopback, o.Background, w})
 	hash := sha256.Sum256(payload)
 	return hex.EncodeToString(hash[:]), nil
 }
@@ -214,7 +214,7 @@ func runLinuxProbe(ctx context.Context, binary string, l workbenchLayout, script
 	cmd.WaitDelay = 2 * time.Second
 	done := make(chan error, 1)
 	go func() { e := p.Run(); status.Close(); done <- e }()
-	started, code, known := readBwrapStatus(r)
+	started, code, known := readBwrapStatus(r, nil)
 	e = <-done
 	if e != nil {
 		return out.text(), e
@@ -258,6 +258,20 @@ func linuxSocketWitness(ctx context.Context, command string, observed <-chan str
 
 func probeWorkbenchLinux(ctx context.Context, o Options, binary, version string) (result workbenchLinuxProof, err error) {
 	unavailable := workbenchCapability(CapabilitySandboxUnavailable)
+	if o.Workbench.Commands.Loopback {
+		found := false
+		for _, path := range []string{"/usr/bin/nc", "/bin/nc"} {
+			if info, e := os.Stat(path); e == nil && info.Mode().IsRegular() && info.Mode().Perm()&0111 != 0 {
+				found = true
+				break
+			}
+		}
+		if !found {
+			err := workbenchCapability(CapabilitySandboxToolMissing)
+			err.Tools = []string{"nc"}
+			return result, err
+		}
+	}
 	var roots []string
 	defer func() {
 		for _, r := range roots {
@@ -305,7 +319,7 @@ func probeWorkbenchLinux(ctx context.Context, o Options, binary, version string)
 		return result, unavailable
 	}
 	roots = append(roots, read)
-	l := workbenchLayout{Work: work, Home: scratch, Tmp: tmp, System: workbenchSystemDirs(), Write: o.Workbench.Write, Read: []string{read}}
+	l := workbenchLayout{Work: work, Home: scratch, Tmp: tmp, System: workbenchSystemDirs(), Write: o.Workbench.Write, Loopback: o.Workbench.Commands.Loopback, Read: []string{read}}
 	runtimeMarker := filepath.Join(mapped[o.RuntimeHome], "transcript")
 	if os.WriteFile(runtimeMarker, []byte("marker"), 0600) != nil {
 		return result, unavailable
@@ -425,6 +439,7 @@ func probeWorkbenchLinux(ctx context.Context, o Options, binary, version string)
 	}
 	// Always run the current trial and canary. Records identify evidence but
 	// are not reused across changes to namespaces, listeners or mount state.
+	workbenchCanaryRuns.Add(1)
 	script := linuxWorkbenchCanary(l, hidden, read, socket, namespace, w, network, local, runtimeMarker)
 	// Workspace parents are private tmpfs directories. A write there may
 	// succeed inside; only a corresponding host file would escape confinement.
@@ -459,7 +474,7 @@ func probeWorkbenchLinux(ctx context.Context, o Options, binary, version string)
 		return result, workbenchCapability(CapabilitySandboxNotEnforced)
 	default:
 	}
-	if e = judgeLinuxWorkbench(result.Output, l.Write, reached() != baseline, o.Background); e != nil {
+	if e = judgeLinuxWorkbench(result.Output, l.Write, reached() != baseline, o.Background, l.Loopback); e != nil {
 		return result, e
 	}
 	result.key = key

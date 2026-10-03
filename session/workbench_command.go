@@ -16,10 +16,51 @@ import (
 
 var errWorkbenchCommandUnknown = errors.New("command_outcome_unknown")
 
-type workbenchRunner struct {
-	run     func(context.Context, string, string, time.Duration) (ToolResult, error)
+type commandSandbox struct {
+	execute func(context.Context, string, string, time.Duration, func()) (CommandResult, error)
 	close   func() error
 	timeout time.Duration
+}
+
+// commandConfig is shared by hosted and standalone execution. Preparation
+// derives the proved layout, minimal environment, token and scratch from these
+// normalized options; outputBudget keeps the hosted tool's historical bound.
+type commandConfig struct {
+	options      Options
+	id           string
+	outputBudget int
+}
+
+func setupWorkbenchCommands(w *workspace, o Options, id string) error {
+	if o.Workbench.Commands == nil {
+		return nil
+	}
+	commands, err := newCommandSandbox(commandConfig{options: o, id: id, outputBudget: w.budget})
+	if err == nil {
+		w.commands = commands
+	}
+	return err
+}
+
+// run preserves the hosted tool's existing JSON and error contract.
+func (s *commandSandbox) run(ctx context.Context, command, rel string, timeout time.Duration) (ToolResult, error) {
+	result, err := s.execute(ctx, command, rel, timeout, nil)
+	var failure *TurnError
+	if errors.As(err, &failure) {
+		if failure.Code == CommandSandboxClosed {
+			return ToolResult{}, context.Canceled
+		}
+		r := workbenchError(workbenchRunCommand, failure.Code, rel)
+		if failure.Code == CommandOutcomeUnknown {
+			return r, errWorkbenchCommandUnknown
+		}
+		return r, nil
+	}
+	if err != nil {
+		return ToolResult{}, err
+	}
+	payload, _ := json.Marshal(result)
+	return ToolResult{Content: string(payload)}, nil
 }
 
 func normalizeWorkbenchCommands(o Options) (Options, error) {

@@ -93,7 +93,7 @@ type workspace struct {
 	id         string
 	mode       fs.FileMode
 	writeFault func(string) error
-	commands   *workbenchRunner
+	commands   *commandSandbox
 	root       *os.Root
 	mount      wsfile.Mount
 	jobs       chan workspaceJob

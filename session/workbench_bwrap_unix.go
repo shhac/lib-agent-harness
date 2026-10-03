@@ -20,7 +20,7 @@ import (
 	"github.com/shhac/lib-agent-harness/process"
 )
 
-const workbenchBwrapVersion = "bwrap-workbench-v1"
+const workbenchBwrapVersion = "bwrap-workbench-v2"
 
 func workbenchBinaryFingerprint(binary string) (string, error) {
 	info, e := os.Stat(binary)

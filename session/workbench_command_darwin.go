@@ -3,7 +3,6 @@ package session
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -19,25 +18,29 @@ import (
 	"github.com/shhac/lib-agent-harness/process"
 )
 
-func setupWorkbenchCommands(w *workspace, o Options, id string) error {
+func newCommandSandbox(config commandConfig) (*commandSandbox, error) {
+	o, id := config.options, config.id
+	w := &workspace{budget: config.outputBudget}
 	if o.Workbench.Commands == nil {
-		return nil
+		return nil, nil
 	}
 	layout, env, token, scratch, err := prepareWorkbenchCommands(o, id)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var mu sync.Mutex
 	type running struct {
 		p       *process.Process
-		done    chan error
+		done    chan struct{}
 		settled chan struct{}
 	}
 	var launched []running
-	w.commands = &workbenchRunner{timeout: o.Workbench.Commands.Timeout}
+	closing := false
+	w.commands = &commandSandbox{timeout: o.Workbench.Commands.Timeout}
 	w.commands.close = func() error {
 		mu.Lock()
 		defer mu.Unlock()
+		closing = true
 		for _, child := range launched {
 			child.p.Close()
 			<-child.done
@@ -50,8 +53,8 @@ func setupWorkbenchCommands(w *workspace, o Options, id string) error {
 		}
 		return nil
 	}
-	w.commands.run = func(ctx context.Context, command, rel string, timeout time.Duration) (ToolResult, error) {
-		runCtx, cancel := context.WithTimeout(ctx, timeout)
+	w.commands.execute = func(ctx context.Context, command, rel string, timeout time.Duration, onStart func()) (CommandResult, error) {
+		runCtx, cancel := commandContext(ctx, timeout)
 		defer cancel()
 		mu.Lock()
 		live := launched[:0]
@@ -69,7 +72,7 @@ func setupWorkbenchCommands(w *workspace, o Options, id string) error {
 		full := len(launched) >= 64
 		mu.Unlock()
 		if full {
-			return workbenchError(workbenchRunCommand, "command_process_limit", rel), nil
+			return CommandResult{}, commandError("command_process_limit")
 		}
 		// Keep the group leader alive after the foreground shell exits. Its
 		// argument marker remains visible even when macOS hides platform-binary
@@ -78,13 +81,13 @@ func setupWorkbenchCommands(w *workspace, o Options, id string) error {
 		// foreground completion message through that private pipe.
 		readStatus, writeStatus, err := os.Pipe()
 		if err != nil {
-			return workbenchError(workbenchRunCommand, "command_start_failed", rel), nil
+			return CommandResult{}, commandError("command_start_failed")
 		}
 		defer readStatus.Close()
 		keepRead, keepWrite, err := os.Pipe()
 		if err != nil {
 			writeStatus.Close()
-			return workbenchError(workbenchRunCommand, "command_start_failed", rel), nil
+			return CommandResult{}, commandError("command_start_failed")
 		}
 		defer keepRead.Close()
 		args := workbenchSandboxArgs(layout, workbenchSupervisor)
@@ -93,7 +96,7 @@ func setupWorkbenchCommands(w *workspace, o Options, id string) error {
 		if err != nil {
 			writeStatus.Close()
 			keepWrite.Close()
-			return workbenchError(workbenchRunCommand, "command_start_failed", rel), nil
+			return CommandResult{}, commandError("command_start_failed")
 		}
 		// The supervisor also owns the writer (fd 5), so launcher death does
 		// not release its marker while background group members still live.
@@ -105,6 +108,9 @@ func setupWorkbenchCommands(w *workspace, o Options, id string) error {
 			p.Background()
 		}
 		limit := (w.budget - 1024) / 12
+		if o.Workbench.standaloneCommands {
+			limit = skills.MaxOutputBytes
+		}
 		if limit > skills.MaxOutputBytes {
 			limit = skills.MaxOutputBytes
 		}
@@ -113,7 +119,7 @@ func setupWorkbenchCommands(w *workspace, o Options, id string) error {
 		if e != nil {
 			writeStatus.Close()
 			keepWrite.Close()
-			return workbenchError(workbenchRunCommand, "command_start_failed", rel), nil
+			return CommandResult{}, commandError("command_start_failed")
 		}
 		errRead, errWrite, e := os.Pipe()
 		if e != nil {
@@ -121,24 +127,47 @@ func setupWorkbenchCommands(w *workspace, o Options, id string) error {
 			keepWrite.Close()
 			outRead.Close()
 			outWrite.Close()
-			return workbenchError(workbenchRunCommand, "command_start_failed", rel), nil
+			return CommandResult{}, commandError("command_start_failed")
 		}
 		cmd.Stdout = outWrite
 		cmd.Stderr = errWrite
 		outDone, errDone := make(chan struct{}), make(chan struct{})
 		go func() { _, _ = io.Copy(stdout, outRead); close(outDone) }()
 		go func() { _, _ = io.Copy(stderr, errRead); close(errDone) }()
-		done := make(chan error, 1)
+		done := make(chan struct{})
 		settled := make(chan struct{})
 		var started atomic.Bool
 		// Closing the parent's pipe only after Start avoids racing the child's
 		// descriptor duplication. Notify also runs only after containment.
-		p.Notify(func(int) { started.Store(true); _ = writeStatus.Close(); _ = outWrite.Close(); _ = errWrite.Close() })
+		p.Notify(func(int) {
+			started.Store(true)
+			notifyCommandLaunch(onStart)
+			_ = writeStatus.Close()
+			_ = outWrite.Close()
+			_ = errWrite.Close()
+		})
 		mu.Lock()
+		if closing || len(launched) >= 64 {
+			code := CommandProcessLimit
+			if closing {
+				code = CommandSandboxClosed
+			}
+			mu.Unlock()
+			p.Close()
+			writeStatus.Close()
+			outWrite.Close()
+			errWrite.Close()
+			keepWrite.Close()
+			outRead.Close()
+			errRead.Close()
+			<-outDone
+			<-errDone
+			return CommandResult{}, commandError(code)
+		}
 		launched = append(launched, running{p, done, settled})
 		mu.Unlock()
 		go func() {
-			err := p.Run()
+			_ = p.Run()
 			_ = writeStatus.Close()
 			_ = outWrite.Close()
 			_ = errWrite.Close()
@@ -154,7 +183,7 @@ func setupWorkbenchCommands(w *workspace, o Options, id string) error {
 			_ = outRead.Close()
 			_ = errRead.Close()
 			<-drained
-			done <- err
+			close(done)
 			close(settled)
 		}()
 		status := make(chan string, 1)
@@ -166,24 +195,28 @@ func setupWorkbenchCommands(w *workspace, o Options, id string) error {
 				code = value
 			} else {
 				p.Stop()
-				err = <-done
-				done <- err
-				if started.Load() {
-					return workbenchError(workbenchRunCommand, "command_outcome_unknown", rel), errWorkbenchCommandUnknown
+				<-done
+				if ctx.Err() != nil {
+					return CommandResult{}, ctx.Err()
 				}
-				return workbenchError(workbenchRunCommand, "command_start_failed", rel), nil
+				if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+					break
+				}
+				if started.Load() {
+					return CommandResult{}, commandError("command_outcome_unknown")
+				}
+				return CommandResult{}, commandError("command_start_failed")
 			}
 		case <-runCtx.Done():
 			p.Stop()
-			// Wait has really settled before this call yields admission. Keep a
-			// completed channel value for Close to consume once as well.
-			err = <-done
-			done <- err
+			// The broadcast completion channel lets both the call and Close wait
+			// for real settlement without consuming one another's observation.
+			<-done
 		}
 		if ctx.Err() != nil {
 			p.Stop()
 			<-settled
-			return ToolResult{}, ctx.Err()
+			return CommandResult{}, ctx.Err()
 		}
 		// Reap immediately when no background group member remains; otherwise
 		// watch the group and reap when the final job exits.
@@ -192,6 +225,14 @@ func setupWorkbenchCommands(w *workspace, o Options, id string) error {
 			<-settled
 		} else {
 			go reapWorkbenchSupervisor(p, settled)
+		}
+		if timeout == 0 {
+			select {
+			case <-settled:
+			case <-ctx.Done():
+				p.Stop()
+				<-settled
+			}
 		}
 		// Allow the bounded output copiers to drain data already in the pipes;
 		// background output is then discarded for the rest of the session.
@@ -211,27 +252,19 @@ func setupWorkbenchCommands(w *workspace, o Options, id string) error {
 		// late background output until the process group has settled.
 		if runCtx.Err() != nil {
 			p.Stop()
-			err = <-done
-			done <- err
+			<-done
 		}
 		if ctx.Err() != nil {
-			return ToolResult{}, ctx.Err()
+			return CommandResult{}, ctx.Err()
 		}
 		outText, outTruncated := stdout.finish()
 		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
 			code = -1
 		}
 		errText, errTruncated := stderr.finish()
-		payload, _ := json.Marshal(struct {
-			ExitCode  int    `json:"exit_code"`
-			Stdout    string `json:"stdout"`
-			Stderr    string `json:"stderr"`
-			TimedOut  bool   `json:"timed_out"`
-			Truncated bool   `json:"truncated"`
-		}{code, outText, errText, errors.Is(runCtx.Err(), context.DeadlineExceeded), outTruncated || errTruncated})
-		return ToolResult{Content: string(payload)}, nil
+		return CommandResult{code, outText, errText, errors.Is(runCtx.Err(), context.DeadlineExceeded), outTruncated || errTruncated}, nil
 	}
-	return nil
+	return w.commands, nil
 }
 
 const workbenchSupervisor = `trap '' PIPE

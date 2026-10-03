@@ -59,7 +59,7 @@ ignored, and no option ever widens what an agent may do.
 | --- | --- |
 | `completion` | The model returns text and proposed application tool calls. Native tools are proven absent before inference; the application authorizes and executes proposals. |
 | `native` | One native agent invocation, optionally resuming a session: an inline JSON-schema report, tool activity, a readable transcript, and usage. |
-| `session` | Persistent bidirectional sessions with turns, streaming events, interruption, resumption, capability-aware steering, and restricted or sandboxed tool hosting. |
+| `session` | Persistent bidirectional sessions with turns, streaming events, interruption, resumption, capability-aware steering, and restricted or sandboxed tool hosting; standalone command sandboxes without a model session. |
 | `catalog` | The models and reasoning efforts an engine offers, without inference. |
 | `account` | Login, plan, subscription quota windows and credits, without inference. |
 | `process` | Shared subprocess-tree containment, including Windows suspended-start job assignment. |
@@ -458,6 +458,74 @@ capabilities or nested user namespaces, and `--die-with-parent`. Everything
 it starts ends with that command, including background servers.
 `Commands.Loopback` is refused on Linux; a single command may still start
 and request its own server in its private namespace.
+
+### Command sandbox
+
+`session.OpenCommandSandbox` opens the same proved command boundary without a
+model session, provider credentials, or inference. `RuntimeHome` is required:
+it must be an existing private directory outside `WorkDir`, holding recovery
+markers and scratch. `Write`, `Read`, `Env`, `Timeout`, `Background` and
+`Loopback` follow the workbench's rules. Env uses the existing denylist; a path
+named in Env grants no access. The sandbox never inherits the parent's full
+environment or widens filesystem permissions.
+
+```go
+sandbox, err := session.OpenCommandSandbox(ctx, session.CommandSandboxOptions{
+    WorkDir: workspace, RuntimeHome: privateRuntimeHome,
+    Write: true, Loopback: true,
+    Timeout: 2 * time.Minute,
+})
+if err != nil { return err }
+defer sandbox.Close() // check its error when cleanup certainty matters
+
+result, err := sandbox.Run(ctx, session.CommandRequest{Command: "npm test"})
+// result.ExitCode, Stdout, Stderr, TimedOut, Truncated
+server, err := sandbox.Start(ctx, session.CommandRequest{Command: "npm run dev"})
+if err != nil { return err }
+defer server.Stop()
+// Start reports process launch; the caller checks server readiness.
+// server.Done() closes on settlement; server.Result() waits for it.
+```
+
+Run defaults to two minutes, at most ten minutes; a request can shorten that
+bound. Timeout returns exit -1 with `TimedOut=true`. Caller context cancellation
+stops and settles the tree before returning the context error. Close cancelling
+an in-flight Run or Start returns `CommandSandboxClosed` when the caller's
+context is still live; caller cancellation retains the caller's context error.
+Each output stream
+captures at most 64 KiB, plus a truncation marker, and continues draining.
+Start has no timeout (a nonzero request Timeout is refused); its context, Stop
+or Close ends it. Result is meaningful when its error is nil, including an
+ordinary nonzero exit. Stop waits for settlement and is safe to repeat.
+
+On macOS, opt-in Loopback permits binding and connections only to this
+machine's own addresses. The proof checks outbound, own-listener and inbound
+connections, and requires the off-machine witness connection to fail. A started server is reachable
+from the owner's browser. Without Loopback, localhost test suites that bind
+and connect fail.
+
+On Linux, **a command always has its own private localhost and never the
+host's**, with or without Loopback. Run accepts Loopback and proves its own
+localhost works. This proof requires **OpenBSD nc** (`netcat-openbsd` on Debian
+and Ubuntu); traditional netcat and BusyBox nc have incompatible listener
+syntax and are not supported. A suite can start a server and request it within
+one command.
+The host's loopback listener stays unreachable in both configurations. No
+seccomp layer blocks the private loopback. Start with Loopback returns a typed
+`UnsupportedError` for operation `start`: a server in bubblewrap's private
+network namespace cannot be reached from the owner's browser. Start without
+Loopback is available for other long-running work. Workbench.Commands still
+refuses Loopback on Linux. Windows command sandboxes remain unsupported.
+`harness.Support` claims are unchanged.
+
+Close stops admission, cancels admitted work, waits, reaps background children
+and removes scratch. Later Run/Start calls return `CommandSandboxClosed`.
+Typed command failures include `CommandStartFailed`, `CommandOutcomeUnknown`,
+`CommandProcessLimit` (64 live commands) and `CommandCleanupUnknown`. A failed
+cleanup preserves recovery state. Standalone state lives under
+`RuntimeHome/commands/<random id>` with a lifetime lock; a subsequent Open
+sweeps unlocked stale entries and leaves live or uncertain entries alone.
+See [the command sandbox design](design-docs/2026-10-03-command-sandbox.md).
 
 Linux `Commands.Read` refuses paths overlapping `/run` (including resolved
 `/var/run` aliases) or containing `/tmp`, with `sandbox_read_path_invalid` refusal.

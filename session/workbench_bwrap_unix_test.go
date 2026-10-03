@@ -371,7 +371,7 @@ func TestWorkbenchLinuxStatusProtocol(t *testing.T) {
 		{`{"child-pid":123}` + "\n" + `{"exit-code":7}`, true, true, 7},
 		{`{"child-pid":123}`, true, false, -1}, {`{"exit-code":0}`, false, false, -1}, {"garbage", false, false, -1},
 	} {
-		started, code, settled := readBwrapStatus(strings.NewReader(tc.data))
+		started, code, settled := readBwrapStatus(strings.NewReader(tc.data), nil)
 		if started != tc.started || settled != tc.settled || code != tc.code {
 			t.Fatalf("%s: %t %d %t", tc.data, started, code, settled)
 		}
@@ -380,22 +380,22 @@ func TestWorkbenchLinuxStatusProtocol(t *testing.T) {
 
 func TestWorkbenchLinuxCanaryJudge(t *testing.T) {
 	good := "inside\nnested\ntmp\ntmpdir\nsystem\nreadset\nprivilege-ok\nwitness-network-connect\nwitness-localhost-connect\nwitness-socket-structural\nsocket-structural-ok\ncanary-ran\n"
-	if e := judgeLinuxWorkbench(good, true, false, false); e != nil {
+	if e := judgeLinuxWorkbench(good, true, false, false, false); e != nil {
 		t.Fatal(e)
 	}
 	for _, label := range []string{"sibling", "gitdir", "gitmove", "gitlink", "githardlink", "home", "outside", "runtime", "outside-etc", "readset-write", "link", "socket", "network", "localhost", "privilege", "overlay"} {
 		var cap *CapabilityError
-		e := judgeLinuxWorkbench(label+"\n"+good, true, false, false)
+		e := judgeLinuxWorkbench(label+"\n"+good, true, false, false, false)
 		if !errors.As(e, &cap) || cap.Code != CapabilitySandboxNotEnforced {
 			t.Fatalf("%s %v", label, e)
 		}
 	}
 	for _, label := range []string{"privilege-ok", "socket-structural-ok", "canary-ran", "readset"} {
-		if e := judgeLinuxWorkbench(strings.ReplaceAll(good, label+"\n", ""), true, false, false); e == nil {
+		if e := judgeLinuxWorkbench(strings.ReplaceAll(good, label+"\n", ""), true, false, false, false); e == nil {
 			t.Fatalf("missing %s accepted", label)
 		}
 	}
-	if judgeLinuxWorkbench(good, true, true, false) == nil || judgeLinuxWorkbench(good, false, false, false) == nil || judgeLinuxWorkbench(good, true, false, true) == nil {
+	if judgeLinuxWorkbench(good, true, true, false, false) == nil || judgeLinuxWorkbench(good, false, false, false, false) == nil || judgeLinuxWorkbench(good, true, false, true, false) == nil {
 		t.Fatal("observations ignored")
 	}
 }

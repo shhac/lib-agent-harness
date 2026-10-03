@@ -5,7 +5,7 @@ import harness "github.com/shhac/lib-agent-harness"
 func workbenchSystemDirs() []string                   { return bwrapSystemDirs() }
 func workbenchSystemContains(system, dir string) bool { return bwrapSystemContains(system, dir) }
 func normalizeWorkbenchSystem(o Options) (Options, error) {
-	if o.Workbench.Commands.Loopback {
+	if o.Workbench.Commands.Loopback && !o.Workbench.standaloneCommands {
 		return o, &UnsupportedError{Engine: o.Provider.Engine, Operation: "loopback", Code: RefusedNotOffered, Capability: harness.Support(harness.OpenAICompatible, harness.Session, harness.Loopback)}
 	}
 	if linuxSystemPlacement(o.WorkDir) {

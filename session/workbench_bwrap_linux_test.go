@@ -163,6 +163,7 @@ func TestWorkbenchLinuxProbeKey(t *testing.T) {
 	}
 	for _, change := range []func(*Options, *string, *workbenchLinuxWitness){
 		func(o *Options, v *string, w *workbenchLinuxWitness) { o.Workbench.Write = true },
+		func(o *Options, v *string, w *workbenchLinuxWitness) { o.Workbench.Commands.Loopback = true },
 		func(o *Options, v *string, w *workbenchLinuxWitness) {
 			o.Workbench.Commands.Read = []string{"/toolchain"}
 		},

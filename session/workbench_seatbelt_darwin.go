@@ -15,7 +15,7 @@ import (
 )
 
 // A versioned template is shared by commands and the disposable canary.
-const workbenchSeatbeltVersion = "seatbelt-workbench-v3"
+const workbenchSeatbeltVersion = "seatbelt-workbench-v4"
 
 func seatbeltProfile(l workbenchLayout) string {
 	var b strings.Builder

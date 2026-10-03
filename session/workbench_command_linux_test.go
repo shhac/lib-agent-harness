@@ -122,7 +122,7 @@ func TestWorkbenchLinuxWidenedSandbox(t *testing.T) {
 		t.Fatalf("%v %s", e, out.text())
 	}
 	var cap *CapabilityError
-	if e = judgeLinuxWorkbench(out.text(), true, false, false); !errors.As(e, &cap) || cap.Code != CapabilitySandboxNotEnforced {
+	if e = judgeLinuxWorkbench(out.text(), true, false, false, false); !errors.As(e, &cap) || cap.Code != CapabilitySandboxNotEnforced {
 		t.Fatalf("accepted widened sandbox: %v %s", e, out.text())
 	}
 	for _, label := range []string{"gitdir", "home", "outside", "runtime", "readset-write", "socket", "network", "localhost"} {
@@ -695,7 +695,7 @@ func TestWorkbenchLinuxCanaryWithoutSandboxReportsEscapes(t *testing.T) {
 		}
 	}
 	var cap *CapabilityError
-	if e = judgeLinuxWorkbench(out.text(), true, false, false); !errors.As(e, &cap) || cap.Code != CapabilitySandboxNotEnforced {
+	if e = judgeLinuxWorkbench(out.text(), true, false, false, false); !errors.As(e, &cap) || cap.Code != CapabilitySandboxNotEnforced {
 		t.Fatalf("%v", e)
 	}
 }

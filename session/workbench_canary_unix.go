@@ -104,10 +104,13 @@ func linuxWorkbenchCanary(l workbenchLayout, hidden, read, socket, namespace str
 		try("overlay", "unshare -Urm /bin/sh -c "+q(attack.command+"; echo x >> "+destination+"; exit 0"))
 		s += "else echo overlay-unshare-not-attempted; fi\nelse echo overlay-" + attack.tool + "-not-attempted; fi\n"
 	}
+	if l.Loopback {
+		s += "nc -l 127.0.0.1 35791 >/dev/null 2>&1 &\nown_listener=$!\nsleep 1\nnc -z -w 2 127.0.0.1 35791 >/dev/null 2>&1 && echo own-loopback\nkill \"$own_listener\" >/dev/null 2>&1; wait \"$own_listener\" 2>/dev/null\n"
+	}
 	return s
 }
 
-func judgeLinuxWorkbench(output string, write, reached, background bool) error {
+func judgeLinuxWorkbench(output string, write, reached, background bool, loopback bool) error {
 	lines, last := workbenchCanaryLines(output)
 	if workbenchCanaryEscaped(lines, "outside-etc", "privilege", "overlay", "completion-fd-leaked") {
 		return workbenchCapability(CapabilitySandboxNotEnforced)
@@ -116,6 +119,9 @@ func judgeLinuxWorkbench(output string, write, reached, background bool) error {
 		return workbenchCapability(CapabilitySandboxNotEnforced)
 	}
 	required := []string{"tmp", "tmpdir", "system", "readset", "privilege-ok"}
+	if loopback {
+		required = append(required, "own-loopback")
+	}
 	if write {
 		required = append(required, "inside", "nested")
 	}

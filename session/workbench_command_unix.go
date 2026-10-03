@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/shhac/lib-agent-harness/internal/skills"
@@ -21,8 +22,15 @@ type workbenchToken struct {
 	Since time.Time
 }
 
+// Counts actual canary runs, so tests can distinguish evidence reuse from a
+// second proof without replacing any verification mechanism.
+var workbenchCanaryRuns atomic.Uint64
+
 func prepareWorkbenchCommands(o Options, id string) (layout workbenchLayout, env []string, token workbenchToken, scratch string, err error) {
-	dir := filepath.Join(o.RuntimeHome, "sessions", id)
+	dir := o.Workbench.commandStateDir
+	if dir == "" {
+		dir = filepath.Join(o.RuntimeHome, "sessions", id)
+	}
 	tokenPath := filepath.Join(dir, "workbench-token.json")
 	if data, err := os.ReadFile(tokenPath); err == nil {
 		var old workbenchToken
@@ -145,7 +153,7 @@ type bwrapStatus struct {
 	ExitCode *int `json:"exit-code"`
 }
 
-func readBwrapStatus(r io.Reader) (started bool, code int, settled bool) {
+func readBwrapStatus(r io.Reader, onStart func()) (started bool, code int, settled bool) {
 	code = -1
 	d := json.NewDecoder(io.LimitReader(r, 16<<10))
 	for {
@@ -154,6 +162,9 @@ func readBwrapStatus(r io.Reader) (started bool, code int, settled bool) {
 			return
 		}
 		if s.ChildPID > 0 {
+			if !started && onStart != nil {
+				onStart()
+			}
 			started = true
 		}
 		if s.ExitCode != nil && started && *s.ExitCode >= 0 && *s.ExitCode <= 255 {

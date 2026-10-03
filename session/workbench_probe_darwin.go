@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -58,6 +59,7 @@ func proveWorkbench(ctx context.Context, o Options) error {
 }
 
 func probeWorkbench(ctx context.Context, o Options, system []string) error {
+	workbenchCanaryRuns.Add(1)
 	unavailable := workbenchCapability(CapabilitySandboxUnavailable)
 	root, err := os.MkdirTemp("", "agent-harness-workbench-")
 	if err != nil {
@@ -87,7 +89,7 @@ func probeWorkbench(ctx context.Context, o Options, system []string) error {
 	l := workbenchLayout{Work: work, Home: filepath.Join(scratch, "home"), Tmp: filepath.Join(scratch, "tmp"), Read: append(append([]string{}, o.Workbench.Commands.Read...), read), System: system, Write: o.Workbench.Write, Loopback: o.Workbench.Commands.Loopback}
 	// Test launch first. Nested Seatbelt refusal must not trigger any network
 	// witness or touch the real session's runtime state.
-	if _, err = runWorkbenchProbe(ctx, l, "echo canary-ran", false); err != nil {
+	if _, err = runWorkbenchProbe(ctx, l, "echo canary-ran", false, workbenchInboundProbe{}); err != nil {
 		if ctx.Err() != nil {
 			return workbenchCapability(CapabilityProbeTimeout)
 		}
@@ -95,7 +97,7 @@ func probeWorkbench(ctx context.Context, o Options, system []string) error {
 	}
 	// Prove group inspection positively as well: an empty scan must not let
 	// the reaper kill a real background job or retain every empty supervisor.
-	if _, err = runWorkbenchProbe(ctx, l, "/bin/sleep 30 >/dev/null 2>&1 & echo canary-ran", true); err != nil {
+	if _, err = runWorkbenchProbe(ctx, l, "/bin/sleep 30 >/dev/null 2>&1 & echo canary-ran", true, workbenchInboundProbe{}); err != nil {
 		return unavailable
 	}
 	// A sibling fixture cannot witness the owner's home. Prove that directory
@@ -270,6 +272,7 @@ func probeWorkbench(ctx context.Context, o Options, system []string) error {
 	script := workbenchCanary(l, root, read, socket, image, mount, witness, port)
 	script += workbenchReadWitnesses(root, ownerHome)
 	script += "try keychain /bin/sh -c " + workbenchShellQuote(keychainCheck) + "\n"
+	inbound := workbenchInboundProbe{}
 	if l.Loopback {
 		bind, e := freeLoopbackPort()
 		if e != nil {
@@ -277,9 +280,15 @@ func probeWorkbench(ctx context.Context, o Options, system []string) error {
 		}
 		script += "\n" + loopbackCanary(port, witness, 443, bind)
 		script += "\nkill \"$!\" >/dev/null 2>&1; wait \"$!\" 2>/dev/null\n"
+		inbound.Port, err = freeLoopbackPort()
+		if err != nil {
+			return unavailable
+		}
+		inbound.Nonce = process.NewToken()
+		script += fmt.Sprintf("printf '%s\\n' | nc -l 127.0.0.1 %d >/dev/null 2>&1 &\nsleep 3\nkill \"$!\" >/dev/null 2>&1; wait \"$!\" 2>/dev/null\n", inbound.Nonce, inbound.Port)
 	}
 	script += "echo canary-ran\n"
-	output, err := runWorkbenchProbe(ctx, l, script, false)
+	output, err := runWorkbenchProbe(ctx, l, script, false, inbound)
 	if ctx.Err() != nil {
 		return workbenchCapability(CapabilityProbeTimeout)
 	}
@@ -307,7 +316,12 @@ func probeWorkbench(ctx context.Context, o Options, system []string) error {
 	return judgeWorkbench(output, l.Write, l.Loopback, reached())
 }
 
-func runWorkbenchProbe(ctx context.Context, l workbenchLayout, script string, expectBackground bool) (string, error) {
+type workbenchInboundProbe struct {
+	Port  int
+	Nonce string
+}
+
+func runWorkbenchProbe(ctx context.Context, l workbenchLayout, script string, expectBackground bool, inbound workbenchInboundProbe) (string, error) {
 	r, w, err := os.Pipe()
 	if err != nil {
 		return "", err
@@ -340,6 +354,41 @@ func runWorkbenchProbe(ctx context.Context, l workbenchLayout, script string, ex
 	go func() { err := p.Run(); w.Close(); done <- err }()
 	status := make(chan string, 1)
 	go func() { line, _ := bufio.NewReader(r).ReadString('\n'); status <- line }()
+	inboundDone := make(chan bool, 1)
+	inboundCtx, cancelInbound := context.WithCancel(ctx)
+	defer func() {
+		cancelInbound()
+		for range inboundDone {
+		}
+	}()
+	if inbound.Port != 0 {
+		go func() {
+			defer close(inboundDone)
+			ticker := time.NewTicker(20 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				conn, e := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(inbound.Port)), 100*time.Millisecond)
+				if e == nil {
+					_ = conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+					line, readErr := bufio.NewReader(io.LimitReader(conn, 64)).ReadString('\n')
+					conn.Close()
+					if readErr == nil && line == inbound.Nonce+"\n" {
+						inboundDone <- true
+						return
+					}
+				}
+				select {
+				case <-ticker.C:
+				case <-inboundCtx.Done():
+					inboundDone <- false
+					return
+				}
+			}
+		}()
+	} else {
+		inboundDone <- false
+		close(inboundDone)
+	}
 	var line string
 	select {
 	case line = <-status:
@@ -355,7 +404,14 @@ func runWorkbenchProbe(ctx context.Context, l workbenchLayout, script string, ex
 	if line != "0\n" || !owned || inspectErr != nil || children != expectBackground {
 		return out.text(), fmt.Errorf("sandbox supervisor protocol unavailable")
 	}
-	return out.text(), nil
+	output := out.text()
+	// Settle the witness even if it read the nonce just before cancellation
+	// but has not yet published its result.
+	cancelInbound()
+	if connected := <-inboundDone; connected {
+		output = "inbound\n" + output
+	}
+	return output, nil
 }
 
 func workbenchCanary(l workbenchLayout, root, read, socket, image, mount, witness string, port int) string {
@@ -406,7 +462,7 @@ func judgeWorkbench(output string, write, loopback, reached bool) error {
 		return workbenchCapability(CapabilitySandboxUnavailable)
 	}
 	if loopback {
-		if !lines[loopbackReached] || !lines[loopbackBound] || lines[loopbackOutside] || !reached {
+		if !lines[loopbackReached] || !lines[loopbackBound] || !lines["inbound"] || lines[loopbackOutside] || !reached {
 			return workbenchCapability(CapabilitySandboxNotEnforced)
 		}
 	}

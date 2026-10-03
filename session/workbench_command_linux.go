@@ -2,7 +2,6 @@ package session
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -16,29 +15,33 @@ import (
 
 // The status pipe belongs to bwrap, never the model's shell. In particular,
 // an exec failure is not confused with a shell's ordinary nonzero exit.
-func setupWorkbenchCommands(w *workspace, o Options, id string) error {
+func newCommandSandbox(config commandConfig) (*commandSandbox, error) {
+	o, id := config.options, config.id
+	w := &workspace{budget: config.outputBudget}
 	if o.Workbench.Commands == nil {
-		return nil
+		return nil, nil
 	}
 	identity, e := workbenchBinaryFingerprint(o.Workbench.commandBinary)
 	if e != nil || identity != o.Workbench.commandIdentity {
-		return stateError(StateUnusable)
+		return nil, stateError(StateUnusable)
 	}
 	layout, env, token, scratch, err := prepareWorkbenchCommands(o, id)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var mu sync.Mutex
-	var live *process.Process
-	var done chan struct{}
+	live := make(map[*process.Process]chan struct{})
 	closing := false
-	w.commands = &workbenchRunner{timeout: o.Workbench.Commands.Timeout}
+	w.commands = &commandSandbox{timeout: o.Workbench.Commands.Timeout}
 	w.commands.close = func() error {
 		mu.Lock()
 		closing = true
-		p, settled := live, done
+		children := make(map[*process.Process]chan struct{}, len(live))
+		for p, settled := range live {
+			children[p] = settled
+		}
 		mu.Unlock()
-		if p != nil {
+		for p, settled := range children {
 			p.Close()
 			<-settled
 		}
@@ -47,20 +50,20 @@ func setupWorkbenchCommands(w *workspace, o Options, id string) error {
 		}
 		return nil
 	}
-	w.commands.run = func(ctx context.Context, command, rel string, timeout time.Duration) (ToolResult, error) {
+	w.commands.execute = func(ctx context.Context, command, rel string, timeout time.Duration, onStart func()) (CommandResult, error) {
 		current, e := workbenchBinaryFingerprint(o.Workbench.commandBinary)
 		if e != nil || current != identity {
-			return workbenchError(workbenchRunCommand, "command_start_failed", rel), nil
+			return CommandResult{}, commandError("command_start_failed")
 		}
-		runCtx, cancel := context.WithTimeout(ctx, timeout)
+		runCtx, cancel := commandContext(ctx, timeout)
 		defer cancel()
 		args, e := bwrapArgs(layout)
 		if e != nil {
-			return workbenchError(workbenchRunCommand, "command_start_failed", rel), nil
+			return CommandResult{}, commandError("command_start_failed")
 		}
 		r, status, e := os.Pipe()
 		if e != nil {
-			return workbenchError(workbenchRunCommand, "command_start_failed", rel), nil
+			return CommandResult{}, commandError("command_start_failed")
 		}
 		defer r.Close()
 		defer status.Close()
@@ -71,12 +74,15 @@ func setupWorkbenchCommands(w *workspace, o Options, id string) error {
 		}
 		cmd, p, e := process.Command(runCtx, binary, args...)
 		if e != nil {
-			return workbenchError(workbenchRunCommand, "command_start_failed", rel), nil
+			return CommandResult{}, commandError("command_start_failed")
 		}
 		cmd.Env = env
 		cmd.ExtraFiles = []*os.File{status}
 		cmd.WaitDelay = 2 * time.Second
 		limit := (w.budget - 1024) / 12
+		if o.Workbench.standaloneCommands {
+			limit = skills.MaxOutputBytes
+		}
 		if limit > skills.MaxOutputBytes {
 			limit = skills.MaxOutputBytes
 		}
@@ -91,40 +97,38 @@ func setupWorkbenchCommands(w *workspace, o Options, id string) error {
 		if closing {
 			mu.Unlock()
 			p.Close()
-			return ToolResult{}, context.Canceled
+			return CommandResult{}, context.Canceled
 		}
-		live, done = p, settled
+		if len(live) >= 64 {
+			mu.Unlock()
+			p.Close()
+			return CommandResult{}, commandError(CommandProcessLimit)
+		}
+		live[p] = settled
 		mu.Unlock()
 		completed := make(chan error, 1)
 		go func() { e := p.Run(); status.Close(); completed <- e }()
-		started, code, known := readBwrapStatus(r)
+		started, code, known := readBwrapStatus(r, onStart)
 		<-completed
 		p.Close()
 		mu.Lock()
-		live = nil
+		delete(live, p)
 		close(settled)
 		mu.Unlock()
 		if ctx.Err() != nil {
-			return ToolResult{}, ctx.Err()
+			return CommandResult{}, ctx.Err()
 		}
 		timedOut := errors.Is(runCtx.Err(), context.DeadlineExceeded)
 		if timedOut {
 			code = -1
 		} else if !started {
-			return workbenchError(workbenchRunCommand, "command_start_failed", rel), nil
+			return CommandResult{}, commandError("command_start_failed")
 		} else if !known {
-			return workbenchError(workbenchRunCommand, "command_outcome_unknown", rel), errWorkbenchCommandUnknown
+			return CommandResult{}, commandError("command_outcome_unknown")
 		}
 		out, ot := stdout.finish()
 		errout, et := stderr.finish()
-		payload, _ := json.Marshal(struct {
-			ExitCode  int    `json:"exit_code"`
-			Stdout    string `json:"stdout"`
-			Stderr    string `json:"stderr"`
-			TimedOut  bool   `json:"timed_out"`
-			Truncated bool   `json:"truncated"`
-		}{code, out, errout, timedOut, ot || et})
-		return ToolResult{Content: string(payload)}, nil
+		return CommandResult{code, out, errout, timedOut, ot || et}, nil
 	}
-	return nil
+	return w.commands, nil
 }
