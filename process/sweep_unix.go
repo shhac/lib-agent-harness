@@ -8,6 +8,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -57,51 +58,75 @@ type candidate struct {
 	identity           string
 }
 
-// sweep kills this user's processes that carry token, or descend from one that
-// does, and started no earlier than since. It repeats while it still finds
-// some, because a process may fork while its siblings are being killed. A
-// process that cleared its environment, or a platform binary whose marked
-// parent is already gone, escapes: this is a best-effort sweep, not a
-// boundary.
-func sweep(token string, since time.Time) {
-	self := os.Getpid()
-	for range 5 {
-		procs := candidates(since.Add(-time.Second))
-		identities := map[int]string{}
-		children := map[int][]int{}
-		for _, proc := range procs {
-			identities[proc.pid] = proc.identity
-			children[proc.parent] = append(children[proc.parent], proc.pid)
-		}
-		doomed := map[int]bool{}
-		var mark func(int)
-		mark = func(pid int) {
-			if doomed[pid] || pid == self || pid <= 1 {
-				return
-			}
-			doomed[pid] = true
-			for _, child := range children[pid] {
-				mark(child)
-			}
-		}
-		for _, proc := range procs {
-			if carriesToken(environment(proc.pid), token) {
-				mark(proc.pid)
-			}
-		}
-		if len(doomed) == 0 {
+// readEnvironment is an atomic test seam; production uses environment.
+var readEnvironment = func() *atomic.Value {
+	v := &atomic.Value{}
+	v.Store(environment)
+	return v
+}()
+
+// tree snapshots marked roots, a caller-validated group, and their descendants.
+// Remembered roots must retain their birth identity.
+func tree(token string, since time.Time, group int, remembered map[int]string) map[int]string {
+	return treeFrom(candidates(since.Add(-time.Second)), token, group, remembered, readEnvironment.Load().(func(int) []string))
+}
+
+func treeFrom(procs []candidate, token string, group int, remembered map[int]string, readEnv func(int) []string) map[int]string {
+	identities := map[int]string{}
+	children := map[int][]int{}
+	for _, proc := range procs {
+		identities[proc.pid] = proc.identity
+		children[proc.parent] = append(children[proc.parent], proc.pid)
+	}
+	doomed := map[int]string{}
+	var mark func(int)
+	mark = func(pid int) {
+		if _, ok := doomed[pid]; ok || pid == os.Getpid() || pid <= 1 || identities[pid] == "" {
 			return
 		}
-		for pid := range doomed {
-			// Re-establish the same live process immediately before signalling.
-			// A PID reused since enumeration must not inherit the old ownership.
-			signalOwned(pid, identities[pid], processIdentity, func(pid int) {
-				if group, err := syscall.Getpgid(pid); err == nil && group == pid {
-					_ = syscall.Kill(-pid, syscall.SIGKILL)
-				}
-				_ = syscall.Kill(pid, syscall.SIGKILL)
-			})
+		doomed[pid] = identities[pid]
+		for _, child := range children[pid] {
+			mark(child)
 		}
+	}
+	for _, proc := range procs {
+		if carriesToken(readEnv(proc.pid), token) ||
+			(group > 0 && proc.group == group) ||
+			(remembered[proc.pid] != "" && remembered[proc.pid] == proc.identity) {
+			mark(proc.pid)
+		}
+	}
+	return doomed
+}
+
+func killTree(snapshot map[int]string) {
+	killTreeWith(snapshot, processIdentity, func(pid int) {
+		if group, err := syscall.Getpgid(pid); err == nil && group == pid {
+			_ = syscall.Kill(-pid, syscall.SIGKILL)
+		}
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+	})
+}
+
+func killTreeWith(snapshot map[int]string, current func(int) string, signal func(int)) {
+	for pid, identity := range snapshot {
+		signalOwned(pid, identity, current, signal)
+	}
+}
+
+// sweep retains live owned roots across rounds after their marked parent dies.
+// Broken ancestry before enumeration and forks during killing remain best-effort.
+func sweep(token string, since time.Time) {
+	remembered := map[int]string{}
+	for range 5 {
+		snapshot := tree(token, since, 0, remembered)
+		if len(snapshot) == 0 {
+			return
+		}
+		for pid, identity := range snapshot {
+			remembered[pid] = identity
+		}
+		killTree(snapshot)
 		time.Sleep(50 * time.Millisecond)
 	}
 }

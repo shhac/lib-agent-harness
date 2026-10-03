@@ -101,20 +101,30 @@ func (p *Process) Stop() {
 		return
 	}
 	p.stopped = true
+	var snapshot map[int]string
 	if p.started && !p.finished {
 		identity := processIdentity(p.cmd.Process.Pid)
 		if p.leaderIdentity == "" || identity == "" || identity == p.leaderIdentity {
+			group := 0
+			// Keep the existing group kill on missing inspection, but only add
+			// group roots when the live leader has the captured birth identity.
+			if p.leaderIdentity != "" && identity == p.leaderIdentity {
+				group = p.cmd.Process.Pid
+			}
+			snapshot = tree(p.token, p.launched, group, nil)
 			_ = syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
 		} else {
 			// Only a positively different birth identity proves PID reuse.
 			// An exited leader or unavailable inspection does not mean its
 			// still-live group disappeared (children may hold output pipes).
+			snapshot = tree(p.token, p.launched, 0, nil)
 			_ = p.cmd.Process.Kill()
 		}
 	}
 	started := p.started
 	p.mu.Unlock()
 	if started {
+		killTree(snapshot)
 		sweep(p.token, p.launched)
 	}
 }
@@ -163,6 +173,7 @@ func (p *Process) reapGroup() {
 	}
 	for range 5 {
 		found := false
+		attempted := false
 		for _, member := range candidates(p.launched.Add(-time.Second)) {
 			if member.group != pid || member.pid == pid {
 				continue
@@ -177,9 +188,24 @@ func (p *Process) reapGroup() {
 					return
 				}
 				if group, err := syscall.Getpgid(child); err == nil && group == pid {
-					_ = syscall.Kill(-pid, syscall.SIGKILL)
+					attempted = true
+					snapshot := tree(p.token, p.launched, pid, nil)
+					// Enumeration can take time: re-establish the group anchor again.
+					signalOwned(child, member.identity, processIdentity, func(child int) {
+						leader := processIdentity(pid)
+						if leader != "" && leader != p.leaderIdentity {
+							return
+						}
+						if pgid, err := syscall.Getpgid(child); err == nil && pgid == pid {
+							_ = syscall.Kill(-pid, syscall.SIGKILL)
+						}
+					})
+					killTree(snapshot)
 				}
 			})
+			if attempted {
+				break // One tree snapshot and group termination attempt per round.
+			}
 		}
 		if !found {
 			return

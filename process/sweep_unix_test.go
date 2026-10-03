@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -326,6 +327,275 @@ func TestCloseReapsForkingGroupMembers(t *testing.T) {
 	for _, proc := range candidates(p.launched.Add(-time.Second)) {
 		if proc.group == cmd.Process.Pid && alive(proc.pid) {
 			t.Fatalf("live group member %d survived Close", proc.pid)
+		}
+	}
+}
+
+// TestHiddenHelper keeps a marked parent in the launch group while its child
+// starts in a detached group. No model or credentialed CLI is involved.
+func TestHiddenHelper(t *testing.T) {
+	if os.Getenv("HARNESS_HIDER") != "1" {
+		return
+	}
+	child := exec.Command(os.Args[0], "-test.run=^TestHelper$", "--", "wait")
+	child.Env = append(os.Environ(), "HARNESS_PROCESS_HELPER=1", "HIDDEN_CHILD=1")
+	if os.Getenv("HARNESS_PLATFORM_CHILD") == "1" {
+		child = exec.Command("/bin/sleep", "60")
+		child.Env = os.Environ()
+	}
+	child.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := child.Start(); err != nil {
+		os.Exit(2)
+	}
+	if err := os.WriteFile(os.Getenv("HARNESS_CHILD_PID"), []byte(strconv.Itoa(child.Process.Pid)), 0600); err != nil {
+		os.Exit(2)
+	}
+	time.Sleep(60 * time.Second)
+	os.Exit(0)
+}
+
+func hiddenLaunch(t *testing.T, ctx context.Context, ending string, platform bool) (*Process, <-chan error, int) {
+	t.Helper()
+	testenv.RequireProcessGroup(t)
+	testenv.RequireProcessStatus(t)
+	path := filepath.Join(t.TempDir(), "child")
+	script := `"$0" -test.run='^TestHiddenHelper$' >/dev/null 2>&1 & while [ ! -s "$1" ]; do sleep 0.01; done; ` + ending
+	cmd, p, err := Command(ctx, "/bin/sh", "-c", script, os.Args[0], path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Env = append(os.Environ(), "HARNESS_HIDER=1", "HARNESS_CHILD_PID="+path)
+	if platform {
+		cmd.Env = append(cmd.Env, "HARNESS_PLATFORM_CHILD=1")
+	}
+	t.Cleanup(p.Close)
+	done := make(chan error, 1)
+	go func() { done <- p.Run() }()
+	var pid int
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		raw, _ := os.ReadFile(path)
+		pid, _ = strconv.Atoi(string(raw))
+		if pid > 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if pid <= 1 {
+		t.Fatal("hidden helper did not start")
+	}
+	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
+	if group, err := syscall.Getpgid(pid); err == nil && group != pid {
+		t.Fatalf("child group %d, want %d", group, pid)
+	}
+	return p, done, pid
+}
+
+func hideChildEnvironments(t *testing.T, hideParent bool) {
+	t.Helper()
+	old := readEnvironment.Load()
+	readEnvironment.Store(func(pid int) []string {
+		env := environment(pid)
+		for _, value := range env {
+			if value == "HIDDEN_CHILD=1" || (hideParent && value == "HARNESS_HIDER=1") {
+				return nil
+			}
+		}
+		return env
+	})
+	t.Cleanup(func() { readEnvironment.Store(old) })
+}
+
+func unmarkedBystanders(t *testing.T) func() {
+	t.Helper()
+	var pids []int
+	for _, detached := range []bool{false, true} {
+		cmd := exec.Command("/bin/sleep", "60")
+		cmd.Env = os.Environ()
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: detached}
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+		pids = append(pids, cmd.Process.Pid)
+	}
+	return func() {
+		for _, pid := range pids {
+			if !alive(pid) {
+				t.Errorf("unmarked bystander %d was killed", pid)
+			}
+		}
+	}
+}
+
+func TestStopReapsHiddenDescendantInDetachedGroup(t *testing.T) {
+	hideChildEnvironments(t, false)
+	for _, action := range []string{"Stop", "Close", "Cancel"} {
+		t.Run(action, func(t *testing.T) {
+			check := unmarkedBystanders(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			p, done, pid := hiddenLaunch(t, ctx, "sleep 60", false)
+			switch action {
+			case "Stop":
+				p.Stop()
+			case "Close":
+				p.Close()
+			case "Cancel":
+				cancel()
+			}
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("Run did not settle")
+			}
+			waitGone(t, pid)
+			check()
+			p.Close()
+			check()
+		})
+	}
+}
+
+func TestCloseReapsHiddenDescendantAfterLeaderExit(t *testing.T) {
+	// Hide the group member too, so only group discovery reaches this tree.
+	hideChildEnvironments(t, true)
+	check := unmarkedBystanders(t)
+	p, done, pid := hiddenLaunch(t, context.Background(), "exit 0", false)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if !alive(pid) {
+		t.Fatal("child exited before Close")
+	}
+	p.Close()
+	waitGone(t, pid)
+	check()
+}
+
+func TestRunReapsHiddenDescendantWhenLeaderKilled(t *testing.T) {
+	hideChildEnvironments(t, false)
+	check := unmarkedBystanders(t)
+	p, done, pid := hiddenLaunch(t, context.Background(), "kill -KILL $$", false)
+	if err := <-done; err == nil {
+		t.Fatal("leader was not killed")
+	}
+	waitGone(t, pid)
+	check()
+	p.Close()
+	check()
+}
+
+func TestStopReapsHiddenPlatformDescendant(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS platform environment check")
+	}
+	check := unmarkedBystanders(t)
+	p, done, pid := hiddenLaunch(t, context.Background(), "sleep 60", true)
+	if len(environment(pid)) != 0 {
+		t.Skip("OS exposes platform binary environment")
+	}
+	p.Stop()
+	<-done
+	waitGone(t, pid)
+	p.Close()
+	check()
+}
+
+func TestKillTreeRefusesUnknownOrReusedIdentity(t *testing.T) {
+	snapshot := map[int]string{10: "", 11: "old", 12: "same"}
+	var signalled []int
+	killTreeWith(snapshot, func(pid int) string {
+		if pid == 11 {
+			return "new"
+		}
+		return "same"
+	}, func(pid int) { signalled = append(signalled, pid) })
+	if len(signalled) != 1 || signalled[0] != 12 {
+		t.Fatalf("signalled %v", signalled)
+	}
+}
+
+func TestTreeRetainsOnlySameBirthRoots(t *testing.T) {
+	testenv.RequireProcessGroup(t)
+	testenv.RequireProcessStatus(t)
+	cmd := exec.Command("/bin/sleep", "60")
+	cmd.Env = os.Environ()
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	pid := cmd.Process.Pid
+	birth := processIdentity(pid)
+	if birth == "" {
+		t.Fatal("no birth identity")
+	}
+	if got := tree(newLaunchToken(), time.Now(), 0, map[int]string{pid: birth}); got[pid] != birth {
+		t.Fatalf("lost remembered hidden root: %v", got)
+	}
+	for _, identity := range []string{"", birth + "-reused"} {
+		if got := tree(newLaunchToken(), time.Now(), 0, map[int]string{pid: identity}); got[pid] != "" {
+			t.Fatalf("admitted unknown or reused root: %v", got)
+		}
+	}
+}
+
+func TestTreeSnapshotsHiddenDetachedDescendants(t *testing.T) {
+	procs := []candidate{
+		{pid: 100, group: 100, identity: "leader"},
+		{pid: 101, parent: 100, group: 100, identity: "marked"},
+		{pid: 102, parent: 101, group: 102, identity: "hidden"},
+		{pid: 103, parent: 102, group: 103, identity: "hidden-child"},
+		{pid: 104, parent: os.Getpid(), group: 104, identity: "bystander"},
+		{pid: 105, parent: os.Getpid(), group: 0, identity: "bystander-child"},
+	}
+	readEnv := func(pid int) []string {
+		if pid == 101 {
+			return []string{launchVariable + "=token"}
+		}
+		return nil
+	}
+	for _, group := range []int{0, 100} {
+		snapshot := treeFrom(procs, "token", group, nil, readEnv)
+		for _, pid := range []int{101, 102, 103} {
+			if snapshot[pid] == "" {
+				t.Errorf("group %d lost descendant %d", group, pid)
+			}
+		}
+		for _, pid := range []int{104, 105} {
+			if snapshot[pid] != "" {
+				t.Errorf("selected bystander %d", pid)
+			}
+		}
+		var signalled []int
+		killTreeWith(snapshot, func(pid int) string {
+			for _, proc := range procs {
+				if proc.pid == pid {
+					return proc.identity
+				}
+			}
+			return ""
+		}, func(pid int) { signalled = append(signalled, pid) })
+		if len(signalled) != len(snapshot) {
+			t.Fatal("snapshot was not signalled")
+		}
+	}
+	// Once the leader exits, a hidden group member must still root its detached
+	// descendants. Without group roots, the marker sweep cannot see any of them.
+	hidden := func(int) []string { return nil }
+	if got := treeFrom(procs[1:], "token", 0, nil, hidden); len(got) != 0 {
+		t.Fatalf("marker sweep selected hidden processes: %v", got)
+	}
+	got := treeFrom(procs[1:], "token", 100, nil, hidden)
+	if len(got) != 3 || got[101] != "marked" || got[102] != "hidden" || got[103] != "hidden-child" {
+		t.Fatalf("group root lost hidden descendants or selected bystanders: %v", got)
+	}
+	// After the marked ancestor disappears, a remembered hidden member remains
+	// a root for children forked later; reuse must revoke that ownership.
+	remaining := procs[2:]
+	for _, identity := range []string{"hidden", "reused", ""} {
+		snapshot := treeFrom(remaining, "token", 0, map[int]string{102: identity}, readEnv)
+		if (snapshot[103] != "") != (identity == "hidden") {
+			t.Fatalf("remembered %q selected %v", identity, snapshot)
 		}
 	}
 }

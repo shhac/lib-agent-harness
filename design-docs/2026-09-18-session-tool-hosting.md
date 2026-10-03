@@ -149,9 +149,13 @@ Cancellation joins ErrUnreclaimed with the context error and preserves the
 marker. A crash releases the lease but leaves the marker, so recovery repeats
 the same check. A record without identity remains ErrUncertainLaunch.
 Repeated process-package group sweeps retain birth-identity validation and hold
-the process mutex for up to about 250ms (five rounds, 50ms apart); no
-unidentified group is signalled by reclamation. Detached hidden-environment
-descendants remain a separate best-effort sweep limitation (LAH-16).
+the process mutex for up to about 250ms (five rounds, 50ms apart), plus
+enumeration time; no unidentified group is signalled by reclamation. Stop and
+Close snapshot marked processes, validated group members and their descendants before group termination, then signals only re-established birth
+identities. Detached hidden-environment descendants are covered while that
+ancestry is intact. Ancestry broken before enumeration and hidden children
+forked during termination remain best-effort; failed enumeration preserves the
+existing group kill. No ownership records or reclamation semantics change.
 
 Tool execution stops on its own in this situation, since every call has to reach
 the caller's listener to do anything. Reclamation is about the CLI process

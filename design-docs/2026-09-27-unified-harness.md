@@ -230,7 +230,14 @@ classifies any library failure the same way, whichever mode produced it.
   `browser_use` and a Codex loopback mode remain unsupported.
 - **Increment 10:** shipped in v0.11.0. macOS 26 hides the environment of its
   own platform binaries, so the sweep also takes the descendants of marked
-  processes; an orphaned platform binary still escapes.
+  processes. LAH-16 adds the following shutdown protection: before each group
+  kill, snapshot marked roots, validated
+  group members and their descendants, then recheck birth identities before
+  signalling the snapshot. Retain still-live owned roots across sweep rounds.
+  Hidden platform descendants are covered while ancestry is intact; broken
+  ancestry before enumeration and hidden forks during killing still escape.
+  Enumeration failure preserves the group kill; snapshots are not durable.
+  No public API or harness.Support claims change.
 - **Increment 9:** shipped in v0.12.0 on lib-agent-keyring v0.2.0, whose
   `HostStatus` reads `SecKeychainGetStatus` through purego (CGO-free, never
   prompts; proved on a throwaway keychain). Only Claude on macOS is checked:

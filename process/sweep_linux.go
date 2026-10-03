@@ -8,10 +8,10 @@ import (
 	"time"
 )
 
-// candidates are the processes whose environment this user can read. Linux
+// candidates are the processes whose stat information this user can read. Linux
 // reports start times in clock ticks since boot, so since is not used: the
 // token alone decides.
-// Every environment is readable to its owner, so parents are not needed.
+// Parent links also cover descendants whose environment cannot be read.
 func candidates(time.Time) []candidate {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {

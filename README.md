@@ -1400,10 +1400,21 @@ every launch carries a random token in `AGENT_HARNESS_LAUNCH`, which its
 descendants inherit, and stopping or closing the launch kills every process of
 this user that carries it, and those processes' descendants. Close does this
 even after the CLI itself exited, so a native run's leftovers go with it, and a
-session's go when it closes. It is a best-effort sweep, not a boundary: a
-process that clears its environment escapes, and on macOS, which hides the
-environment of its own platform binaries, so does one of those whose marked
-parent has already exited. A shared helper that a harness starts on first use
+session's go when it closes. Before killing a group, Stop and Close snapshot
+marked processes, validated launch-group members, and their descendants, then
+kill the snapshot after rechecking each process's birth identity. This catches
+detached macOS platform binaries whose environment is hidden while their parent
+is still discoverable. Sweep rounds retain still-live, birth-checked roots.
+
+This remains best-effort, not a boundary: a process that clears its environment
+and leaves the group can escape, as can a hidden-environment process whose
+ancestry to a marked process or group member broke before Stop or Close (for
+example, its parent exited on its own). A hidden child forked between the
+snapshot and its parent's kill can also escape. Linux needs readable /proc;
+other Unix systems without process enumeration get only the group kill. Failed
+enumeration does not prevent that kill. A snapshot is only in memory; a host
+crash adds no durable containment guarantee. Concurrent shutdowns may repeat
+identity-checked signals. A shared helper that a harness starts on first use
 would be stopped too, and started again by the next launch.
 
 Usage preserves provider-specific accounting scopes. Missing or interrupted
