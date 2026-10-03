@@ -13,8 +13,8 @@ var ErrUnsupported = errors.New("harness operation unsupported")
 // ErrClosed identifies a workspace whose admission is closed.
 var ErrClosed = errors.New("harness session closed")
 
-// ErrCommandFailed identifies an unsettled workspace operation or a command failure. Its
-// legacy turn-failure wording is retained for the staged extraction.
+// ErrCommandFailed identifies an unsettled workspace operation or a command failure.
+// Its legacy turn-failure wording is retained for compatibility.
 var ErrCommandFailed = errors.New("harness turn failed")
 
 const (
@@ -22,19 +22,19 @@ const (
 	RefusedWorkDir = "work_dir_unavailable"
 	// RefusedWorkbenchMountCheck: workspace mount identity could not be checked.
 	RefusedWorkbenchMountCheck = "workbench_mount_check_unavailable"
-	// RefusedNotOffered: the platform does not offer a requested command operation (stage B).
+	// RefusedNotOffered: the platform does not offer a requested command operation.
 	RefusedNotOffered = "not_offered"
-	// CapabilitySandboxToolMissing: the required OS sandbox tool is absent (stage B).
+	// CapabilitySandboxToolMissing: the required OS sandbox tool is absent.
 	CapabilitySandboxToolMissing = "sandbox_tool_missing"
-	// CapabilitySandboxToolOutdated: the installed sandbox tool is too old (stage B).
+	// CapabilitySandboxToolOutdated: the installed sandbox tool is too old.
 	CapabilitySandboxToolOutdated = "sandbox_tool_outdated"
-	// CapabilitySandboxNamespacesUnavailable: required namespaces are unavailable (stage B).
+	// CapabilitySandboxNamespacesUnavailable: required namespaces are unavailable.
 	CapabilitySandboxNamespacesUnavailable = "sandbox_namespaces_unavailable"
-	// CapabilitySandboxUnavailable: the OS sandbox proof could not run (stage B).
+	// CapabilitySandboxUnavailable: the OS sandbox proof could not run.
 	CapabilitySandboxUnavailable = "sandbox_unavailable"
-	// CapabilitySandboxNotEnforced: a canary escaped the requested boundary (stage B).
+	// CapabilitySandboxNotEnforced: a canary escaped the requested boundary.
 	CapabilitySandboxNotEnforced = "sandbox_not_enforced"
-	// CapabilityProbeTimeout: the disposable proof timed out (stage B).
+	// CapabilityProbeTimeout: the disposable proof timed out.
 	CapabilityProbeTimeout = "probe_timed_out"
 )
 
@@ -58,7 +58,6 @@ func refusal(operation, code, reason string) *RefusalError {
 }
 
 // ProofError reports a failed pre-launch OS sandbox proof, without runtime output.
-// Its vocabulary is provided now for the command extraction in stage B.
 type ProofError struct {
 	Code  string
 	Tools []string
@@ -95,7 +94,7 @@ func (e *ProofError) Error() string {
 }
 func (e *ProofError) Unwrap() error { return ErrUnsupported }
 
-// CommandError reports unsettled workspace I/O or, in stage B, a command failure.
+// CommandError reports unsettled workspace I/O or a command failure.
 type CommandError struct{ Code string }
 
 func (e *CommandError) Error() string {
@@ -107,26 +106,54 @@ func (e *CommandError) HarnessFacts() harness.Facts {
 }
 
 const (
-	// CommandStartFailed: command launch failed (stage B).
+	// CommandStartFailed: command launch failed.
 	CommandStartFailed = "command_start_failed"
-	// CommandOutcomeUnknown: command effects could not be established (stage B).
+	// CommandOutcomeUnknown: command effects could not be established.
 	CommandOutcomeUnknown = "command_outcome_unknown"
-	// CommandProcessLimit: the command admission limit was reached (stage B).
+	// CommandProcessLimit: the command admission limit was reached.
 	CommandProcessLimit = "command_process_limit"
-	// CommandCleanupUnknown: command-tree cleanup could not be confirmed (stage B).
+	// CommandCleanupUnknown: command-tree cleanup could not be confirmed.
 	CommandCleanupUnknown = "command_cleanup_unknown"
-	// CommandSandboxClosed: command admission is closed (stage B).
+	// CommandSandboxClosed: command admission is closed.
 	CommandSandboxClosed = "command_sandbox_closed"
 )
 
-// RefusedRuntimeHome: command recovery storage is unusable (stage B).
+// RefusedRuntimeHome: command recovery storage is unusable.
 const RefusedRuntimeHome = "runtime_home_unusable"
 
-// RefusedSandboxRead: the command read set is invalid (stage B).
+// RefusedSandboxRead: the command read set is invalid.
 const RefusedSandboxRead = "sandbox_read_path_invalid"
 
-// RefusedLimit: a command option exceeds its allowed bounds (stage B).
+// RefusedLimit: a command option exceeds its allowed bounds.
 const RefusedLimit = "limit_exceeded"
 
-// RefusedConflict: command options conflict (stage B).
+// RefusedConflict: command options conflict.
 const RefusedConflict = "conflicting_options"
+
+// ErrStateLocked identifies recovery state held by another live owner.
+var ErrStateLocked = errors.New("another process holds this session's assignment lease")
+
+// StateLocked: another owner holds the recovery directory lock.
+const StateLocked = "session_locked"
+
+// StateUnusable: recovery storage or ownership could not be established.
+const StateUnusable = "state_unusable"
+
+// StateError preserves uncertain recovery ownership without exposing paths.
+type StateError struct{ Code string }
+
+func (e *StateError) Error() string {
+	if e.Code == StateLocked {
+		return string(harness.OpenAICompatible) + ": the conversation is open in another session"
+	}
+	return string(harness.OpenAICompatible) + ": the session's runtime home cannot be used"
+}
+func (e *StateError) Unwrap() error {
+	if e.Code == StateLocked {
+		return ErrStateLocked
+	}
+	return nil
+}
+func (e *StateError) HarnessFacts() harness.Facts {
+	return harness.Facts{Engine: harness.OpenAICompatible, Operation: harness.Session, Family: harness.FailurePreflight, Code: e.Code}
+}

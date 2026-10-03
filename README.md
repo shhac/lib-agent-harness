@@ -59,15 +59,35 @@ ignored, and no option ever widens what an agent may do.
 | --- | --- |
 | `completion` | The model returns text and proposed application tool calls. Native tools are proven absent before inference; the application authorizes and executes proposals. |
 | `native` | One native agent invocation, optionally resuming a session: an inline JSON-schema report, tool activity, a readable transcript, and usage. |
-| `session` | Persistent bidirectional sessions with turns, streaming events, interruption, resumption, capability-aware steering, and restricted or sandboxed tool hosting; standalone command sandboxes without a model session. |
+| `session` | Persistent bidirectional sessions with turns, streaming events, interruption, resumption, capability-aware steering, and restricted or sandboxed tool hosting. |
 | `catalog` | The models and reasoning efforts an engine offers, without inference. |
 | `account` | Login, plan, subscription quota windows and credits, without inference. |
+| `sandbox` | Confined workspace file access and proved standalone OS command sandboxes. |
 | `process` | Shared subprocess-tree containment, including Windows suspended-start job assignment. |
 
 These are explicit execution modes. A native agent session must not substitute
 for constrained completion when the application relies on native tools being
 unavailable. Applications own prompts, orchestration, scheduling, tool
 permissions, budgets, durable state, and retry decisions.
+
+## Package structure
+
+| Package | Owns |
+| --- | --- |
+| `harness` (module root) | Provider and engine configuration, capability vocabulary, usage, cost and typed failure facts shared by every mode. |
+| `completion` | Constrained text and proposed application tool calls, with native-tool removal proved before credentialed inference. |
+| `catalog` | Model and reasoning-effort discovery without inference. |
+| `account` | Native login, plan, quota and credit observations without inference. |
+| `native` | One native coding invocation, report, transcript and activity. |
+| `session` | Persistent turns, transport, hosted-tool admission, transcripts and recovery; native CLI sandbox configuration and probes. |
+| `sandbox` | Confined workspace I/O, shared path and read rules, Seatbelt/bubblewrap profiles, canaries, proofs, command verification cache, runners, supervisors and standalone command recovery. It imports no session code. |
+| `process` | Subprocess-tree containment and live identity, shared by native engines and OS command sandboxes. |
+| `internal/*` | Shared provider parsers, HTTP and native CLI mechanisms, login storage, restricted-runtime verification, skills, handle checks (`wsfile`), text bounds and schemas. `sandboxprobe` shares pure network witness helpers; `sandboxbridge` connects internal normalization, proof and state-lock adapters; `sandboxhook` and `testenv` support in-module tests. |
+
+The sandbox and native CLI verification caches are separate and process-local.
+macOS reuses matching command evidence; Linux runs the complete command proof
+for every open, launch and resume. Package placement adds no capability claim.
+See [the sandbox boundary](design-docs/2026-10-03-sandbox-package.md).
 
 ## Constrained completion
 
@@ -350,9 +370,10 @@ s, opened, err := session.Open(ctx, session.Options{
 ### Workbench
 
 Workspace file access opens through `sandbox.OpenWorkspace(sandbox.Config)`;
-session hosts its tools and preserves the existing workbench API and error types. The sandbox
-API is provisional until the command extraction completes; command execution
-still uses `session.OpenCommandSandbox`. See the [package-boundary design](design-docs/2026-10-03-sandbox-package.md).
+session hosts its tools and preserves the existing workbench API and error types.
+Standalone command execution uses `sandbox.Open`; `session.OpenCommandSandbox`
+is a deprecated compatibility wrapper for v0.23.0.
+See the [package-boundary design](design-docs/2026-10-03-sandbox-package.md).
 
 Set `Options.Workbench = &session.Workbench{}` for read-only workspace tools
 on an OpenAI-compatible session, on Linux, macOS or Windows. `WorkDir` must
@@ -466,7 +487,7 @@ and request its own server in its private namespace.
 
 ### Command sandbox
 
-`session.OpenCommandSandbox` opens the same proved command boundary without a
+`sandbox.Open` opens the same proved command boundary without a
 model session, provider credentials, or inference. `RuntimeHome` is required:
 it must be an existing private directory outside `WorkDir`, holding recovery
 markers and scratch. `Write`, `Read`, `Env`, `Timeout`, `Background` and
@@ -475,17 +496,17 @@ named in Env grants no access. The sandbox never inherits the parent's full
 environment or widens filesystem permissions.
 
 ```go
-sandbox, err := session.OpenCommandSandbox(ctx, session.CommandSandboxOptions{
+box, err := sandbox.Open(ctx, sandbox.Options{
     WorkDir: workspace, RuntimeHome: privateRuntimeHome,
     Write: true, Loopback: true,
     Timeout: 2 * time.Minute,
 })
 if err != nil { return err }
-defer sandbox.Close() // check its error when cleanup certainty matters
+defer box.Close() // check its error when cleanup certainty matters
 
-result, err := sandbox.Run(ctx, session.CommandRequest{Command: "npm test"})
+result, err := box.Run(ctx, sandbox.CommandRequest{Command: "npm test"})
 // result.ExitCode, Stdout, Stderr, TimedOut, Truncated
-server, err := sandbox.Start(ctx, session.CommandRequest{Command: "npm run dev"})
+server, err := box.Start(ctx, sandbox.CommandRequest{Command: "npm run dev"})
 if err != nil { return err }
 defer server.Stop()
 // Start reports process launch; the caller checks server readiness.
@@ -517,7 +538,7 @@ syntax and are not supported. A suite can start a server and request it within
 one command.
 The host's loopback listener stays unreachable in both configurations. No
 seccomp layer blocks the private loopback. Start with Loopback returns a typed
-`UnsupportedError` for operation `start`: a server in bubblewrap's private
+`sandbox.RefusalError` for operation `start`: a server in bubblewrap's private
 network namespace cannot be reached from the owner's browser. Start without
 Loopback is available for other long-running work. Workbench.Commands still
 refuses Loopback on Linux. Windows command sandboxes remain unsupported.
@@ -525,11 +546,17 @@ refuses Loopback on Linux. Windows command sandboxes remain unsupported.
 
 Close stops admission, cancels admitted work, waits, reaps background children
 and removes scratch. Later Run/Start calls return `CommandSandboxClosed`.
-Typed command failures include `CommandStartFailed`, `CommandOutcomeUnknown`,
+Typed `sandbox.CommandError` failures include `CommandStartFailed`, `CommandOutcomeUnknown`,
 `CommandProcessLimit` (64 live commands) and `CommandCleanupUnknown`. A failed
 cleanup preserves recovery state. Standalone state lives under
 `RuntimeHome/commands/<random id>` with a lifetime lock; a subsequent Open
 sweeps unlocked stale entries and leaves live or uncertain entries alone.
+Pre-launch refusals and failed proofs return `sandbox.RefusalError` and
+`sandbox.ProofError`. `sandbox.StateError` reports unusable or locked recovery state. The deprecated
+`session.OpenCommandSandbox` wrapper and its options, result and handle types
+remain for one release; it translates every error to the v0.22 session vocabulary.
+Existing consumers, including crew-assistant, need no change.
+
 See [the command sandbox design](design-docs/2026-10-03-command-sandbox.md).
 
 Linux `Commands.Read` refuses paths overlapping `/run` (including resolved

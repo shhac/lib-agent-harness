@@ -1,8 +1,6 @@
 package sandbox
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -32,14 +30,4 @@ func writeFile(t *testing.T, name, content string) {
 	if err := os.WriteFile(name, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-}
-func newID() string {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		panic("cryptographic random source unavailable")
-	}
-	b[6] = (b[6] & 15) | 64
-	b[8] = (b[8] & 63) | 128
-	h := hex.EncodeToString(b[:])
-	return h[:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:]
 }

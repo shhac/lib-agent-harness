@@ -119,7 +119,8 @@ func TestWorkbenchRecoveryAppendFailureClosesPreparedResources(t *testing.T) {
 			var reported error
 			a := &apiSession{store: store, workspace: ws, records: records, resultLimit: 4096, failed: func(err error) { reported = err }}
 			closes := 0
-			ws.commands = &commandSandbox{close: func() error {
+			ws.commands = &sandbox.Runner{}
+			*sandboxhook.RunnerAccess(ws.commands).Close = func() error {
 				closes++
 				if store.closed {
 					t.Error("transcript closed before commands")
@@ -128,7 +129,7 @@ func TestWorkbenchRecoveryAppendFailureClosesPreparedResources(t *testing.T) {
 					t.Error("workspace closed before commands", err)
 				}
 				return nil
-			}}
+			}
 			if err := store.file.Close(); err != nil {
 				t.Fatal(err)
 			}

@@ -11,7 +11,6 @@ package session
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -21,98 +20,23 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/sandboxprobe"
 )
 
 const loopbackCanaryID = "toolu_harness_loopback_canary"
 
-// Canary outcomes for the loopback proof, one per line.
-const (
-	loopbackReached = "loopback"
-	loopbackBound   = "bound"
-	loopbackOutside = "outside"
-)
+const loopbackReached = sandboxprobe.LoopbackReached
+const loopbackBound = sandboxprobe.LoopbackBound
+const loopbackOutside = sandboxprobe.LoopbackOutside
 
-// loopbackWitnessHost is where the proof's off-machine address comes from: the
-// Claude API, which the session must reach anyway, so the proof sends nothing
-// to a third party.
-const loopbackWitnessHost = "api.anthropic.com"
-
-// loopbackCanary connects to the probe's loopback listener, binds and reaches
-// its own loopback listener, and tries an off-machine address the probe has
-// just reached itself, which must be refused. It is a flat list of plain
-// commands: in dontAsk mode Claude Code 2.1.283 auto-allows a sandboxed
-// command only in that shape, and refuses one that defines a function or
-// opens a subshell.
-func loopbackCanary(loopPort int, witness string, witnessPort, bindPort int) string {
-	return fmt.Sprintf(`command -v nc >/dev/null 2>&1 || echo %s
-nc -z -w 3 127.0.0.1 %d >/dev/null 2>&1 && echo %s
-nc -z -w 3 %s %d >/dev/null 2>&1 && echo %s
-nc -l 127.0.0.1 %d >/dev/null 2>&1 &
-sleep 1
-nc -z -w 3 127.0.0.1 %d >/dev/null 2>&1 && echo %s
-echo %s`, canaryNoClient, loopPort, loopbackReached, witness, witnessPort, loopbackOutside, bindPort, bindPort, loopbackBound, canaryRan)
-}
-
-// offMachineWitness is an IPv4 address off this machine that the probe itself
-// reaches on port 443. A refusal inside the sandbox only means something when
-// the same connection succeeds outside it; without such an address nothing is
-// proved, and the session is refused.
+func loopbackCanary(a int, b string, c, d int) string { return sandboxprobe.LoopbackCanary(a, b, c, d) }
 func offMachineWitness(ctx context.Context) (string, bool) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, loopbackWitnessHost)
-	if err != nil {
-		return "", false
-	}
-	var dialer net.Dialer
-	for _, addr := range addrs {
-		if addr.IP.To4() == nil || addr.IP.IsLoopback() || addr.IP.IsPrivate() {
-			continue
-		}
-		conn, dialErr := dialer.DialContext(ctx, "tcp", net.JoinHostPort(addr.IP.String(), "443"))
-		if dialErr != nil {
-			continue
-		}
-		conn.Close()
-		return addr.IP.String(), true
-	}
-	return "", false
+	return sandboxprobe.OffMachineWitness(ctx)
 }
-
-// countingListener accepts and closes connections, recording that one came.
-func countingListener(address string) (net.Listener, *sync.WaitGroup, func() bool, error) {
-	listener, err := net.Listen("tcp", address)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	var mu sync.Mutex
-	reached := false
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for {
-			conn, acceptErr := listener.Accept()
-			if acceptErr != nil {
-				return
-			}
-			conn.Close()
-			mu.Lock()
-			reached = true
-			mu.Unlock()
-		}
-	}()
-	return listener, &wg, func() bool { mu.Lock(); defer mu.Unlock(); return reached }, nil
+func countingListener(a string) (net.Listener, *sync.WaitGroup, func() bool, error) {
+	return sandboxprobe.CountingListener(a)
 }
-
-func freeLoopbackPort() (int, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, err
-	}
-	defer listener.Close()
-	return listener.Addr().(*net.TCPAddr).Port, nil
-}
+func freeLoopbackPort() (int, error) { return sandboxprobe.FreeLoopbackPort() }
 
 // probeClaudeLoopback runs the canary through the session's own arguments in
 // a disposable home with a dummy credential.

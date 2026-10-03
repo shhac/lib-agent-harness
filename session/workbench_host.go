@@ -11,7 +11,7 @@ import (
 type workbenchHost struct {
 	stuck    atomic.Pointer[TurnError]
 	files    *sandbox.Workspace
-	commands *commandSandbox
+	commands *sandbox.Runner
 	budget   int
 	id       string
 	failed   func(error)

@@ -1,6 +1,6 @@
 # Standalone command sandbox
 
-The session package exposes OpenCommandSandbox without a model session. Its
+The sandbox package exposes Open without a model session. Its
 options are WorkDir, RuntimeHome, Write, Read, Env, Loopback, Timeout and
 Background. Run takes CommandRequest{Command, Dir, Timeout} and returns a
 CommandResult{ExitCode, Stdout, Stderr, TimedOut, Truncated}. Start takes the
@@ -9,16 +9,16 @@ Result. Start reports process launch rather than application readiness.
 
 ## One implementation and proof
 
-Both standalone execution and Workbench.Commands use the internal
-commandSandbox, configured by normalized Options and the proved layout,
-environment, token, binary identity and output budget. Its execute function
-returns a typed result; run maps it back to the hosted tool's byte-compatible
+Both standalone execution and Workbench.Commands use sandbox.Runner,
+configured by normalized sandbox.Options and sandbox.Proof, the proved layout,
+environment, token, binary identity and output budget. Its Execute method
+returns a typed result; session maps it back to the hosted tool's byte-compatible
 JSON and existing error contract. There are no model prompts, credentials or
 API calls in opening or running standalone commands.
 
-Open uses normalizeRuntimeHome, normalizeWorkbench, proveWorkbench and
-openWorkspace. No command state exists until proof succeeds. Refusals are the
-same UnsupportedError and CapabilityError as the workbench. A failed or timed
+Open normalizes options, proves the sandbox and uses OpenWorkspace before preparing its runner. No command state exists until proof succeeds. Refusals are the
+sandbox.RefusalError and sandbox.ProofError; the workbench translates them
+to its existing UnsupportedError and CapabilityError. A failed or timed
 out proof is never recorded. macOS reuses evidence for matching binary identity
 and launch configuration. Linux re-runs its full trial and canary on every
 Open, launch and resume: recorded keys do not capture possible sysctl or mount
@@ -38,8 +38,8 @@ The outside client must read the disposable listener's random nonce, so a
 different host listener cannot satisfy the proof. That observation contributes
 the required inbound line. The probe cancels and waits for that client to
 publish its result before judging the evidence. Off-machine
-access must still fail. The Seatbelt proof version is bumped, so prior evidence
-cannot stand in for the inbound check. Started servers are reachable from the
+access must still fail. v0.22.0 introduced seatbelt-workbench-v4, so earlier evidence
+cannot stand in for the inbound check; v0.23.0 retains that key. Started servers are reachable from the
 host; without Loopback, both serving and connecting are refused.
 
 Linux always creates a private network namespace with an active lo. A command
@@ -47,11 +47,11 @@ always has its own private localhost and never the host's. Loopback on Run
 requires an additional own-loopback bind/connect canary. The existing host
 listener and off-machine checks remain. The own-loopback canary requires
 OpenBSD nc (for example the netcat-openbsd package); traditional and BusyBox
-nc use incompatible listener syntax and are not supported. The bubblewrap proof version is
-bumped and Loopback joins the key. No seccomp layer is added: the owner accepted
+nc use incompatible listener syntax and are not supported. v0.22.0 introduced bwrap-workbench-v2 with Loopback in the key;
+v0.23.0 retains it. No seccomp layer is added: the owner accepted
 private lo even without Loopback, since it grants nothing outside the sandbox.
 
-Start with Loopback on Linux refuses before launch with UnsupportedError,
+Start with Loopback on Linux refuses before launch with sandbox.RefusalError,
 Operation "start", Code RefusedNotOffered and Unsupported availability. Its
 reason explains host unreachability and recommends a server/client in one Run.
 No forwarder, shared network, pasta, slirp or session-long namespace is added.
@@ -64,7 +64,7 @@ pre-launch command-sandbox refusal.
 
 RuntimeHome is mandatory, private and outside the workspace. Sessions keep
 RuntimeHome/sessions/<id>/ without migration. Standalone sandboxes use
-RuntimeHome/commands/<random id>/, with an exclusive lifetime flock. A short
+RuntimeHome/commands/sandbox-<random suffix>/, with an exclusive lifetime flock. A short
 parent-directory lock serializes sweeping and creation, so a newly created
 entry cannot be swept before its lifetime lock is acquired. Independent live
 entries remain locked and untouched. The parent lock wait honors context
@@ -118,6 +118,9 @@ detector, invalid options before state creation, real own-localhost suites,
 Linux host isolation, macOS inbound reachability, timeout, cancellation,
 bounded output, recovery locks and Close reaping. Platform refusal guards
 remain enabled locally and forbidden in CI. CI runs macOS, Windows and Linux
-with distribution bubblewrap and 0.8.0. This additive API is planned for
-v0.22.0, following the browser bridge home API in v0.21.0; consumer adoption
-is separate and requires no breaking migration.
+with distribution bubblewrap and 0.8.0. The standalone API shipped in v0.22.0. v0.23.0 moves it to sandbox.Open,
+retaining session.OpenCommandSandbox as a Deprecated wrapper for one release;
+consumer adoption is separate and requires no breaking migration.
+
+See [the final sandbox package boundary](2026-10-03-sandbox-package.md) for
+ownership, the split verification cache, error translation and compatibility.

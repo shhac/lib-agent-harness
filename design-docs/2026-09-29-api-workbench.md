@@ -1880,3 +1880,12 @@ shapes, and the tests use synthetic responses in those shapes:
 
 On macOS, a detached protected binary can hide its marker without erasing it.
 Such detached jobs are outside the supervisor group and may evade recovery.
+
+## Sandbox package boundary
+
+The final [sandbox package design](2026-10-03-sandbox-package.md) describes
+workspace I/O and OS command profiles, proofs, runners and recovery ownership.
+Session retains the hosted tool contract and translates every sandbox error;
+its native CLI sandbox and verification cache remain separate. Standalone
+command callers use sandbox.Open in v0.23.0; the prior session opener remains
+Deprecated for one release.

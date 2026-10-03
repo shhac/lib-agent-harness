@@ -3,7 +3,6 @@ package session
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -11,6 +10,7 @@ import (
 
 	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/nativecli"
+	"github.com/shhac/lib-agent-harness/internal/sandboxbridge"
 )
 
 // Sandbox opts an ordinary native session — its own tools intact — into the
@@ -91,28 +91,7 @@ func sandboxClaudeTools(write, web bool) []string {
 	return tools
 }
 
-// sandboxReadDirs resolves each extra readable directory to the path the
-// sandbox will match, and refuses any that would reopen the home directory.
-func sandboxReadDirs(dirs []string) ([]string, string) {
-	home, _ := os.UserHomeDir()
-	if resolved, err := filepath.EvalSymlinks(home); err == nil {
-		home = resolved
-	}
-	out := make([]string, 0, len(dirs))
-	for _, dir := range dirs {
-		if !filepath.IsAbs(dir) || filepath.Clean(dir) != dir {
-			return nil, fmt.Sprintf("sandbox read path %q must be a clean absolute path", dir)
-		}
-		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
-			dir = resolved
-		}
-		if rel, err := filepath.Rel(dir, home); home != "" && err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return nil, fmt.Sprintf("sandbox read path %q would reopen the home directory", dir)
-		}
-		out = append(out, dir)
-	}
-	return out, ""
-}
+func sandboxReadDirs(dirs []string) ([]string, string) { return sandboxbridge.ReadDirs(dirs) }
 
 // normalizeSandbox freezes the caller's sandbox and rejects every setting a
 // sandbox would otherwise have to silently override. o.Policy is the caller's,

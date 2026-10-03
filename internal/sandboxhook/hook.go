@@ -3,6 +3,7 @@
 package sandboxhook
 
 import (
+	"context"
 	"os"
 	"sync/atomic"
 	"time"
@@ -25,3 +26,19 @@ type Hooks struct {
 
 var Access func(any) Hooks
 var MountID *func(*os.File) (wsfile.Mount, error)
+
+// RunnerHooks is available only to in-module tests. Configure before use.
+type RunnerHooks struct {
+	Close      *func() error
+	SetExecute func(any)
+}
+
+var RunnerAccess func(any) RunnerHooks
+var CanaryRuns func() uint64
+var ResetCommandCache func()
+var CommandCacheSize func() int
+var CommandTrial func(context.Context, string, string, string) (string, string, error)
+
+var NewCommandSandbox func(any, any, string, bool) any
+var RecordCommandProof func(string)
+var HasCommandProof func(string) bool

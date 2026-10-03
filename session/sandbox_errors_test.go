@@ -32,6 +32,9 @@ func TestSandboxErrorTranslation(t *testing.T) {
 	for _, code := range []string{sandbox.WorkspaceIOStuck, sandbox.CommandStartFailed, sandbox.CommandOutcomeUnknown, sandbox.CommandProcessLimit, sandbox.CommandCleanupUnknown, sandbox.CommandSandboxClosed} {
 		pairs = append(pairs, [2]error{&sandbox.CommandError{Code: code}, &TurnError{Engine: harness.OpenAICompatible, Code: code}})
 	}
+	for _, code := range []string{sandbox.StateUnusable, sandbox.StateLocked} {
+		pairs = append(pairs, [2]error{&sandbox.StateError{Code: code}, stateError(code)})
+	}
 	for _, pair := range pairs {
 		input, want := pair[0], pair[1]
 		got := fromSandbox(input, o)
@@ -50,6 +53,10 @@ func TestSandboxErrorTranslation(t *testing.T) {
 		switch want.(type) {
 		case *UnsupportedError, *CapabilityError:
 			if !errors.Is(got, ErrUnsupported) {
+				t.Fatal(got)
+			}
+		case *StateError:
+			if want.(*StateError).Code == StateLocked && !errors.Is(got, ErrLeaseHeld) {
 				t.Fatal(got)
 			}
 		case *TurnError:

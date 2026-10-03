@@ -12,7 +12,13 @@
 // outcomes, never implied rollback. Close is void and idempotent; callers can
 // inspect Stuck after shutdown.
 //
-// This package's API is provisional during the staged extraction. Command
-// profiles, proofs, execution and the standalone command API still live in
-// session. No new harness.Support claim follows from this package boundary.
+// Open proves Seatbelt (macOS) or bubblewrap (Linux) before creating command
+// recovery state, then returns a Sandbox with Run, Start and Close. Command
+// cancellation and Close await process-tree settlement; failed cleanup preserves
+// recovery markers. Windows command sandboxes are refused before launch.
+//
+// Prove and NewRunner expose the same mechanism to hosted workbench callers.
+// Proof carries frozen system directories and binary identity, with a separate
+// process-local cache from native CLI probes. Linux always re-proves.
+// No new harness.Support claim follows from this package boundary.
 package sandbox

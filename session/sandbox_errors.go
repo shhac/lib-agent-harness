@@ -24,6 +24,10 @@ func fromSandbox(err error, o Options) error {
 	if errors.As(err, &command) {
 		return &TurnError{Engine: harness.OpenAICompatible, Code: command.Code}
 	}
+	var state *sandbox.StateError
+	if errors.As(err, &state) {
+		return stateError(state.Code)
+	}
 	if errors.Is(err, sandbox.ErrClosed) {
 		return ErrClosed
 	}

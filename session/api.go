@@ -447,7 +447,7 @@ func openAPI(ctx context.Context, o Options, r *Ref) (*Session, error) {
 		}
 		if err = ws.cleanupWrites(records); err != nil {
 			if ws.commands != nil {
-				ws.commands.close()
+				ws.fromSandbox(ws.commands.Close())
 			}
 			store.close()
 			ws.close()
@@ -641,7 +641,7 @@ func (a *apiSession) shutdown(host *toolHost) {
 		if a.workspace != nil {
 			_ = a.workspace.cleanupWrites(a.records)
 			if a.workspace.commands != nil {
-				if err := a.workspace.commands.close(); err != nil && a.workspace.failed != nil {
+				if err := a.workspace.fromSandbox(a.workspace.commands.Close()); err != nil && a.workspace.failed != nil {
 					a.workspace.failed(err)
 				}
 			}
@@ -660,7 +660,7 @@ func restoreAPIRecovery(a *apiSession, ws *workbenchHost, o Options, ref Ref, fr
 		addition.Text = bound(addition.Text, a.resultLimit)
 		if err := a.append(addition); err != nil {
 			if ws != nil && ws.commands != nil {
-				_ = ws.commands.close()
+				_ = ws.fromSandbox(ws.commands.Close())
 			}
 			a.store.close()
 			ws.close()
