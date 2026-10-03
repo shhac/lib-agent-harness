@@ -2,10 +2,12 @@ package session
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 // imageGeneration is the installed Codex 0.159.2 ThreadItem shape, checked by
@@ -69,6 +71,13 @@ func TestCodexGeneratedImageBoundsKeepPath(t *testing.T) {
 			item := map[string]any{"type": "imageGeneration", "id": "image", "status": "completed", "result": b64(data), "savedPath": "/generated/image.png"}
 			notify(s, string(mustMarshal(map[string]any{"method": "item/completed", "params": map[string]any{"threadId": "session-1", "turnId": "turn-1", "item": item}})))
 			notify(s, `{"method":"turn/completed","params":{"threadId":"session-1","turn":{"id":"turn-1","status":"completed"}}}`)
+			// Four megabytes through the race detector can outlast the usual
+			// three seconds while the rest of the suite runs alongside.
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if _, err := turn.Wait(ctx); err != nil {
+				t.Fatal(err)
+			}
 			e := toolEvents(t, turn)["tool_completed:image"]
 			if e.Output != "/generated/image.png" || e.OutputTruncated {
 				t.Fatalf("image size lost the path: %+v", e)
