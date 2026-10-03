@@ -105,6 +105,12 @@ func runFakeHarness(scenario string) int {
 	switch {
 	case len(args) > 0 && args[0] == "mcp":
 		logInvocation("browser-config")
+		if scenario == "browser-config-block" {
+			// The caller cancels only after observing browser-config in the log.
+			// A timer keeps the runtime alive until process containment kills it.
+			time.Sleep(time.Minute)
+			return 2
+		}
 		raw, err := os.ReadFile(filepath.Join(os.Getenv("CODEX_HOME"), "fake-browser-bridge.json"))
 		if err != nil {
 			return 2

@@ -39,6 +39,9 @@ func claudeBrowserTools(names []string) []string {
 // normalizeBrowser refuses a browser the engine does not ship, and one asked
 // of a restricted session, whose tools are exactly the caller's.
 func normalizeBrowser(o Options) error {
+	if o.BrowserBridgeHome != "" && (o.Provider.Engine != harness.Codex || !o.Browser || o.Sandbox == nil) {
+		return refuse(o, "browser_bridge_home", RefusedConflict, "BrowserBridgeHome applies only to a sandboxed Codex browser session")
+	}
 	if !o.Browser {
 		return nil
 	}

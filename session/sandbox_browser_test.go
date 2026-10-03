@@ -31,7 +31,7 @@ func fakeBrowserBridge(t *testing.T, o Options) {
 		"BROWSER_USE_AVAILABLE_BACKENDS": "chrome,iab,mcpapps", "SKY_CUA_SERVICE_PATH": "desktop", "NODE_OPTIONS": "unsafe", "SECRET_TOKEN": "secret",
 	}
 	raw := mustMarshal(map[string]any{"name": "node_repl", "enabled": true, "transport": map[string]any{"type": "stdio", "command": filepath.Join(dir, "node_repl"), "env": env, "env_vars": []string{"SECRET_TOKEN"}, "cwd": o.Provider.CLI.Home}})
-	if err := os.WriteFile(filepath.Join(o.Provider.CLI.Home, "fake-browser-bridge.json"), raw, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(browserBridgeHome(o), "fake-browser-bridge.json"), raw, 0600); err != nil {
 		t.Fatal(err)
 	}
 }

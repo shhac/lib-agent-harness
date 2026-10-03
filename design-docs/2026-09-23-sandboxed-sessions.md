@@ -10,6 +10,48 @@ tools, held to workspace-only writes and no network, that fail closed when
 that cannot be shown. Restricted sessions answer a different question: they
 remove the tools. This added a third mode: ordinary tools, OS sandbox.
 
+## Separate Codex browser bridge home, 2026-10-03
+
+`session.Options.BrowserBridgeHome` selects the home used only for
+`codex mcp get node_repl --json`; empty keeps `Provider.CLI.Home`. The existing
+declaration narrowing admits only the Chrome browser service and installation
+environment. Login and skills remain in the CLI home; the bridge process uses
+the private RuntimeHome. No other servers, settings, hooks or plugins from the
+bridge home are inherited. The library writes nothing there, although the CLI
+may make incidental writes during `mcp get`.
+
+The option requires a sandboxed Codex browser session and cannot overlap the
+workspace, including through symlinks. For a directory that does not exist yet,
+containment resolves the deepest existing ancestor before appending its missing
+components. Sandbox tool-host exclusion uses the same rule, so a missing channel
+directory beneath a symlinked workspace cannot evade its refusal.
+Unsandboxed use is a typed conflict:
+injecting a bridge there would require a different launch mechanism and has not
+been proved. Native runs retain their CLI-home behavior. Capability claims are
+unchanged. The confinement proof cache includes the effective bridge home as
+well as the installation identity. Start and Resume re-read the declaration;
+the home is deliberately absent from the conversation Ref.
+
+`CheckBrowserBridge` normalizes the same options and checks the declaration,
+installation identity and workspace exclusion without login checks, runtime
+home writes, proof-cache access or a launch beyond `mcp get`. Fixed Bridge*
+reasons refine the existing `browser_bridge_unavailable` code without exposing
+paths or provider text. An unavailable workspace is a `work_dir` / `RefusedWorkDir`
+preflight refusal, not evidence of installation overlap. Checks without an
+explicit bridge home refuse non-Codex or unsandboxed use as `browser_bridge` /
+`RefusedConflict`; invalid explicit home options retain `browser_bridge_home`.
+Cancellation during the CLI read returns the context error for the check;
+Start, Resume and VerifySandbox retain their typed bridge-unavailable failure.
+The check's result is advisory: it proves neither confinement nor browser connectivity and never
+authorizes a later launch. A missing home is refused before starting the CLI.
+The CLI read retains its 30-second timeout. No successful proof is cached until
+it actually completes; interrupted work adds no durable evidence, and a process
+restart re-reads and re-proves. Existing runtime preparation cleanup is unchanged.
+
+This additive API requires a minor release after landing and green platform CI;
+crew-assistant CA-63 consumes that release. Synthetic CLI tests establish home
+selection, not new live browser or confinement evidence.
+
 ## What was established without inference
 
 - **Codex's built-in `:workspace` profile was not enough.** It allowed writes

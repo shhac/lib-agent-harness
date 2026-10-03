@@ -25,3 +25,15 @@ func TestSandboxedSessionRefusesUnsupportedPlatform(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckBrowserBridgeRefusesUnsupportedPlatform(t *testing.T) {
+	err := CheckBrowserBridge(context.Background(), Options{
+		Provider: harness.Provider{Engine: harness.Codex, CLI: harness.CLI{Binary: "must-not-run", Home: t.TempDir()}},
+		WorkDir:  t.TempDir(), RuntimeHome: t.TempDir(), Browser: true,
+		BrowserBridgeHome: t.TempDir(), Sandbox: &Sandbox{Write: true},
+	})
+	var failure *CapabilityError
+	if !errors.As(err, &failure) || failure.Code != CapabilitySandboxUnavailable || failure.Phase != BeforeLaunch {
+		t.Fatalf("expected platform refusal before bridge read: %v", err)
+	}
+}

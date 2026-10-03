@@ -911,13 +911,46 @@ refuses inference. Chrome control was separately checked in a configured CLI
 session by filling and validating a disposable local form. This establishes
 browser control; it does not establish a video recording API or hidden-window
 capture. Grok 1.0.41, API sessions and restricted sessions are refused.
-Sandboxed Codex sessions admit the ChatGPT app's `node_repl` bridge from the
-selected owner home (`codex mcp get node_repl --json`). Their private
+Sandboxed Codex sessions admit the ChatGPT app's `node_repl` bridge from
+`Options.BrowserBridgeHome`, or `Provider.CLI.Home` when it is empty
+(`codex mcp get node_repl --json`). For an application with its own CLI home,
+set `BrowserBridgeHome` to the owner's absolute `~/.codex` path (expand `~`
+in the caller). Login and skills still come from `Provider.CLI.Home`.
+`BrowserBridgeHome` requires `Browser`, Codex and `Sandbox`; other uses return
+`*session.UnsupportedError` with `RefusedConflict`. It must not equal, contain
+or lie inside `WorkDir`, including a missing directory beneath a symlinked
+ancestor. Ordinary unsandboxed sessions and native runs continue
+to load their bridge from the CLI home themselves.
+Their private
 `RuntimeHome` declares only this bridge, plus any caller-hosted tools. The
 bridge enables only the `chrome` backend, with no in-app browser or MCP apps;
 its trusted services include only `browser`, with no desktop-control service.
-No other owner MCP servers, plugins, hooks or settings are inherited. Both
+No other bridge-home MCP servers, plugins, hooks, skills, settings or login are
+inherited. The bridge process receives the private `RuntimeHome` as `CODEX_HOME`.
+The library adds no writes to the bridge home. It runs `mcp get` with `CODEX_HOME`,
+`HOME` and `TMPDIR` set there; the CLI may make incidental writes of its own.
+Both
 browser features are enabled; computer use stays disabled.
+
+`session.CheckBrowserBridge(ctx, options)` is an advisory read-only check of
+the same declaration and installation, including workspace exclusion. It runs
+only `mcp get`: no session, server, bridge, Node or confinement proof; it writes
+no runtime home, checks no login and neither reads nor fills the proof cache.
+It requires `Browser` (otherwise `RefusedNotConfigured`) and a sandboxed Codex
+session. After option normalization, checking another engine or an unsandboxed
+session with `BrowserBridgeHome` empty returns `*session.UnsupportedError` with
+operation `browser_bridge` and code `RefusedConflict`; an invalid explicit home option uses operation
+`browser_bridge_home`. An unavailable or non-directory workspace is refused with
+operation `work_dir` and code `RefusedWorkDir`, before `mcp get` runs.
+Cancellation, including during `mcp get`, returns `ctx.Err()`. A nil result
+establishes neither confinement nor Chrome connectivity; use `VerifySandbox`
+for confinement.
+Unusable bridges return `*session.CapabilityError`, code
+`browser_bridge_unavailable`, phase `before_launch`, with a fixed `Reason`:
+`BridgeHomeUnavailable`, `BridgeNotDeclared`, `BridgeDeclarationUnsupported`,
+`BridgeInstallationMissing`, or `BridgeInWorkspace`. Errors contain no home
+paths or CLI output. Start and Resume always re-read the bridge; the bridge home
+is not part of a conversation Ref, and a successful check never authorizes launch.
 
 Before a credentialed launch, one real app-server turn runs against a local
 fake model provider with a disposable home and dummy credential. The provider
@@ -927,7 +960,7 @@ The result must report an OS permission denial and the canary must be absent.
 A successful write produces `browser_sandbox_not_enforced`; a missing result or
 failed proof produces `browser_sandbox_unproven`. Both are typed pre-launch
 `session.CapabilityError` failures. `VerifySandbox` runs this proof too. Evidence
-is cached only for the same CLI, bridge installation, configuration and sandbox
+is cached only for the same CLI, bridge home, bridge installation, configuration and sandbox
 in this process; an upgrade or restart re-proves. There is no bypass.
 
 The real confinement proof passed with the ChatGPT app on 2026-10-01 and

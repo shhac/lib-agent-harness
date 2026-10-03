@@ -57,10 +57,14 @@ func sandboxKey(o Options, l *launch) (string, error) {
 	if err != nil {
 		return "", &CapabilityError{Engine: o.Provider.Engine, Code: CapabilitySandboxUnavailable, Phase: BeforeLaunch}
 	}
-	bridge := ""
+	bridge, bridgeHome := "", ""
 	if o.Browser && o.Provider.Engine == harness.Codex {
 		if l.browser == nil {
 			return "", browserCapability(CapabilityBrowserBridgeUnavailable)
+		}
+		bridgeHome = browserBridgeHome(o)
+		if l.browser.home != "" {
+			bridgeHome = l.browser.home
 		}
 		bridge, err = l.browser.identity()
 		if err != nil {
@@ -78,13 +82,14 @@ func sandboxKey(o Options, l *launch) (string, error) {
 		Args         []string
 		TempDir      string
 		Browser      string
+		BrowserHome  string
 		WorkDir      string
 		RuntimeHome  string
 		Env          []string
 		Model        string
 		Effort       string
 		Instructions Instructions
-	}{"sandbox", o.Provider.Engine, binary, info.Size(), info.ModTime(), o.Sandbox.Write, o.Sandbox.Read, l.extra, sessionTempDir(), bridge, o.WorkDir, o.RuntimeHome, o.Env, o.Model, o.Effort, effectiveInstructions(o)})
+	}{"sandbox", o.Provider.Engine, binary, info.Size(), info.ModTime(), o.Sandbox.Write, o.Sandbox.Read, l.extra, sessionTempDir(), bridge, bridgeHome, o.WorkDir, o.RuntimeHome, o.Env, o.Model, o.Effort, effectiveInstructions(o)})
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:]), nil
 }

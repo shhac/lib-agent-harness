@@ -191,7 +191,18 @@ type CapabilityError struct {
 	Code   string
 	Phase  string
 	Tools  []string
+	// Reason is a fixed Bridge* value when Code is browser_bridge_unavailable.
+	Reason string
 }
+
+// Reasons for an unavailable bridge contain no paths or CLI output.
+const (
+	BridgeHomeUnavailable        = "bridge_home_unavailable"
+	BridgeNotDeclared            = "bridge_not_declared"
+	BridgeDeclarationUnsupported = "bridge_declaration_unsupported"
+	BridgeInstallationMissing    = "bridge_installation_missing"
+	BridgeInWorkspace            = "bridge_in_workspace"
+)
 
 func (e *CapabilityError) Error() string {
 	message := map[string]string{
@@ -211,7 +222,7 @@ func (e *CapabilityError) Error() string {
 		CapabilityServerNotLoaded:           "the installed harness did not load this session's tool server",
 		CapabilityServerNameReserved:        "the installed harness reserves this tool server name; choose another",
 		CapabilityLoginUnavailable:          "the selected harness home has no file-backed login to share with a restricted session; log in to that home first",
-		CapabilityBrowserBridgeUnavailable:  "the selected Codex home has no usable ChatGPT node_repl bridge; configure the ChatGPT app browser bridge and Chrome extension, then restart the CLI",
+		CapabilityBrowserBridgeUnavailable:  "the browser bridge home (BrowserBridgeHome, or the CLI home) has no usable ChatGPT node_repl bridge; configure the ChatGPT app browser bridge and Chrome extension, then restart the CLI",
 		CapabilityBrowserSandboxUnproven:    "the node_repl JavaScript confinement proof could not complete; update Codex and the ChatGPT app, or leave Browser unset",
 		CapabilityBrowserSandboxNotEnforced: "node_repl JavaScript escaped the session sandbox; update Codex and the ChatGPT app, or leave Browser unset",
 		CapabilitySandboxUnavailable:        "the installed harness could not be run under the requested sandbox",
@@ -237,6 +248,17 @@ func (e *CapabilityError) Error() string {
 			message += "; configure the native Node REPL browser bridge in the selected CLI home, install the ChatGPT Chrome extension (https://chromewebstore.google.com/detail/chatgpt/hehggadaopoacecdllhhajmbjkdcmajg), and restart the CLI"
 		case harness.Claude:
 			message += "; enable Claude in Chrome, install its Chrome extension (https://chromewebstore.google.com/detail/claude/fcoeoabgfenejglbffodgkkbkcdhcgfn), and restart the CLI"
+		}
+	}
+	if e.Code == CapabilityBrowserBridgeUnavailable {
+		if phrase := map[string]string{
+			BridgeHomeUnavailable:        "home unavailable",
+			BridgeNotDeclared:            "bridge not declared",
+			BridgeDeclarationUnsupported: "unsupported declaration",
+			BridgeInstallationMissing:    "installation missing",
+			BridgeInWorkspace:            "installation overlaps workspace",
+		}[e.Reason]; phrase != "" {
+			message += " (" + phrase + ")"
 		}
 	}
 	out := string(e.Engine) + ": " + message

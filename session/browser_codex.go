@@ -19,20 +19,118 @@ import (
 type codexBrowserBridge struct {
 	Command string
 	Env     map[string]string
+	home    string // Source of the declaration; excluded from its JSON identity.
 }
 
 func browserCapability(code string) error {
 	return &CapabilityError{Engine: harness.Codex, Code: code, Phase: BeforeLaunch}
 }
 
+func bridgeUnavailable(reason string) error {
+	return &CapabilityError{Engine: harness.Codex, Code: CapabilityBrowserBridgeUnavailable, Phase: BeforeLaunch, Reason: reason}
+}
+
+func browserBridgeHome(o Options) string {
+	if o.BrowserBridgeHome != "" {
+		return o.BrowserBridgeHome
+	}
+	return o.Provider.CLI.Home
+}
+
+// containmentPath resolves existing ancestors even when the final directory
+// has not been created. Otherwise /var/work/home and /private/var/work can
+// appear unrelated on macOS solely because home does not exist yet.
+func containmentPath(path string) string {
+	path = filepath.Clean(path)
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		return real
+	}
+	parent := filepath.Dir(path)
+	if parent == path {
+		return path
+	}
+	return filepath.Join(containmentPath(parent), filepath.Base(path))
+}
+
+func pathContains(parent, child string) bool {
+	rel, err := filepath.Rel(parent, child)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+func pathsOverlap(a, b string) bool {
+	a, b = containmentPath(a), containmentPath(b)
+	return pathContains(a, b) || pathContains(b, a)
+}
+
+func browserWorkspace(work string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(work)
+	if err == nil {
+		var info os.FileInfo
+		info, err = os.Stat(resolved)
+		if err == nil && info.IsDir() {
+			return resolved, nil
+		}
+	}
+	return "", refuse(Options{Provider: harness.Provider{Engine: harness.Codex}}, "work_dir", RefusedWorkDir, "browser bridge checks require an available working directory")
+}
+
+// CheckBrowserBridge checks a sandboxed Codex browser declaration and installation
+// without launching a session, server, bridge, Node or proof. It writes no runtime
+// home, checks no login, and never consults the proof cache. A nil result proves
+// neither confinement (use VerifySandbox) nor Chrome connectivity.
+// Missing Browser is RefusedNotConfigured; unsupported checks use operation
+// browser_bridge, while invalid explicit home options use browser_bridge_home.
+// An unavailable workspace is a work_dir / RefusedWorkDir preflight refusal.
+// Cancellation during mcp get returns ctx.Err().
+// The CLI may perform incidental writes during mcp get.
+func CheckBrowserBridge(ctx context.Context, o Options) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !o.Browser {
+		return refuse(o, "browser", RefusedNotConfigured, "Browser must be set to check its bridge")
+	}
+	var err error
+	o, err = normalize(o)
+	if err != nil {
+		return err
+	}
+	if o.Provider.Engine != harness.Codex || o.Sandbox == nil {
+		return refuse(o, "browser_bridge", RefusedConflict, "bridge checks require a sandboxed Codex browser session")
+	}
+	_, err = readCodexBrowserBridge(ctx, o)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return err
+}
+
 func readCodexBrowserBridge(ctx context.Context, o Options) (*codexBrowserBridge, error) {
+	home := browserBridgeHome(o)
+	info, err := os.Stat(home)
+	if err != nil || !info.IsDir() {
+		return nil, bridgeUnavailable(BridgeHomeUnavailable)
+	}
+	// Stat alone can succeed for a directory the CLI cannot read. Opening it
+	// checks access without enumerating or reading any of its other entries.
+	dir, err := os.Open(home)
+	if err != nil {
+		return nil, bridgeUnavailable(BridgeHomeUnavailable)
+	}
+	if err := dir.Close(); err != nil {
+		return nil, bridgeUnavailable(BridgeHomeUnavailable)
+	}
+	if _, err := browserWorkspace(o.WorkDir); err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	// mcp get only reads configuration. It starts neither a server nor a turn.
-	env := disposableEnvironment(o, o.Provider.CLI.Home)
+	// mcp get retrieves configuration, starting neither a server nor a turn.
+	// The library adds no writes; the CLI may perform incidental writes.
+	env := disposableEnvironment(o, home)
 	raw, err := runOnce(ctx, o.Provider.CLI.Binary, []string{"mcp", "get", "node_repl", "--json"}, o.WorkDir, env)
 	if err != nil {
-		return nil, browserCapability(CapabilityBrowserBridgeUnavailable)
+		return nil, bridgeUnavailable(BridgeNotDeclared)
 	}
 	bridge, err := parseCodexBrowserBridge(raw)
 	if err != nil {
@@ -41,6 +139,10 @@ func readCodexBrowserBridge(ctx context.Context, o Options) (*codexBrowserBridge
 	if err = bridge.outsideWorkspace(o.WorkDir); err != nil {
 		return nil, err
 	}
+	if _, err = bridge.identity(); err != nil {
+		return nil, err
+	}
+	bridge.home = home
 	return bridge, nil
 }
 
@@ -55,7 +157,7 @@ func parseCodexBrowserBridge(raw []byte) (*codexBrowserBridge, error) {
 			Env     map[string]string `json:"env"`
 		} `json:"transport"`
 	}
-	fail := func() (*codexBrowserBridge, error) { return nil, browserCapability(CapabilityBrowserBridgeUnavailable) }
+	fail := func() (*codexBrowserBridge, error) { return nil, bridgeUnavailable(BridgeDeclarationUnsupported) }
 	if json.Unmarshal(raw, &cfg) != nil || cfg.Name != "node_repl" || !cfg.Enabled || cfg.Transport.Type != "stdio" || !filepath.IsAbs(cfg.Transport.Command) || len(cfg.Transport.Args) != 0 {
 		return fail()
 	}
@@ -142,11 +244,11 @@ func (b *codexBrowserBridge) identity() (string, error) {
 	for _, path := range paths {
 		real, err := filepath.EvalSymlinks(path)
 		if err != nil {
-			return "", browserCapability(CapabilityBrowserBridgeUnavailable)
+			return "", bridgeUnavailable(BridgeInstallationMissing)
 		}
 		info, err := os.Stat(real)
 		if err != nil {
-			return "", browserCapability(CapabilityBrowserBridgeUnavailable)
+			return "", bridgeUnavailable(BridgeInstallationMissing)
 		}
 		identities = append(identities, []any{real, info.Size(), info.ModTime()})
 	}
@@ -164,19 +266,18 @@ func (b *codexBrowserBridge) outsideWorkspace(work string) error {
 	if cli := b.Env["CODEX_CLI_PATH"]; cli != "" {
 		paths = append(paths, cli)
 	}
-	resolvedWork, err := filepath.EvalSymlinks(work)
+	resolvedWork, err := browserWorkspace(work)
 	if err != nil {
-		return browserCapability(CapabilityBrowserBridgeUnavailable)
+		return err
 	}
 	work = resolvedWork
-	contains := func(parent, child string) bool {
-		rel, err := filepath.Rel(parent, child)
-		return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-	}
 	for _, path := range paths {
 		resolved, err := filepath.EvalSymlinks(path)
-		if err != nil || contains(work, resolved) || contains(resolved, work) {
-			return browserCapability(CapabilityBrowserBridgeUnavailable)
+		if err != nil {
+			return bridgeUnavailable(BridgeInstallationMissing)
+		}
+		if pathContains(work, resolved) || pathContains(resolved, work) {
+			return bridgeUnavailable(BridgeInWorkspace)
 		}
 	}
 	return nil

@@ -39,6 +39,15 @@ func normalize(o Options) (Options, error) {
 	if err != nil {
 		return o, err
 	}
+	if o.BrowserBridgeHome != "" {
+		o.BrowserBridgeHome, err = filepath.Abs(o.BrowserBridgeHome)
+		if err != nil {
+			return o, refuse(o, "browser_bridge_home", RefusedHome, "invalid browser bridge home")
+		}
+		if pathsOverlap(o.BrowserBridgeHome, o.WorkDir) {
+			return o, refuse(o, "browser_bridge_home", RefusedConflict, "browser bridge home must not overlap the workspace")
+		}
+	}
 	if o, err = normalizeLimits(o); err != nil {
 		return o, err
 	}

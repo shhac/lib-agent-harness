@@ -148,18 +148,26 @@ type Options struct {
 	// Browser turns on the browser integration the harness itself ships, for
 	// this session only: Claude Code's --chrome, or Codex's browser_use and
 	// browser_use_external features with an already configured native bridge
-	// in the selected CLI home and the ChatGPT Chrome extension. Unset preserves
-	// the CLI's defaults; never implied by another option. An engine without one
+	// in the selected home (see BrowserBridgeHome) and the ChatGPT Chrome
+	// extension. Unset preserves the CLI's defaults; never implied by another
+	// option. An engine without one
 	// is refused (see harness.Support). A sandboxed Claude session admits the
 	// browser's tools beside its own, except those that would read local files
 	// or start another agent. The browser itself runs outside the OS sandbox,
 	// with that Chrome profile's logins, and reaches whatever the extension's
 	// site permissions allow. A restricted session is refused: its tools are
 	// exactly the caller's. A sandboxed Codex session loads only node_repl
-	// from the selected home, with Chrome only and no computer use; JavaScript
-	// confinement by the session sandbox is proved before launch.
+	// from BrowserBridgeHome (or the CLI home), with Chrome only and no computer
+	// use; JavaScript confinement by the session sandbox is proved before launch.
 	// It is part of a Ref.
 	Browser bool
+	// BrowserBridgeHome selects the Codex home from which only the narrowed
+	// node_repl declaration is read. Empty uses Provider.CLI.Home. It requires
+	// Browser and a sandboxed Codex session; other uses are refused. Login and
+	// skills stay in the CLI home; the bridge receives RuntimeHome as CODEX_HOME.
+	// It must not overlap WorkDir. It is not part of a Ref: every Start and
+	// Resume reads and proves the current bridge again.
+	BrowserBridgeHome string
 	// Background runs the harness, and everything it starts, at background
 	// priority, so agent work yields to the machine's interactive use (see
 	// harness.Support for where it is offered). It changes no behaviour, so it

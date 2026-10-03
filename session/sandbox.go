@@ -202,11 +202,7 @@ func validateSandboxTools(o Options) error {
 	}
 	// The channel's credential and lock live in Dir. Inside the workspace a
 	// writing session's own tools could replace them.
-	dir := tools.Dir
-	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
-		dir = resolved
-	}
-	if rel, err := filepath.Rel(o.WorkDir, dir); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if pathContains(containmentPath(o.WorkDir), containmentPath(tools.Dir)) {
 		return refuse(o, "tools", RefusedConflict, "a sandboxed session's tool host directory must lie outside its working directory")
 	}
 	return nil
