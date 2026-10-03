@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -12,11 +13,18 @@ import (
 // routing guards below have a concrete turn to be measured against.
 func startedCodexTurn(t *testing.T) (*Session, *fakeWire, *Turn) {
 	t.Helper()
+	return startedCodexTurnWithin(t, testContext(t))
+}
+
+// startedCodexTurnWithin starts that turn under ctx, which bounds the whole
+// turn, for a test whose turn needs longer than the usual three seconds.
+func startedCodexTurnWithin(t *testing.T, ctx context.Context) (*Session, *fakeWire, *Turn) {
+	t.Helper()
 	s, w := fakeSession(t, harness.Codex)
 	w.requestFn = func(string, map[string]any) (json.RawMessage, error) {
 		return json.RawMessage(`{"turn":{"id":"turn-1"}}`), nil
 	}
-	turn, err := s.StartTurn(testContext(t), Input{"start"})
+	turn, err := s.StartTurn(ctx, Input{"start"})
 	if err != nil {
 		t.Fatal(err)
 	}

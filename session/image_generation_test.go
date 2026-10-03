@@ -66,15 +66,16 @@ func TestCodexGeneratedImageCompletion(t *testing.T) {
 func TestCodexGeneratedImageBoundsKeepPath(t *testing.T) {
 	for _, size := range []int{MaxToolImageBytes, MaxToolImageBytes + 1, MaxToolImageBytes + 3} {
 		t.Run(string(mustMarshal(size)), func(t *testing.T) {
-			s, _, turn := startedCodexTurn(t)
+			// Four megabytes through the race detector can outlast the usual
+			// three seconds while the rest of the suite runs alongside, and the
+			// turn's own context is what bounds it.
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			s, _, turn := startedCodexTurnWithin(t, ctx)
 			data := append(append([]byte{}, pngBytes...), bytes.Repeat([]byte("x"), size-len(pngBytes))...)
 			item := map[string]any{"type": "imageGeneration", "id": "image", "status": "completed", "result": b64(data), "savedPath": "/generated/image.png"}
 			notify(s, string(mustMarshal(map[string]any{"method": "item/completed", "params": map[string]any{"threadId": "session-1", "turnId": "turn-1", "item": item}})))
 			notify(s, `{"method":"turn/completed","params":{"threadId":"session-1","turn":{"id":"turn-1","status":"completed"}}}`)
-			// Four megabytes through the race detector can outlast the usual
-			// three seconds while the rest of the suite runs alongside.
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
 			if _, err := turn.Wait(ctx); err != nil {
 				t.Fatal(err)
 			}
