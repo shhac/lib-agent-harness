@@ -121,11 +121,28 @@ to find and end an orphaned group after a restart.
 The tool bridge is the anchor, because it is the caller's own binary running as
 a child of the CLI for as long as the session lives. `session.RunBridge` takes an
 exclusive lock for its lifetime and records the group it belongs to in the lock
-file. `session.Reclaim` observes that lock: free means nothing survived; held
-means a subtree is still alive, and the group named by its current holder is
-terminated and the lock re-checked. A group that cannot be confirmed gone is
-reported as unresolved rather than as clean, so the caller can hold the work for
-inspection instead of starting a second worker.
+file, including the launch identity. Absence is proved only by the recorded
+process group being empty. A free lock proves only that the bridge is gone;
+an unreadable or foreign owner never authorizes signalling. Only a live bridge
+naming the recorded launch and group authorizes termination.
+
+Reclaim polls every 50ms for up to five seconds within the caller context,
+re-reading the bridge owner until it identifies the launch or the group empties.
+This accommodates both the lock-record write window and asynchronous orphan
+reaping by launchd or init. The CLI may have been collected while the dead
+bridge and Bash children still occupy its group. macOS hides environments of
+platform binaries such as sandbox-exec, /bin/sh and sleep; the marker sweep
+cannot prove their absence, whereas the recorded-group liveness check still
+counts its members, including unreaped ones.
+
+Open and Release hold the assignment lease throughout reclamation. Only
+Confirmed permits clearing the launch marker; survivors retain ErrUnreclaimed.
+Cancellation joins ErrUnreclaimed with the context error and preserves the
+marker. A crash releases the lease but leaves the marker, so recovery repeats
+the same check. A record without identity remains ErrUncertainLaunch.
+Repeated process-package group sweeps retain birth-identity validation; no
+unidentified group is signalled by reclamation. Detached hidden-environment
+descendants remain a separate best-effort sweep limitation (LAH-16).
 
 Tool execution stops on its own in this situation, since every call has to reach
 the caller's listener to do anything. Reclamation is about the CLI process

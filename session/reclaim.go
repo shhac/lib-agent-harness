@@ -66,6 +66,9 @@ type Reclamation struct {
 // was never established.
 var ErrUnreclaimed = errors.New("harness subtree could not be confirmed terminated")
 
+// reclaimGrace bounds waiting for asynchronous orphan reaping.
+var reclaimGrace = 5 * time.Second
+
 // Reclaim establishes whether a harness launched from dir is still running, and
 // ends it when it can prove the process group is the one it launched.
 //
@@ -74,6 +77,8 @@ var ErrUnreclaimed = errors.New("harness subtree could not be confirmed terminat
 // lock is never read as absence. Absence comes from the process group itself.
 // Identity, which is what makes signalling safe, comes from a live bridge that
 // names the same launch as the recorded one.
+// Reclaim waits up to five seconds, within ctx, for asynchronous group
+// settlement. Cancellation preserves ErrUnreclaimed alongside ctx.Err().
 func Reclaim(ctx context.Context, dir string) (Reclamation, error) {
 	var out Reclamation
 	if !restrictedPlatform() {
@@ -96,33 +101,12 @@ func Reclaim(ctx context.Context, dir string) (Reclamation, error) {
 		return out, errors.Join(ErrUnreclaimed, ErrUncertainLaunch)
 	}
 	out.Group = record.Group
-	alive, err := groupAlive(record.Group)
-	if err != nil {
-		return out, errors.Join(ErrUnreclaimed, err)
-	}
-	if !alive {
-		out.Confirmed = true
-		return out, nil
-	}
-	out.Found = true
-	// Something occupies the recorded group. Before signalling it, require a
-	// living bridge to identify it as this launch; a reused group identifier
-	// belonging to unrelated work must never be killed on a stored integer.
-	held, err := readBridgeLock(lockPath(dir))
-	if err != nil {
-		return out, errors.Join(ErrUnreclaimed, err)
-	}
-	if held == nil || held.Launch == "" || held.Launch != record.Launch || held.Group != record.Group {
-		return out, ErrUnreclaimed
-	}
-	if err = terminateGroup(record.Group, record.PID); err != nil {
-		return out, errors.Join(ErrUnreclaimed, err)
-	}
-	out.Terminated = true
-	// A signalled group takes a moment to be reaped. Confirm from the group, not
-	// from the lock.
-	for attempt := 0; attempt < 50; attempt++ {
-		alive, err = groupAlive(record.Group)
+	timer := time.NewTimer(reclaimGrace)
+	defer timer.Stop()
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		alive, err := groupAlive(record.Group)
 		if err != nil {
 			return out, errors.Join(ErrUnreclaimed, err)
 		}
@@ -130,13 +114,35 @@ func Reclaim(ctx context.Context, dir string) (Reclamation, error) {
 			out.Confirmed = true
 			return out, nil
 		}
+		out.Found = true
+		if err := ctx.Err(); err != nil {
+			return out, errors.Join(ErrUnreclaimed, err)
+		}
+		// Something occupies the recorded group. Before signalling it, require a
+		// living bridge to identify it as this launch; a reused group identifier
+		// belonging to unrelated work must never be killed on a stored integer.
+		if !out.Terminated {
+			held, err := readBridgeLock(lockPath(dir))
+			if err != nil {
+				return out, errors.Join(ErrUnreclaimed, err)
+			}
+			if held != nil && held.Launch != "" && held.Launch == record.Launch && held.Group == record.Group {
+				if err = terminateGroup(record.Group, record.PID); err != nil {
+					return out, errors.Join(ErrUnreclaimed, err)
+				}
+				out.Terminated = true
+			}
+		}
+		// A free lock or an owner still being written grants no signalling rights.
+		// Keep checking for the group to empty and for a bridge to identify itself.
 		select {
 		case <-ctx.Done():
-			return out, ctx.Err()
-		case <-time.After(100 * time.Millisecond):
+			return out, errors.Join(ErrUnreclaimed, ctx.Err())
+		case <-timer.C:
+			return out, ErrUnreclaimed
+		case <-ticker.C:
 		}
 	}
-	return out, ErrUnreclaimed
 }
 
 // recordLaunch persists what was started, before it can produce any effect. A

@@ -290,7 +290,9 @@ func (s *Session) awaitIdentity(ctx context.Context) error {
 }
 
 // awaitReaped waits for the transport's process to be collected, bounded by the
-// caller's context. It is best effort: a harness that will not die is exactly
+// caller's context. This collects the CLI; launchd or init collects orphaned
+// children asynchronously, and Reclaim waits for their group to empty.
+// It is best effort: a harness that will not die is exactly
 // what the reclamation that follows is for.
 func (s *Session) awaitReaped(ctx context.Context) {
 	w := s.processWire()
@@ -440,6 +442,8 @@ func (s *Session) Close() { s.fail(ErrClosed) }
 // assignment lease; if another session has taken it by the time Release would
 // reclaim, the assignment is that session's, and Release returns ErrLeaseHeld
 // without touching it.
+// Reclamation holds the lease while waiting up to five seconds, within ctx,
+// for the whole recorded process group to empty.
 func (s *Session) Release(ctx context.Context) (Reclamation, error) {
 	s.mu.Lock()
 	host := s.tools

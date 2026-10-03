@@ -624,6 +624,8 @@ save(s.Ref())
 ```
 
 - A restricted session's `Dir` is reclaimed first, under its assignment lease.
+  Reclaim waits up to five seconds, within the caller context, for the recorded
+  group to empty, holding the lease throughout. Release uses the same wait.
   A harness Open cannot confirm gone is returned as `ErrUnreclaimed`, and a lease
   another session holds as `ErrLeaseHeld`: Open never starts a harness over one
   that may still be running, and never reclaims one a live session is driving.
@@ -804,7 +806,12 @@ naming the same launch, because process and group identifiers are reused and a
 stored integer is never grounds for signalling. Only then is the group
 terminated, and only a group that has actually become empty is reported as
 `Confirmed`. Anything else is `ErrUnreclaimed`: hold the work for inspection
-rather than start a second one.
+rather than start a second one. Reclaim polls for up to five seconds within
+the caller context, including when the bridge lock is free or its owner record
+is not yet readable. Cancellation returns both `ErrUnreclaimed` and the context
+error. Open and Release hold the assignment lease during this wait; a refusal
+preserves the launch marker for the next recovery attempt. Give Release a
+context with at least five seconds available for reclamation.
 
 Per-engine, the restriction is built from provider mechanics rather than from a
 permission setting, and each part of it was checked against an installed CLI.
@@ -1352,6 +1359,11 @@ Unix subprocesses run outside the parent's terminal process group. Windows
 subprocesses start suspended and are assigned to a job before running. Context
 cancellation terminates contained descendants. Event/output bounds keep a noisy
 CLI from growing memory indefinitely where the API advertises those bounds.
+
+Unix Close repeats its birth-checked group sweep to catch members forked during
+termination. Exited but unreaped members still occupy the recorded group:
+launchd or init reaps orphaned children asynchronously, so restricted Release
+waits for group absence even after the CLI and bridge have died.
 
 An agent's background commands leave that group: Claude Code starts each in a
 process group of its own, and once its shell exits it belongs to launchd. So
