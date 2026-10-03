@@ -20,7 +20,8 @@ import (
 
 func newCommandSandbox(config commandConfig) (*commandSandbox, error) {
 	o, id := config.options, config.id
-	w := &workspace{budget: config.outputBudget}
+	budget := config.outputBudget
+	var commands *commandSandbox
 	if o.Workbench.Commands == nil {
 		return nil, nil
 	}
@@ -36,8 +37,8 @@ func newCommandSandbox(config commandConfig) (*commandSandbox, error) {
 	}
 	var launched []running
 	closing := false
-	w.commands = &commandSandbox{timeout: o.Workbench.Commands.Timeout}
-	w.commands.close = func() error {
+	commands = &commandSandbox{timeout: o.Workbench.Commands.Timeout}
+	commands.close = func() error {
 		mu.Lock()
 		defer mu.Unlock()
 		closing = true
@@ -53,7 +54,7 @@ func newCommandSandbox(config commandConfig) (*commandSandbox, error) {
 		}
 		return nil
 	}
-	w.commands.execute = func(ctx context.Context, command, rel string, timeout time.Duration, onStart func()) (CommandResult, error) {
+	commands.execute = func(ctx context.Context, command, rel string, timeout time.Duration, onStart func()) (CommandResult, error) {
 		runCtx, cancel := commandContext(ctx, timeout)
 		defer cancel()
 		mu.Lock()
@@ -107,7 +108,7 @@ func newCommandSandbox(config commandConfig) (*commandSandbox, error) {
 		if o.Background {
 			p.Background()
 		}
-		limit := (w.budget - 1024) / 12
+		limit := (budget - 1024) / 12
 		if o.Workbench.standaloneCommands {
 			limit = skills.MaxOutputBytes
 		}
@@ -264,7 +265,7 @@ func newCommandSandbox(config commandConfig) (*commandSandbox, error) {
 		errText, errTruncated := stderr.finish()
 		return CommandResult{code, outText, errText, errors.Is(runCtx.Err(), context.DeadlineExceeded), outTruncated || errTruncated}, nil
 	}
-	return w.commands, nil
+	return commands, nil
 }
 
 const workbenchSupervisor = `trap '' PIPE

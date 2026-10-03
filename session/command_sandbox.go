@@ -9,6 +9,7 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/sandbox"
 )
 
 // CommandSandboxOptions selects the same proved boundary as Workbench.Commands.
@@ -41,18 +42,18 @@ type CommandResult struct {
 
 // Stable typed command-failure codes, carried by TurnError.
 const (
-	CommandStartFailed    = "command_start_failed"
-	CommandOutcomeUnknown = "command_outcome_unknown"
-	CommandProcessLimit   = "command_process_limit"
-	CommandCleanupUnknown = "command_cleanup_unknown"
-	CommandSandboxClosed  = "command_sandbox_closed"
+	CommandStartFailed    = sandbox.CommandStartFailed
+	CommandOutcomeUnknown = sandbox.CommandOutcomeUnknown
+	CommandProcessLimit   = sandbox.CommandProcessLimit
+	CommandCleanupUnknown = sandbox.CommandCleanupUnknown
+	CommandSandboxClosed  = sandbox.CommandSandboxClosed
 )
 
 // CommandSandbox owns commands without opening a model session. Close stops
 // admission, cancels admitted work, waits for settlement and reaps descendants.
 type CommandSandbox struct {
 	mu       sync.Mutex
-	ws       *workspace
+	ws       *workbenchHost
 	loopback bool
 	closing  bool
 	active   map[*StartedCommand]struct{}
@@ -86,7 +87,7 @@ func OpenCommandSandbox(ctx context.Context, opts CommandSandboxOptions) (*Comma
 	if err = ctx.Err(); err != nil {
 		return nil, err
 	}
-	w, err := openWorkspace(o)
+	w, err := openWorkspace(o, newID())
 	if err != nil {
 		return nil, err
 	}
@@ -176,10 +177,7 @@ func (s *CommandSandbox) admit(ctx context.Context, req CommandRequest, start bo
 	if code != "" {
 		return nil, commandError(code)
 	}
-	c, _, _, code := s.ws.writeParent(ctx, rel+"/placeholder", false)
-	if c != nil {
-		c.close()
-	}
+	code = s.ws.checkDir(ctx, rel)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closing {

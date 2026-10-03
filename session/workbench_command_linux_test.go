@@ -182,10 +182,16 @@ func TestWorkbenchLinuxEditAndRunSession(t *testing.T) {
 	defer closeAPI(t, resumed)
 }
 
-func linuxCommandRunner(t *testing.T, background bool, edits ...func(*Options)) (*workspace, Options) {
+func linuxCommandRunner(t *testing.T, background bool, edits ...func(*Options)) (*workbenchHost, Options) {
 	t.Helper()
 	binary, _ := requireWorkbenchBwrap(t)
-	w, work, _ := testWorkspace(t)
+	work := filepath.Join(t.TempDir(), "work")
+	writeFile(t, filepath.Join(work, "a.txt"), "inside\n")
+	w, err := openWorkspace(Options{WorkDir: work, Workbench: &Workbench{}, Restriction: &Restriction{Tools: ToolHost{}}}, newID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(w.close)
 	writeFile(t, filepath.Join(work, ".git", "config"), "metadata\n")
 	o := workbenchOptions(t, nopHandler())
 	o.WorkDir = work

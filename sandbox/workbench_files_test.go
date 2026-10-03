@@ -1,4 +1,4 @@
-package session
+package sandbox
 
 import (
 	"bytes"
@@ -21,13 +21,13 @@ const outsideMarker = "OUTSIDE-MARKER-4d1c"
 
 // testWorkspace opens a workspace on base/work beside base/outside, which
 // holds a secret marked with outsideMarker.
-func testWorkspace(t *testing.T) (ws *workspace, work, outside string) {
+func testWorkspace(t *testing.T) (ws *Workspace, work, outside string) {
 	t.Helper()
 	base := t.TempDir()
 	work, outside = filepath.Join(base, "work"), filepath.Join(base, "outside")
 	writeFile(t, filepath.Join(outside, "secret.txt"), outsideMarker+"\n")
 	writeFile(t, filepath.Join(work, "a.txt"), "inside\n")
-	ws, err := openWorkspace(Options{Workbench: &Workbench{}, WorkDir: work, Restriction: &Restriction{Tools: ToolHost{}}})
+	ws, err := OpenWorkspace(Config{Root: work})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,11 +35,11 @@ func testWorkspace(t *testing.T) (ws *workspace, work, outside string) {
 	return ws, work, outside
 }
 
-func call(t *testing.T, ws *workspace, tool string, args any) ToolResult {
+func call(t *testing.T, ws *Workspace, tool string, args any) Result {
 	t.Helper()
 	raw, _ := json.Marshal(args)
 	var (
-		result ToolResult
+		result Result
 		err    error
 	)
 	switch tool {
@@ -61,12 +61,12 @@ func call(t *testing.T, ws *workspace, tool string, args any) ToolResult {
 	return result
 }
 
-func read(t *testing.T, ws *workspace, path string) ToolResult {
+func read(t *testing.T, ws *Workspace, path string) Result {
 	t.Helper()
 	return call(t, ws, workbenchReadFile, map[string]any{"path": path})
 }
 
-func refusedWith(t *testing.T, r ToolResult, code string) {
+func refusedWith(t *testing.T, r Result, code string) {
 	t.Helper()
 	if !r.IsError || !strings.Contains(r.Content, " error: "+code) {
 		t.Fatalf("want %s, got %+v", code, r)
@@ -354,7 +354,7 @@ func TestWorkbenchSwappedDirectoryStaysInside(t *testing.T) {
 	}()
 	deadline := time.Now().Add(300 * time.Millisecond)
 	for time.Now().Before(deadline) {
-		for _, r := range []ToolResult{read(t, ws, "sub/secret.txt"), call(t, ws, workbenchListFiles, map[string]any{"path": "sub"}), call(t, ws, workbenchListFiles, map[string]any{"depth": 3}), call(t, ws, workbenchSearchFiles, map[string]any{"path": "sub", "pattern": outsideMarker}), call(t, ws, workbenchSearchFiles, map[string]any{"path": "sub/secret.txt", "pattern": outsideMarker})} {
+		for _, r := range []Result{read(t, ws, "sub/secret.txt"), call(t, ws, workbenchListFiles, map[string]any{"path": "sub"}), call(t, ws, workbenchListFiles, map[string]any{"depth": 3}), call(t, ws, workbenchSearchFiles, map[string]any{"path": "sub", "pattern": outsideMarker}), call(t, ws, workbenchSearchFiles, map[string]any{"path": "sub/secret.txt", "pattern": outsideMarker})} {
 			if strings.Contains(r.Content, outsideMarker) {
 				close(stop)
 				wg.Wait()
@@ -470,12 +470,12 @@ func TestWorkbenchLongLineIsCutOnACharacter(t *testing.T) {
 // A result is bounded by the host's MaxResultBytes too, and says where it
 // was cut rather than leaving the host to cut it.
 func TestWorkbenchResultFitsTheHostLimit(t *testing.T) {
-	o := Options{Workbench: &Workbench{}, WorkDir: t.TempDir(), Restriction: &Restriction{Tools: ToolHost{MaxResultBytes: 4096}}}
-	writeFile(t, filepath.Join(o.WorkDir, "wide.txt"), strings.Repeat(strings.Repeat("z", 99)+"\n", 200))
+	o := Config{Root: t.TempDir(), Budget: 4096}
+	writeFile(t, filepath.Join(o.Root, "wide.txt"), strings.Repeat(strings.Repeat("z", 99)+"\n", 200))
 	for i := 0; i < 300; i++ {
-		writeFile(t, filepath.Join(o.WorkDir, "many", fmt.Sprintf("file-%03d.txt", i)), "")
+		writeFile(t, filepath.Join(o.Root, "many", fmt.Sprintf("file-%03d.txt", i)), "")
 	}
-	ws, err := openWorkspace(o)
+	ws, err := OpenWorkspace(o)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -484,15 +484,15 @@ func TestWorkbenchResultFitsTheHostLimit(t *testing.T) {
 	if len(r.Content) > 4096 || !strings.Contains(r.Content, "Continue with offset") {
 		t.Fatalf("%d bytes: %q", len(r.Content), r.Content[len(r.Content)-80:])
 	}
-	if bound(r.Content, 4096) != r.Content {
+	if len(r.Content) > 4096 {
 		t.Fatal("the host would cut the result")
 	}
 	list := call(t, ws, workbenchListFiles, map[string]any{"path": "many"})
 	if len(list.Content) > 4096 || !strings.Contains(list.Content, " omitted. Narrow it with path or depth]") {
 		t.Fatalf("%d bytes: %q", len(list.Content), list.Content[len(list.Content)-80:])
 	}
-	if o.Restriction.Tools.MaxResultBytes = 0; true {
-		if wide, _ := openWorkspace(o); wide.budget != maxWorkbenchResult {
+	if o.Budget = 0; true {
+		if wide, _ := OpenWorkspace(o); wide.budget != maxWorkbenchResult {
 			t.Fatalf("default budget %d", wide.budget)
 		} else {
 			wide.close()
@@ -535,7 +535,7 @@ func TestWorkbenchAnswersFitTheSmallestLimit(t *testing.T) {
 		{workbenchListFiles, map[string]any{"path": "many"}, "could not be read in full"},
 	} {
 		r := call(t, ws, tc.tool, tc.args)
-		if len(r.Content) > minWorkbenchResult || !strings.Contains(r.Content, tc.note) || bound(r.Content, minWorkbenchResult) != r.Content {
+		if len(r.Content) > minWorkbenchResult || !strings.Contains(r.Content, tc.note) {
 			t.Errorf("%s %v: %d bytes, ending %q", tc.tool, tc.args["path"], len(r.Content), r.Content[max(0, len(r.Content)-120):])
 		}
 	}

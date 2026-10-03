@@ -1,4 +1,4 @@
-package session
+package sandbox
 
 import (
 	"io/fs"
@@ -13,3 +13,6 @@ func syncWorkbenchHandle(*os.File) error { return nil }
 
 // Windows does not offer the Unix directory durability contract.
 func syncWorkbenchDir(r *os.Root) error { return nil }
+
+// SyncDir completes directory durability using the platform's workspace rules.
+func SyncDir(r *os.Root) error { return syncWorkbenchDir(r) }

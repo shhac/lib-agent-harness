@@ -17,6 +17,7 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/sandboxhook"
 	"github.com/shhac/lib-agent-harness/internal/skills"
 	"github.com/shhac/lib-agent-harness/process"
 )
@@ -225,7 +226,7 @@ func TestCommandSandboxRealParallelClose(t *testing.T) {
 	var markers []string
 	for i := range 8 {
 		marker := fmt.Sprintf("launched-%d", i)
-		markers = append(markers, filepath.Join(s.ws.root.Name(), marker))
+		markers = append(markers, filepath.Join(sandboxhook.Access(s.ws.files).Root.Name(), marker))
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

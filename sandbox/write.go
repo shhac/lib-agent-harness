@@ -1,4 +1,4 @@
-package session
+package sandbox
 
 import (
 	"context"
@@ -21,7 +21,7 @@ const wbWriteUnknown = "write_outcome_unknown"
 
 var errWorkbenchWriteUnknown = errors.New(wbWriteUnknown)
 
-func workbenchWriteDefinitions() []ToolDefinition {
+func workbenchWriteDefinitions() []Definition {
 	properties := func(fields ...string) map[string]any {
 		p := map[string]any{}
 		for _, f := range fields {
@@ -31,7 +31,7 @@ func workbenchWriteDefinitions() []ToolDefinition {
 	}
 	p := properties("path", "old", "new")
 	p["replace_all"] = map[string]any{"type": "boolean"}
-	return []ToolDefinition{
+	return []Definition{
 		{Name: workbenchWriteFile, Description: "Atomically replace a workspace UTF-8 file (at most 1 MiB), creating parents. Symlinks and .git are refused.", Schema: map[string]any{"type": "object", "properties": properties("path", "content"), "required": []any{"path", "content"}, "additionalProperties": false}},
 		{Name: workbenchEditFile, Description: "Replace one exact occurrence of old with new in a workspace UTF-8 file, or all occurrences with replace_all. Symlinks, hard links and .git are refused.", Schema: map[string]any{"type": "object", "properties": p, "required": []any{"path", "old", "new"}, "additionalProperties": false}},
 	}
@@ -39,7 +39,7 @@ func workbenchWriteDefinitions() []ToolDefinition {
 
 // writeParent keeps every ancestor handle until durability is established.
 // No multi-component path is opened after a name has been checked.
-func (w *workspace) writeParent(ctx context.Context, rel string, create bool) (*cursor, *os.Root, []*os.Root, string) {
+func (w *Workspace) writeParent(ctx context.Context, rel string, create bool) (*cursor, *os.Root, []*os.Root, string) {
 	n, err := w.rootNode()
 	if err != nil {
 		return nil, nil, nil, wbWriteFailed
@@ -92,7 +92,7 @@ func (w *workspace) writeParent(ctx context.Context, rel string, create bool) (*
 	return c, dir, syncParents, ""
 }
 
-func (w *workspace) writeFile(ctx context.Context, tool string, raw json.RawMessage) (ToolResult, error) {
+func (w *Workspace) writeFile(ctx context.Context, tool string, raw json.RawMessage) (Result, error) {
 	var in struct {
 		Path    string  `json:"path"`
 		Content *string `json:"content"`
@@ -100,7 +100,7 @@ func (w *workspace) writeFile(ctx context.Context, tool string, raw json.RawMess
 		New     *string `json:"new"`
 		All     bool    `json:"replace_all"`
 	}
-	fail := func(code string) (ToolResult, error) {
+	fail := func(code string) (Result, error) {
 		r := workbenchError(tool, code, in.Path)
 		if code == wbWriteUnknown {
 			return r, errWorkbenchWriteUnknown
@@ -232,15 +232,15 @@ func (w *workspace) writeFile(ctx context.Context, tool string, raw json.RawMess
 	return w.replaceFile(ctx, tool, rel, dir, name, content, mode, parents, c.created)
 }
 
-func (w *workspace) fault(stage string) error {
+func (w *Workspace) fault(stage string) error {
 	if w.writeFault != nil {
 		return w.writeFault(stage)
 	}
 	return nil
 }
 
-func (w *workspace) replaceFile(ctx context.Context, tool, rel string, dir *os.Root, name, content string, mode fs.FileMode, parents, created []*os.Root) (ToolResult, error) {
-	fail := func(code string) (ToolResult, error) {
+func (w *Workspace) replaceFile(ctx context.Context, tool, rel string, dir *os.Root, name, content string, mode fs.FileMode, parents, created []*os.Root) (Result, error) {
+	fail := func(code string) (Result, error) {
 		r := workbenchError(tool, code, rel)
 		if code == wbWriteUnknown {
 			return r, errWorkbenchWriteUnknown
@@ -352,5 +352,5 @@ func (w *workspace) replaceFile(ctx context.Context, tool, rel string, dir *os.R
 		f.Close()
 		delete(handles, r)
 	}
-	return ToolResult{Content: tool + ": wrote " + rel}, nil
+	return Result{Content: tool + ": wrote " + rel}, nil
 }

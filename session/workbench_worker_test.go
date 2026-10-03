@@ -2,7 +2,6 @@ package session
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
 	"runtime"
@@ -10,6 +9,7 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/sandboxhook"
 	"github.com/shhac/lib-agent-harness/internal/wsfile"
 )
 
@@ -20,9 +20,9 @@ func TestWorkbenchMountCheckRefusesBeforeTranscript(t *testing.T) {
 	ref := existing.Ref()
 	closeAPI(t, existing)
 	before := snapshot(t, resumeOptions.RuntimeHome)
-	previous := workspaceMountID
-	workspaceMountID = func(*os.File) (wsfile.Mount, error) { return wsfile.Mount{}, wsfile.ErrMountUnavailable }
-	defer func() { workspaceMountID = previous }()
+	previous := *sandboxhook.MountID
+	*sandboxhook.MountID = func(*os.File) (wsfile.Mount, error) { return wsfile.Mount{}, wsfile.ErrMountUnavailable }
+	defer func() { *sandboxhook.MountID = previous }()
 	o := workbenchOptions(t, nopHandler())
 	for _, open := range []func() error{
 		func() error { _, e := Start(context.Background(), o); return e },
@@ -43,34 +43,6 @@ func TestWorkbenchMountCheckRefusesBeforeTranscript(t *testing.T) {
 	}
 }
 
-func TestWorkspaceWorkerWaitsForCancellationSettlement(t *testing.T) {
-	w, _, _ := testWorkspace(t)
-	w.grace = time.Second
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	w.step = func() { close(entered); <-release }
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() {
-		_, err := w.dispatch(ctx, func() (ToolResult, error) { return w.readFile(ctx, json.RawMessage(`{"path":"a.txt"}`)) })
-		done <- err
-	}()
-	<-entered
-	cancel()
-	select {
-	case err := <-done:
-		t.Fatalf("settled before worker returned: %v", err)
-	case <-time.After(20 * time.Millisecond):
-	}
-	close(release)
-	if err := <-done; !errors.Is(err, context.Canceled) {
-		t.Fatal(err)
-	}
-	if w.handles.Load() != 0 {
-		t.Fatal(w.handles.Load())
-	}
-}
-
 func TestWorkspaceWorkerStuckFailsSessionAndReleasesLock(t *testing.T) {
 	for _, control := range []string{"cancel", "interrupt", "steer", "close"} {
 		t.Run(control, func(t *testing.T) {
@@ -83,11 +55,11 @@ func TestWorkspaceWorkerStuckFailsSessionAndReleasesLock(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			w := s.api.workspace
-			w.grace = 20 * time.Millisecond
+			w := sandboxhook.Access(s.api.workspace.files)
+			*w.Grace = 20 * time.Millisecond
 			entered, release := make(chan struct{}), make(chan struct{})
 			steps := 0
-			w.step = func() {
+			*w.Step = func() {
 				steps++
 				if steps == 2 {
 					close(entered)
@@ -97,12 +69,12 @@ func TestWorkspaceWorkerStuckFailsSessionAndReleasesLock(t *testing.T) {
 			defer func() {
 				close(release)
 				select {
-				case <-w.stopped:
+				case <-w.Stopped:
 				case <-time.After(time.Second):
 					t.Error("stuck worker did not exit after release")
 				}
-				if w.handles.Load() != 0 {
-					t.Error("worker leaked handles:", w.handles.Load())
+				if w.Handles.Load() != 0 {
+					t.Error("worker leaked handles:", w.Handles.Load())
 				}
 				awaitGoroutineBaseline(t, baseline)
 			}()
@@ -111,7 +83,7 @@ func TestWorkspaceWorkerStuckFailsSessionAndReleasesLock(t *testing.T) {
 				t.Fatal(err)
 			}
 			<-entered
-			if w.handles.Load() != 1 {
+			if w.Handles.Load() != 1 {
 				t.Fatal("stalled read did not retain its file handle")
 			}
 			switch control {
@@ -179,50 +151,6 @@ func TestWorkspaceWorkerStuckFailsSessionAndReleasesLock(t *testing.T) {
 
 func ptrRef(r Ref) *Ref { return &r }
 
-func TestWorkspaceWorkerRepeatedCancellation(t *testing.T) {
-	baseline := runtime.NumGoroutine()
-	w, _, _ := testWorkspace(t)
-	for i := 0; i < 100; i++ {
-		entered, release := make(chan struct{}), make(chan struct{})
-		w.step = func() { close(entered); <-release }
-		ctx, cancel := context.WithCancel(context.Background())
-		done := make(chan error, 1)
-		go func() {
-			_, err := w.dispatch(ctx, func() (ToolResult, error) { return w.readFile(ctx, json.RawMessage(`{"path":"a.txt"}`)) })
-			done <- err
-		}()
-		<-entered
-		cancel()
-		close(release)
-		if err := <-done; err != context.Canceled {
-			t.Fatal(err)
-		}
-		if w.handles.Load() != 0 {
-			t.Fatal(w.handles.Load())
-		}
-	}
-	w.close()
-	select {
-	case <-w.stopped:
-	case <-time.After(time.Second):
-		t.Fatal("worker did not exit")
-	}
-	awaitGoroutineBaseline(t, baseline)
-}
-
-func awaitGoroutineBaseline(t *testing.T, baseline int) {
-	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if runtime.NumGoroutine() <= baseline {
-			return
-		}
-		runtime.Gosched()
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatalf("goroutines did not return to baseline: %d, want at most %d", runtime.NumGoroutine(), baseline)
-}
-
 func TestWorkspaceFailurePreservesFirstCause(t *testing.T) {
 	stuck := &TurnError{Code: WorkspaceIOStuck}
 	for _, first := range []error{nil, ErrClosed, ErrProtocol} {
@@ -238,7 +166,7 @@ func TestWorkspaceFailurePreservesFirstCause(t *testing.T) {
 	}
 	released := make(chan struct{})
 	close(released)
-	w := &workspace{}
+	w := &workbenchHost{}
 	w.stuck.Store(stuck)
 	s := &Session{closed: true, failure: ErrProtocol, api: &apiSession{workspace: w, released: released}}
 	if _, err := s.Release(context.Background()); err != stuck {
@@ -260,4 +188,17 @@ func TestWorkbenchInterruptRetainsFailedTurnReason(t *testing.T) {
 	if err := s.interrupt(context.Background(), turn.ID()); err != failure {
 		t.Fatalf("lost workspace failure: %v", err)
 	}
+}
+
+func awaitGoroutineBaseline(t *testing.T, baseline int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if runtime.NumGoroutine() <= baseline {
+			return
+		}
+		runtime.Gosched()
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("goroutines did not return to baseline: %d, want at most %d", runtime.NumGoroutine(), baseline)
 }

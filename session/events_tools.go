@@ -15,9 +15,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/shhac/lib-agent-harness/internal/rawjson"
+	"github.com/shhac/lib-agent-harness/internal/textbound"
 )
 
 // MaxToolPayloadBytes bounds Event.Input and Event.Output, each, on one
@@ -85,20 +85,7 @@ func boundToolOutput(text string, limit int) (string, bool) {
 	return cutRunes(text, limit), true
 }
 
-// cutRunes returns at most limit bytes of text without splitting a character.
-func cutRunes(text string, limit int) string {
-	if limit <= 0 {
-		return ""
-	}
-	if len(text) <= limit {
-		return text
-	}
-	end := limit
-	for end > 0 && !utf8.RuneStart(text[end]) {
-		end--
-	}
-	return text[:end]
-}
+func cutRunes(text string, limit int) string { return textbound.Cut(text, limit) }
 
 // Tool images: at most MaxToolImages on one tool_completed event, each at
 // most MaxToolImageBytes decoded, and only these types. A screenshot is tens

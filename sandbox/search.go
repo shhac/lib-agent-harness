@@ -1,4 +1,4 @@
-package session
+package sandbox
 
 import (
 	"bytes"
@@ -13,6 +13,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/shhac/lib-agent-harness/internal/textbound"
 	"github.com/shhac/lib-agent-harness/internal/wsfile"
 )
 
@@ -21,7 +22,7 @@ const maxSearchPatternBytes = 4096
 const maxSearchMatches = 200
 
 // searchFiles shares list_files' handle walk and never follows links.
-func (w *workspace) searchFiles(ctx context.Context, raw json.RawMessage) (ToolResult, error) {
+func (w *Workspace) searchFiles(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var in struct {
 		Pattern *string `json:"pattern"`
 		Literal bool    `json:"literal"`
@@ -47,7 +48,7 @@ func (w *workspace) searchFiles(ctx context.Context, raw json.RawMessage) (ToolR
 		return workbenchError(workbenchSearchFiles, code, in.Path), nil
 	}
 	if err = w.checkpoint(ctx); err != nil {
-		return ToolResult{}, err
+		return Result{}, err
 	}
 	root, err := w.rootNode()
 	if err != nil {
@@ -143,7 +144,7 @@ func (w *workspace) searchFiles(ctx context.Context, raw json.RawMessage) (ToolR
 				continue
 			}
 			full := rel + ":" + strconv.Itoa(n+1) + ": " + string(line)
-			text := cutRunes(full, 400)
+			text := textbound.Cut(full, 400)
 			if len(text) < len(full) {
 				lineCuts++
 			}
@@ -175,14 +176,14 @@ func (w *workspace) searchFiles(ctx context.Context, raw json.RawMessage) (ToolR
 		if info.IsDir() {
 			queue = append(queue, parent.child(name, info))
 		} else if e = inspect(parent, name, info); e != nil {
-			return ToolResult{}, e
+			return Result{}, e
 		}
 	}
 	for len(queue) > 0 && !truncated {
 		node := queue[len(queue)-1]
 		queue = queue[:len(queue)-1]
 		if err = w.checkpoint(ctx); err != nil {
-			return ToolResult{}, err
+			return Result{}, err
 		}
 		dir, e := c.to(node)
 		if e != nil {
@@ -224,7 +225,7 @@ func (w *workspace) searchFiles(ctx context.Context, raw json.RawMessage) (ToolR
 			return !truncated, e
 		})
 		if ctx.Err() != nil {
-			return ToolResult{}, ctx.Err()
+			return Result{}, ctx.Err()
 		}
 		if e != nil {
 			if node.rel == targetRel && seen == 0 {
@@ -265,7 +266,7 @@ func (w *workspace) searchFiles(ctx context.Context, raw json.RawMessage) (ToolR
 		matches = append(matches, "[search_files: "+strings.Join(notes, ", ")+"]")
 	}
 	if len(matches) == 0 {
-		return ToolResult{Content: "[search_files: no matches]"}, nil
+		return Result{Content: "[search_files: no matches]"}, nil
 	}
-	return ToolResult{Content: strings.Join(matches, "\n")}, nil
+	return Result{Content: strings.Join(matches, "\n")}, nil
 }

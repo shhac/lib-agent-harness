@@ -451,7 +451,7 @@ func (s *Session) Release(ctx context.Context) (Reclamation, error) {
 		select {
 		case <-s.api.released:
 			if w := s.api.workspace; w != nil {
-				if err := w.stuck.Load(); err != nil {
+				if err := w.stuckError(); err != nil {
 					return Reclamation{Confirmed: true}, err
 				}
 			}

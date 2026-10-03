@@ -13,6 +13,7 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/sandbox"
 )
 
 var (
@@ -71,10 +72,10 @@ const (
 	RefusedPolicy                 = "policy_invalid"
 	RefusedInstructionMode        = "instruction_mode_invalid"
 	RefusedInstructionModeMissing = "instruction_mode_required"
-	RefusedWorkDir                = "work_dir_unavailable"
+	RefusedWorkDir                = sandbox.RefusedWorkDir
 	RefusedHome                   = "home_unavailable"
-	RefusedRuntimeHome            = "runtime_home_unusable"
-	RefusedLimit                  = "limit_exceeded"
+	RefusedRuntimeHome            = sandbox.RefusedRuntimeHome
+	RefusedLimit                  = sandbox.RefusedLimit
 	RefusedEnvMalformed           = "env_malformed"
 	// RefusedEnvManaged: an environment addition the harness manages itself,
 	// or one that would change the CLI outside its sandbox.
@@ -82,19 +83,19 @@ const (
 	RefusedToolHost   = "tool_host_invalid"
 	// RefusedConflict: settings that would silently disagree, such as a
 	// restriction beside a sandbox, or a policy a sandbox or restriction owns.
-	RefusedConflict      = "conflicting_options"
+	RefusedConflict      = sandbox.RefusedConflict
 	RefusedModelRequired = "model_required"
 	// RefusedModelWithoutTools: Options.CatalogModel lists the model's request
 	// parameters and "tools" is not among them, so it cannot take the tools
 	// every API session sends.
 	RefusedModelWithoutTools   = "model_without_tool_calling"
-	RefusedSandboxRead         = "sandbox_read_path_invalid"
+	RefusedSandboxRead         = sandbox.RefusedSandboxRead
 	RefusedSandboxTool         = "sandbox_tool_unsupported"
 	RefusedNotConfigured       = "not_configured"
 	RefusedNotNative           = "not_native"
 	RefusedMethodMissing       = "method_unavailable"
-	RefusedNotOffered          = "not_offered"
-	RefusedWorkbenchMountCheck = "workbench_mount_check_unavailable"
+	RefusedNotOffered          = sandbox.RefusedNotOffered
+	RefusedWorkbenchMountCheck = sandbox.RefusedWorkbenchMountCheck
 	// RefusedKeychainUnavailable: the engine's login lives in a keychain that
 	// is locked, so launching it would raise an unlock prompt.
 	RefusedKeychainUnavailable = harness.CodeKeychainUnavailable
@@ -136,16 +137,16 @@ const (
 	CapabilityUnsupportedPlatform = "restricted_session_unsupported_platform"
 	CapabilityNativeToolsPresent  = "native_tools_present"
 	// CapabilitySandboxToolMissing: the OS sandbox executable is unavailable.
-	CapabilitySandboxToolMissing           = "sandbox_tool_missing"
-	CapabilitySandboxToolOutdated          = "sandbox_tool_outdated"
-	CapabilitySandboxNamespacesUnavailable = "sandbox_namespaces_unavailable"
+	CapabilitySandboxToolMissing           = sandbox.CapabilitySandboxToolMissing
+	CapabilitySandboxToolOutdated          = sandbox.CapabilitySandboxToolOutdated
+	CapabilitySandboxNamespacesUnavailable = sandbox.CapabilitySandboxNamespacesUnavailable
 	CapabilityHostedToolsMissing           = "hosted_tools_missing"
 	CapabilityInstructionsMerged           = "inherited_instructions_merged"
 	CapabilityChangedModel                 = "changed_model"
 	CapabilityChangedEffort                = "changed_effort"
 	CapabilityProbeNoRequest               = "probe_made_no_request"
 	CapabilityProbeUnreadable              = "probe_request_unreadable"
-	CapabilityProbeTimeout                 = "probe_timed_out"
+	CapabilityProbeTimeout                 = sandbox.CapabilityProbeTimeout
 	CapabilityProbeFailed                  = "probe_could_not_run"
 	CapabilityCatalogUnavailable           = "model_catalog_unavailable"
 	CapabilityCatalogRestriction           = "model_catalog_restriction_failed"
@@ -164,10 +165,10 @@ const (
 const (
 	// CapabilitySandboxUnavailable: the installed harness could not be put
 	// under the requested sandbox, or the check could not be completed.
-	CapabilitySandboxUnavailable = "sandbox_unavailable"
+	CapabilitySandboxUnavailable = sandbox.CapabilitySandboxUnavailable
 	// CapabilitySandboxNotEnforced: the sandbox the harness reported, or a
 	// canary run under it, allowed something the session must not do.
-	CapabilitySandboxNotEnforced = "sandbox_not_enforced"
+	CapabilitySandboxNotEnforced = sandbox.CapabilitySandboxNotEnforced
 )
 
 // Capability check phases. The distinction matters to an operator: one of these

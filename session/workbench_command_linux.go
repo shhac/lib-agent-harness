@@ -17,7 +17,8 @@ import (
 // an exec failure is not confused with a shell's ordinary nonzero exit.
 func newCommandSandbox(config commandConfig) (*commandSandbox, error) {
 	o, id := config.options, config.id
-	w := &workspace{budget: config.outputBudget}
+	budget := config.outputBudget
+	var commands *commandSandbox
 	if o.Workbench.Commands == nil {
 		return nil, nil
 	}
@@ -32,8 +33,8 @@ func newCommandSandbox(config commandConfig) (*commandSandbox, error) {
 	var mu sync.Mutex
 	live := make(map[*process.Process]chan struct{})
 	closing := false
-	w.commands = &commandSandbox{timeout: o.Workbench.Commands.Timeout}
-	w.commands.close = func() error {
+	commands = &commandSandbox{timeout: o.Workbench.Commands.Timeout}
+	commands.close = func() error {
 		mu.Lock()
 		closing = true
 		children := make(map[*process.Process]chan struct{}, len(live))
@@ -50,7 +51,7 @@ func newCommandSandbox(config commandConfig) (*commandSandbox, error) {
 		}
 		return nil
 	}
-	w.commands.execute = func(ctx context.Context, command, rel string, timeout time.Duration, onStart func()) (CommandResult, error) {
+	commands.execute = func(ctx context.Context, command, rel string, timeout time.Duration, onStart func()) (CommandResult, error) {
 		current, e := workbenchBinaryFingerprint(o.Workbench.commandBinary)
 		if e != nil || current != identity {
 			return CommandResult{}, commandError("command_start_failed")
@@ -79,7 +80,7 @@ func newCommandSandbox(config commandConfig) (*commandSandbox, error) {
 		cmd.Env = env
 		cmd.ExtraFiles = []*os.File{status}
 		cmd.WaitDelay = 2 * time.Second
-		limit := (w.budget - 1024) / 12
+		limit := (budget - 1024) / 12
 		if o.Workbench.standaloneCommands {
 			limit = skills.MaxOutputBytes
 		}
@@ -130,5 +131,5 @@ func newCommandSandbox(config commandConfig) (*commandSandbox, error) {
 		errout, et := stderr.finish()
 		return CommandResult{code, out, errout, timedOut, ot || et}, nil
 	}
-	return w.commands, nil
+	return commands, nil
 }

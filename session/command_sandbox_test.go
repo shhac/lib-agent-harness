@@ -10,11 +10,13 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/sandboxhook"
+	"github.com/shhac/lib-agent-harness/sandbox"
 )
 
 func fakeCommandSandbox(t *testing.T, execute func(context.Context, string, string, time.Duration, func()) (CommandResult, error)) *CommandSandbox {
 	t.Helper()
-	w, err := openWorkspace(Options{WorkDir: t.TempDir(), Workbench: &Workbench{}, Restriction: &Restriction{Tools: ToolHost{}}})
+	w, err := openWorkspace(Options{WorkDir: t.TempDir(), Workbench: &Workbench{}, Restriction: &Restriction{Tools: ToolHost{}}}, newID())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,14 +171,14 @@ func TestCommandSandboxCloseDoesNotWaitForDirectoryValidation(t *testing.T) {
 				t.Error("command launched after Close")
 				return CommandResult{}, nil
 			})
-			if err := s.ws.root.Mkdir("nested", 0700); err != nil {
+			if err := sandboxhook.Access(s.ws.files).Root.Mkdir("nested", 0700); err != nil {
 				t.Fatal(err)
 			}
 			entered, release := make(chan struct{}), make(chan struct{})
 			var releaseOnce sync.Once
 			releaseWalk := func() { releaseOnce.Do(func() { close(release) }) }
 			defer releaseWalk()
-			s.ws.openStep = func() { close(entered); <-release }
+			*sandboxhook.Access(s.ws.files).OpenStep = func() { close(entered); <-release }
 			result := make(chan error, 1)
 			go func() {
 				req := CommandRequest{Command: "wait", Dir: "nested"}
@@ -282,13 +284,13 @@ func TestCommandSandboxCleanupFailurePreservesState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := os.OpenRoot(t.TempDir())
+	files, err := sandbox.OpenWorkspace(sandbox.Config{Root: t.TempDir()})
 	if err != nil {
 		lock.Close()
 		t.Fatal(err)
 	}
 	failure := commandError(CommandCleanupUnknown)
-	w := &workspace{root: root, stop: make(chan struct{}), commands: &commandSandbox{close: func() error { return failure }}}
+	w := &workbenchHost{files: files, commands: &commandSandbox{close: func() error { return failure }}}
 	s := &CommandSandbox{ws: w, dir: dir, lock: lock}
 	if s.Close() != failure || s.Close() != failure {
 		t.Fatal("cleanup failure not stable")

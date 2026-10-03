@@ -1,6 +1,6 @@
 //go:build !windows
 
-package session
+package sandbox
 
 import (
 	"context"
@@ -21,7 +21,7 @@ import (
 func TestWorkbenchListMarksAFIFOWithoutOpeningIt(t *testing.T) {
 	ws, work, _ := testWorkspace(t)
 	testenv.SkipIfRefused(t, "making a FIFO", syscall.Mkfifo(filepath.Join(work, "pipe"), 0o600))
-	done := make(chan ToolResult, 1)
+	done := make(chan Result, 1)
 	go func() { done <- call(t, ws, workbenchListFiles, map[string]any{}) }()
 	select {
 	case r := <-done:
@@ -45,7 +45,7 @@ func TestWorkbenchFIFOAndSocketRefusal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w, err := openWorkspace(Options{Workbench: &Workbench{}, WorkDir: work, Restriction: &Restriction{Tools: ToolHost{}}})
+	w, err := OpenWorkspace(Config{Root: work})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -31,7 +31,7 @@ type commandConfig struct {
 	outputBudget int
 }
 
-func setupWorkbenchCommands(w *workspace, o Options, id string) error {
+func setupWorkbenchCommands(w *workbenchHost, o Options, id string) error {
 	if o.Workbench.Commands == nil {
 		return nil
 	}
@@ -164,7 +164,7 @@ func workbenchCommandDefinition() ToolDefinition {
 	return ToolDefinition{Name: workbenchRunCommand, Description: "Run a shell command inside the proved workspace sandbox. Output is bounded and a timeout stops the process tree.", Schema: map[string]any{"type": "object", "properties": map[string]any{"command": map[string]any{"type": "string"}, "dir": map[string]any{"type": "string"}, "timeout_seconds": map[string]any{"type": "integer"}}, "required": []any{"command"}, "additionalProperties": false}}
 }
 
-func (w *workspace) runCommand(ctx context.Context, raw json.RawMessage) (ToolResult, error) {
+func (w *workbenchHost) runCommand(ctx context.Context, raw json.RawMessage) (ToolResult, error) {
 	var in struct {
 		Command string
 		Dir     string
@@ -187,11 +187,10 @@ func (w *workspace) runCommand(ctx context.Context, raw json.RawMessage) (ToolRe
 	}
 	// Reuse the symlink-free walk to validate a directory. The OS sandbox remains
 	// the boundary if the pathname changes between validation and command start.
-	c, _, _, code := w.writeParent(ctx, rel+"/placeholder", false)
+	code = w.checkDir(ctx, rel)
 	if code != "" {
 		return fail(code)
 	}
-	c.close()
 	return w.commands.run(ctx, in.Command, rel, timeout)
 }
 

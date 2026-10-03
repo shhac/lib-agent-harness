@@ -4,23 +4,22 @@ package session
 // session's WorkDir (design-docs/2026-09-29-api-workbench.md). What the model
 // is offered and what the host admits both come from workbenchDefinitions, so
 // the two lists cannot drift apart. The tools themselves are in
-// workbench_files.go.
+// sandbox.Workspace.
 //
 // Read tools are always present. Writes are opt-in and atomic; shell commands
 // require a pre-launch proof of the pinned operating-system sandbox.
 
 import (
 	"context"
-	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/completion"
+	"github.com/shhac/lib-agent-harness/sandbox"
 )
 
 // Workbench gives an OpenAI-compatible session the library's own tools over
@@ -138,52 +137,8 @@ func normalizeWorkbench(o Options) (Options, error) {
 	return normalizeWorkbenchCommands(o)
 }
 
-// nested reports whether inner is outer or lies inside it. Both are absolute
-// and resolved. Paths are compared element by element, without case where the
-// file system usually has none; then each of inner's ancestors, inner
-// included, is compared with outer by identity, which catches a spelling the
-// comparison missed. Failing to read outer counts as nested.
-func nested(outer, inner string) bool {
-	if lexicallyWithin(outer, inner) {
-		return true
-	}
-	target, err := os.Stat(outer)
-	if err != nil {
-		return true
-	}
-	for dir := inner; ; {
-		if info, err := os.Stat(dir); err == nil && os.SameFile(info, target) {
-			return true
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return false
-		}
-		dir = parent
-	}
-}
-
-func lexicallyWithin(outer, inner string) bool {
-	split := func(p string) []string {
-		return strings.FieldsFunc(filepath.Clean(p), func(r rune) bool { return r == filepath.Separator })
-	}
-	o, i := split(outer), split(inner)
-	if filepath.VolumeName(outer) != "" || filepath.VolumeName(inner) != "" {
-		if !strings.EqualFold(filepath.VolumeName(outer), filepath.VolumeName(inner)) {
-			return false
-		}
-	}
-	if len(o) > len(i) {
-		return false
-	}
-	fold := runtime.GOOS == "darwin" || runtime.GOOS == "windows"
-	for n := range o {
-		if o[n] != i[n] && !(fold && strings.EqualFold(o[n], i[n])) {
-			return false
-		}
-	}
-	return true
-}
+func nested(outer, inner string) bool          { return sandbox.Nested(outer, inner) }
+func lexicallyWithin(outer, inner string) bool { return sandbox.Within(outer, inner) }
 
 // workbenchDigest is what a resume must match: the workspace and the
 // workbench's powers. Env and Timeout change no power, so they stay out. The
@@ -223,46 +178,9 @@ func workbenchDefinitions(o Options) []ToolDefinition {
 	if o.Workbench == nil {
 		return nil
 	}
-	defs := []ToolDefinition{
-		{
-			Name:        workbenchReadFile,
-			Description: "Read a UTF-8 text file in the workspace. Returns at most 2000 lines and 64 KiB per call, and says where to continue.",
-			Schema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"path":   map[string]any{"type": "string", "description": "Relative, slash-separated path inside the workspace."},
-					"offset": map[string]any{"type": "integer", "description": "First line to return, from 1. Default 1."},
-					"limit":  map[string]any{"type": "integer", "description": "Most lines to return, up to 2000. Default 2000."},
-				},
-				"required":             []any{"path"},
-				"additionalProperties": false,
-			},
-		},
-		{
-			Name:        workbenchListFiles,
-			Description: "List a workspace directory, sorted, at most 2000 entries. Directories end in /; links, FIFOs and other files are marked. .git is skipped.",
-			Schema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"path":  map[string]any{"type": "string", "description": "Relative, slash-separated directory inside the workspace. Default: the workspace itself."},
-					"depth": map[string]any{"type": "integer", "description": "Levels to descend, 1 to 8. Default 2."},
-				},
-				"additionalProperties": false,
-			},
-		},
-		{
-			Name:        workbenchSearchFiles,
-			Description: "Search workspace UTF-8 files using RE2 or literal text. At most 200 matches, lines cut to 400 bytes; files over 1 MiB, binary files, links and .git are skipped.",
-			Schema: map[string]any{"type": "object", "properties": map[string]any{
-				"pattern": map[string]any{"type": "string", "description": "RE2 pattern, at most 4096 bytes."},
-				"literal": map[string]any{"type": "boolean"},
-				"path":    map[string]any{"type": "string", "description": "Relative file or directory. Default: workspace."},
-				"glob":    map[string]any{"type": "string", "description": "Slash-relative glob, or basename glob without a slash."},
-			}, "required": []any{"pattern"}, "additionalProperties": false},
-		},
-	}
-	if o.Workbench.Write {
-		defs = append(defs, workbenchWriteDefinitions()...)
+	var defs []ToolDefinition
+	for _, d := range sandbox.Definitions(o.Workbench.Write) {
+		defs = append(defs, ToolDefinition{Name: d.Name, Description: d.Description, Schema: d.Schema})
 	}
 	if o.Workbench.Commands != nil {
 		defs = append(defs, workbenchCommandDefinition())
@@ -283,26 +201,28 @@ func completionTools(defs []ToolDefinition) []completion.Tool {
 // on. Only the tools workbenchDefinitions returned are admitted, so no other
 // reserved name reaches it.
 type workbenchHandler struct {
-	ws   *workspace
+	ws   *workbenchHost
 	next ToolHandler
 }
 
 func (h workbenchHandler) CallTool(ctx context.Context, call ToolCall) (ToolResult, error) {
+	var r sandbox.Result
+	var err error
 	switch call.Name {
-	case workbenchWriteFile, workbenchEditFile:
-		r, err := h.ws.dispatchWrite(ctx, func() (ToolResult, error) { return h.ws.writeFile(ctx, call.Name, call.Arguments) })
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return workbenchError(call.Name, wbWriteFailed, ""), nil
-		}
-		return r, err
+	case workbenchWriteFile:
+		r, err = h.ws.files.Write(ctx, call.Arguments)
+	case workbenchEditFile:
+		r, err = h.ws.files.Edit(ctx, call.Arguments)
+	case workbenchReadFile:
+		r, err = h.ws.files.Read(ctx, call.Arguments)
+	case workbenchSearchFiles:
+		r, err = h.ws.files.Search(ctx, call.Arguments)
+	case workbenchListFiles:
+		r, err = h.ws.files.List(ctx, call.Arguments)
 	case workbenchRunCommand:
 		return h.ws.runCommand(ctx, call.Arguments)
-	case workbenchReadFile:
-		return h.ws.dispatch(ctx, func() (ToolResult, error) { return h.ws.readFile(ctx, call.Arguments) })
-	case workbenchSearchFiles:
-		return h.ws.dispatch(ctx, func() (ToolResult, error) { return h.ws.searchFiles(ctx, call.Arguments) })
-	case workbenchListFiles:
-		return h.ws.dispatch(ctx, func() (ToolResult, error) { return h.ws.listFiles(ctx, call.Arguments) })
+	default:
+		return h.next.CallTool(ctx, call)
 	}
-	return h.next.CallTool(ctx, call)
+	return ToolResult{Content: r.Content, IsError: r.IsError}, h.ws.fromSandbox(err)
 }

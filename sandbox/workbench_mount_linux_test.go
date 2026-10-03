@@ -1,4 +1,4 @@
-package session
+package sandbox
 
 import (
 	"errors"
@@ -15,7 +15,7 @@ func TestWorkbenchBindMountAndParentSwap(t *testing.T) {
 	if work == "" {
 		t.Skip("bind-mount witness is supplied by Linux CI")
 	}
-	w, err := openWorkspace(Options{Workbench: &Workbench{}, WorkDir: work, Restriction: &Restriction{Tools: ToolHost{}}})
+	w, err := OpenWorkspace(Config{Root: work})
 	if err != nil {
 		t.Fatal(err)
 	}

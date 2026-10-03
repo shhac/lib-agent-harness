@@ -1,14 +1,15 @@
-package session
+package sandbox
 
 import (
-	"github.com/shhac/lib-agent-harness/internal/testenv"
-	"golang.org/x/sys/windows"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"unsafe"
+
+	"github.com/shhac/lib-agent-harness/internal/testenv"
+	"golang.org/x/sys/windows"
 )
 
 func TestWorkbenchWindowsNewFileModeDoesNotSetReadOnly(t *testing.T) {

@@ -1,11 +1,12 @@
 //go:build !windows
 
-package session
+package sandbox
 
 import (
-	"github.com/shhac/lib-agent-harness/internal/wsfile"
 	"io/fs"
 	"os"
+
+	"github.com/shhac/lib-agent-harness/internal/wsfile"
 )
 
 func workbenchFileMode(mode fs.FileMode) fs.FileMode { return mode.Perm() }
@@ -25,3 +26,6 @@ func syncWorkbenchDir(r *os.Root) error {
 	defer f.Close()
 	return f.Sync()
 }
+
+// SyncDir completes directory durability using the platform's workspace rules.
+func SyncDir(r *os.Root) error { return syncWorkbenchDir(r) }

@@ -15,6 +15,7 @@ import (
 
 	"github.com/shhac/lib-agent-harness/internal/skills"
 	"github.com/shhac/lib-agent-harness/process"
+	"github.com/shhac/lib-agent-harness/sandbox"
 )
 
 type workbenchToken struct {
@@ -86,7 +87,7 @@ func prepareWorkbenchCommands(o Options, id string) (layout workbenchLayout, env
 	if err == nil {
 		r, e := os.OpenRoot(dir)
 		if e == nil {
-			err = syncWorkbenchDir(r)
+			err = sandbox.SyncDir(r)
 			r.Close()
 		} else {
 			err = e

@@ -1,9 +1,9 @@
-package session
+package sandbox
 
 // The workbench's read tools. The model's path is first cleaned by the rules
 // wsfile shares with skills, and an element Win32 reads as a device is
 // refused on every platform. Then it is walked a component at a time through
-// directory handles (workbench_walk.go), all inside one os.Root on the
+// directory handles (walk.go), all inside one os.Root on the
 // resolved WorkDir, so no .., absolute path or link reaches outside, and no
 // name checked earlier is trusted when something is opened. What is read is
 // decided by the opened handle.
@@ -30,6 +30,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/shhac/lib-agent-harness/internal/textbound"
 	"github.com/shhac/lib-agent-harness/internal/wsfile"
 )
 
@@ -88,19 +89,18 @@ const (
 	wbNotListed = "path_not_listed"
 )
 
-// workspace is one session's handle on its WorkDir.
-type workspace struct {
+// Workspace is a confined handle on a caller-selected workspace.
+type Workspace struct {
 	id         string
 	mode       fs.FileMode
 	writeFault func(string) error
-	commands   *commandSandbox
 	root       *os.Root
 	mount      wsfile.Mount
 	jobs       chan workspaceJob
 	stop       chan struct{}
 	stopped    chan struct{}
 	stopOnce   sync.Once
-	stuck      atomic.Pointer[TurnError]
+	stuck      atomic.Pointer[CommandError]
 	failed     func(error)
 	grace      time.Duration
 	// budget is the smaller of a tool's own limit and the host's
@@ -126,47 +126,46 @@ type workspace struct {
 	maxVisited int
 }
 
-// openWorkspace opens the session's root, or returns nil for a session
-// without a workbench.
-func openWorkspace(o Options) (*workspace, error) {
-	if o.Workbench == nil {
-		return nil, nil
-	}
+// OpenWorkspace opens a workspace using the caller's effective permissions and budget.
+func OpenWorkspace(config Config) (*Workspace, error) {
 	if !wsfile.MountCheckSupported {
-		return nil, refuse(o, "workbench", RefusedWorkbenchMountCheck, "the runtime cannot check workspace mount identity")
+		return nil, refusal("workbench", RefusedWorkbenchMountCheck, "the runtime cannot check workspace mount identity")
 	}
-	root, err := os.OpenRoot(o.WorkDir + string(filepath.Separator) + ".")
+	root, err := os.OpenRoot(config.Root + string(filepath.Separator) + ".")
 	if err != nil {
-		return nil, refuse(o, "work_dir", RefusedWorkDir, "the workspace could not be opened")
+		return nil, refusal("work_dir", RefusedWorkDir, "the workspace could not be opened")
 	}
 	f, err := root.OpenFile(".", wsfile.DirectoryFlags, 0)
 	if err != nil {
 		root.Close()
-		return nil, refuse(o, "workbench", RefusedWorkbenchMountCheck, "the runtime cannot check workspace mount identity")
+		return nil, refusal("workbench", RefusedWorkbenchMountCheck, "the runtime cannot check workspace mount identity")
 	}
 	mount, err := workspaceMountID(f)
 	f.Close()
 	if err != nil {
 		root.Close()
-		return nil, refuse(o, "workbench", RefusedWorkbenchMountCheck, "the runtime cannot check workspace mount identity")
+		return nil, refusal("workbench", RefusedWorkbenchMountCheck, "the runtime cannot check workspace mount identity")
 	}
 	budget := maxWorkbenchResult
-	if limit := o.Restriction.Tools.MaxResultBytes; limit > 0 && limit < budget {
+	if limit := config.Budget; limit > 0 && limit < budget {
 		budget = limit
 	}
-	w := &workspace{mode: o.Workbench.NewFileMode, root: root, mount: mount, budget: budget, grace: workspaceGrace, jobs: make(chan workspaceJob), stop: make(chan struct{}), stopped: make(chan struct{})}
+	w := &Workspace{id: config.SessionID, mode: config.NewFileMode, failed: config.OnFailure, root: root, mount: mount, budget: budget, grace: workspaceGrace, jobs: make(chan workspaceJob), stop: make(chan struct{}), stopped: make(chan struct{})}
+	if config.Grace > 0 {
+		w.grace = config.Grace
+	}
 	go w.worker()
 	return w, nil
 }
 
-func (w *workspace) close() {
+func (w *Workspace) close() {
 	if w != nil {
 		w.stopOnce.Do(func() { close(w.stop); _ = w.root.Close() })
 	}
 }
 
 // openIn opens a file through a directory handle, counted.
-func (w *workspace) openIn(dir *os.Root, name string) (*os.File, error) {
+func (w *Workspace) openIn(dir *os.Root, name string) (*os.File, error) {
 	if w.openStep != nil {
 		w.openStep()
 	}
@@ -195,25 +194,25 @@ func (w *workspace) openIn(dir *os.Root, name string) (*os.File, error) {
 	return f, nil
 }
 
-func (w *workspace) release(f *os.File) {
+func (w *Workspace) release(f *os.File) {
 	_ = f.Close()
 	w.handles.Add(-1)
 }
 
 // checkpoint stops a call between steps once its context ends.
-func (w *workspace) checkpoint(ctx context.Context) error {
+func (w *Workspace) checkpoint(ctx context.Context) error {
 	if w.step != nil {
 		w.step()
 	}
 	return ctx.Err()
 }
 
-func workbenchError(tool, code, rel string) ToolResult {
+func workbenchError(tool, code, rel string) Result {
 	text := tool + " error: " + code
 	if rel != "" {
-		text += ": " + strconv.Quote(cutRunes(rel, maxQuotedPath))
+		text += ": " + strconv.Quote(textbound.Cut(rel, maxQuotedPath))
 	}
-	return ToolResult{Content: text, IsError: true}
+	return Result{Content: text, IsError: true}
 }
 
 // resolveName cleans the model's path and returns it, or the code refusing
@@ -259,7 +258,7 @@ func rootFailure(err error) string {
 
 // readFile answers read_file: a regular UTF-8 file of at most 16 MiB, from
 // line offset, at most limit lines and the result budget.
-func (w *workspace) readFile(ctx context.Context, raw json.RawMessage) (ToolResult, error) {
+func (w *Workspace) readFile(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var in struct {
 		Path   string `json:"path"`
 		Offset *int   `json:"offset"`
@@ -283,7 +282,7 @@ func (w *workspace) readFile(ctx context.Context, raw json.RawMessage) (ToolResu
 		return workbenchError(workbenchReadFile, code, in.Path), nil
 	}
 	if err := w.checkpoint(ctx); err != nil {
-		return ToolResult{}, err
+		return Result{}, err
 	}
 	top, err := w.rootNode()
 	if err != nil {
@@ -306,7 +305,7 @@ func (w *workspace) readFile(ctx context.Context, raw json.RawMessage) (ToolResu
 	data, tooLarge, err := wsfile.ReadAtMost(f, maxReadFileBytes, func() error { return w.checkpoint(ctx) })
 	switch {
 	case ctx.Err() != nil:
-		return ToolResult{}, ctx.Err()
+		return Result{}, ctx.Err()
 	case err != nil:
 		return workbenchError(workbenchReadFile, wbUnreadable, clean), nil
 	case tooLarge:
@@ -314,7 +313,7 @@ func (w *workspace) readFile(ctx context.Context, raw json.RawMessage) (ToolResu
 	case !wsfile.Text(data):
 		return workbenchError(workbenchReadFile, wbNotText, clean), nil
 	}
-	return ToolResult{Content: readLines(data, offset, limit, w.budget)}, nil
+	return Result{Content: readLines(data, offset, limit, w.budget)}, nil
 }
 
 // openRegular walks clean from the root and opens the regular file it names,
@@ -325,7 +324,7 @@ func (w *workspace) readFile(ctx context.Context, raw json.RawMessage) (ToolResu
 // A reserved temporary name is refused in any component, of the path asked
 // for or of any link's target, and, on Windows, as the file system names what
 // was opened.
-func (w *workspace) openRegular(c *cursor, top *dirNode, clean string) (*os.File, string) {
+func (w *Workspace) openRegular(c *cursor, top *dirNode, clean string) (*os.File, string) {
 	parts := strings.Split(clean, "/")
 	node, hops := top, 0
 	for i := 0; i < len(parts); i++ {
@@ -462,7 +461,7 @@ func readLines(data []byte, offset, limit, budget int) string {
 			if end == start {
 				// One line longer than a result: show its start rather than
 				// nothing, and move past it.
-				shown := cutRunes(string(data[start:min(next, start+room+utf8.UTFMax)]), room)
+				shown := textbound.Cut(string(data[start:min(next, start+room+utf8.UTFMax)]), room)
 				return shown + "\n[read_file: line " + strconv.Itoa(offset) + " is longer than one result; only its first " + strconv.Itoa(len(shown)) + " bytes are shown. Continue with offset " + strconv.Itoa(offset+1) + "]"
 			}
 			break
@@ -483,7 +482,7 @@ func readLines(data []byte, offset, limit, budget int) string {
 // listFiles answers list_files: a directory's entries to a depth, sorted,
 // shallowest first when it has to cut. Links are listed and never followed;
 // .git and the reserved temporary names are left out.
-func (w *workspace) listFiles(ctx context.Context, raw json.RawMessage) (ToolResult, error) {
+func (w *Workspace) listFiles(ctx context.Context, raw json.RawMessage) (Result, error) {
 	var in struct {
 		Path  string `json:"path"`
 		Depth *int   `json:"depth"`
@@ -535,7 +534,7 @@ func (w *workspace) listFiles(ctx context.Context, raw json.RawMessage) (ToolRes
 		d := queue[0]
 		queue = queue[1:]
 		if err := w.checkpoint(ctx); err != nil {
-			return ToolResult{}, err
+			return Result{}, err
 		}
 		seen := 0
 		handle, err := c.to(d.node)
@@ -565,7 +564,7 @@ func (w *workspace) listFiles(ctx context.Context, raw json.RawMessage) (ToolRes
 		for i, name := range names {
 			if (i+1)%listCheckEvery == 0 {
 				if err := w.checkpoint(ctx); err != nil {
-					return ToolResult{}, err
+					return Result{}, err
 				}
 			}
 			if hiddenName(name) {
@@ -604,7 +603,7 @@ func (w *workspace) listFiles(ctx context.Context, raw json.RawMessage) (ToolRes
 			}
 		}
 		if ctx.Err() != nil {
-			return ToolResult{}, ctx.Err()
+			return Result{}, ctx.Err()
 		}
 		if w.listed != nil {
 			w.listed(d.node.rel)
@@ -636,16 +635,16 @@ func (w *workspace) listFiles(ctx context.Context, raw json.RawMessage) (ToolRes
 		notes = append(notes, "[list_files: "+strconv.Itoa(incomplete)+" directories could not be read in full, so this listing is incomplete]")
 	}
 	if len(entries) == 0 && len(notes) == 0 {
-		return ToolResult{Content: "[list_files: the directory is empty]"}, nil
+		return Result{Content: "[list_files: the directory is empty]"}, nil
 	}
-	return ToolResult{Content: strings.Join(append(entries, notes...), "\n")}, nil
+	return Result{Content: strings.Join(append(entries, notes...), "\n")}, nil
 }
 
 // listTarget walks to the directory list_files was asked for, one component
 // at a time through the cursor, following no link: a link is refused as the
 // last component or on the way, and a hidden component, by spelling or by
 // what it opens, is refused. It returns the directory's node.
-func (w *workspace) listTarget(c *cursor, root *dirNode, clean string) (*dirNode, string) {
+func (w *Workspace) listTarget(c *cursor, root *dirNode, clean string) (*dirNode, string) {
 	if clean == "." {
 		return root, ""
 	}
@@ -693,7 +692,7 @@ func (w *workspace) listTarget(c *cursor, root *dirNode, clean string) (*dirNode
 // already visited, so the caller can say the listing is incomplete. Only
 // names are read: what each one is comes from describe, never from the type
 // a directory entry may or may not carry.
-func (w *workspace) eachName(ctx context.Context, dir *os.Root, rel string, visit func(name string) (bool, error)) error {
+func (w *Workspace) eachName(ctx context.Context, dir *os.Root, rel string, visit func(name string) (bool, error)) error {
 	f, err := w.openIn(dir, ".")
 	if err != nil {
 		return err
@@ -756,7 +755,7 @@ func describe(dir *os.Root, name, rel string) (line string, info fs.FileInfo, ex
 	return rel, info, true
 }
 
-func (w *workspace) visitLimit() int {
+func (w *Workspace) visitLimit() int {
 	if w.maxVisited > 0 {
 		return w.maxVisited
 	}
@@ -765,7 +764,7 @@ func (w *workspace) visitLimit() int {
 
 // fileOtherMount checks regular listing entries too: bind mounts can target
 // a file. No content is read and a swapped special file is opened nonblocking.
-func (w *workspace) fileOtherMount(dir *os.Root, name string, info fs.FileInfo) bool {
+func (w *Workspace) fileOtherMount(dir *os.Root, name string, info fs.FileInfo) bool {
 	f, err := dir.OpenFile(name, wsfile.OpenFlags, 0)
 	if err != nil {
 		return false

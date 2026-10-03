@@ -1,4 +1,4 @@
-package session
+package sandbox
 
 // How the workbench's tools reach a directory without ever trusting a name
 // they checked earlier. A path is walked one component at a time, each
@@ -68,7 +68,7 @@ func (n *dirNode) child(name string, info fs.FileInfo) *dirNode {
 	return &dirNode{name: name, info: info, parent: n, rel: path.Join(n.rel, name)}
 }
 
-func (w *workspace) rootNode() (*dirNode, error) {
+func (w *Workspace) rootNode() (*dirNode, error) {
 	info, err := w.root.Stat(".")
 	if err != nil {
 		return nil, err
@@ -82,13 +82,13 @@ func (w *workspace) rootNode() (*dirNode, error) {
 // holds at most one handle per level.
 type cursor struct {
 	created []*os.Root // write-created directories remain private until commit
-	w       *workspace
+	w       *Workspace
 	policy  walkPolicy
 	nodes   []*dirNode
 	roots   []*os.Root
 }
 
-func (w *workspace) newCursor(root *dirNode, policy walkPolicy) *cursor {
+func (w *Workspace) newCursor(root *dirNode, policy walkPolicy) *cursor {
 	return &cursor{w: w, policy: policy, nodes: []*dirNode{root}, roots: []*os.Root{w.root}}
 }
 

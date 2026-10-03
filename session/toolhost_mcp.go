@@ -8,12 +8,13 @@ import (
 	"bufio"
 	"crypto/subtle"
 	"encoding/json"
-	"github.com/shhac/lib-agent-harness/internal/rawjson"
 	"net"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/shhac/lib-agent-harness/internal/rawjson"
 )
 
 // serve reads the bridge's authentication line, then the protocol stream. A

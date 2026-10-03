@@ -1,5 +1,9 @@
 # The API workbench: workspace tools for OpenAI-compatible sessions
 
+File access now lives in `sandbox.Workspace`; session retains hosting and
+transcript recovery. See [the stage-A package boundary](2026-10-03-sandbox-package.md)
+for the extraction, compatibility commitments and stage-B scope.
+
 Proposed 2026-09-29, written 2026-09-30. Revised the same day:
 
 - how the workbench tools reach the model as well as the host;

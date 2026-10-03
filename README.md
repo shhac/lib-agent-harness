@@ -349,6 +349,11 @@ s, opened, err := session.Open(ctx, session.Options{
 
 ### Workbench
 
+Workspace file access opens through `sandbox.OpenWorkspace(sandbox.Config)`;
+session hosts its tools and preserves the existing workbench API and error types. The sandbox
+API is provisional until the command extraction completes; command execution
+still uses `session.OpenCommandSandbox`. See the [package-boundary design](design-docs/2026-10-03-sandbox-package.md).
+
 Set `Options.Workbench = &session.Workbench{}` for read-only workspace tools
 on an OpenAI-compatible session, on Linux, macOS or Windows. `WorkDir` must
 be an absolute existing directory; it and `RuntimeHome` must not contain

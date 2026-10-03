@@ -1,12 +1,12 @@
-package session
+package sandbox
 
 import (
-	"github.com/shhac/lib-agent-harness/internal/testenv"
 	"io/fs"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 	"golang.org/x/sys/windows"
 )
 

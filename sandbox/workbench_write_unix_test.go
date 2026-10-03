@@ -1,6 +1,6 @@
 //go:build !windows
 
-package session
+package sandbox
 
 import (
 	"context"
@@ -22,7 +22,7 @@ func TestWorkbenchWriteFIFOAndSetID(t *testing.T) {
 	if err := syscall.Mkfifo(fifo, 0600); err != nil {
 		t.Fatal(err)
 	}
-	done := make(chan ToolResult, 1)
+	done := make(chan Result, 1)
 	go func() {
 		r, _ := w.writeFile(context.Background(), workbenchWriteFile, json.RawMessage(`{"path":"fifo","content":"bad"}`))
 		done <- r

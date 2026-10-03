@@ -211,7 +211,7 @@ func (s *Session) endAPITurn(t *Turn, status string, err error, account *turnAcc
 	s.mu.Lock()
 	sessionFailure := s.failure
 	s.mu.Unlock()
-	if s.api.workspace != nil && s.api.workspace.stuck.Load() != nil || workspaceStuck(sessionFailure) {
+	if s.api.workspace != nil && s.api.workspace.files.Stuck() || workspaceStuck(sessionFailure) {
 		status, code = "failed", WorkspaceIOStuck
 	} else if t.ended() {
 		status, code = "interrupted", "session_closed"

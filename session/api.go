@@ -161,7 +161,7 @@ func stateError(code string) *StateError {
 type apiSession struct {
 	store *transcript
 	// workspace is the workbench's root, nil without one.
-	workspace *workspace
+	workspace *workbenchHost
 	// resultLimit bounds every answer to a call the model sees, as the host's
 	// MaxResultBytes does for the answers it produces.
 	resultLimit int
@@ -418,15 +418,18 @@ func openAPI(ctx context.Context, o Options, r *Ref) (*Session, error) {
 	)
 	// The workspace opens first, so a workspace that cannot be opened leaves
 	// no transcript behind.
-	ws, err := openWorkspace(o)
+	if r == nil {
+		ref = apiReference(o, newID())
+	} else {
+		ref = *r
+	}
+	ws, err := openWorkspace(o, ref.ID)
 	if err != nil {
 		return nil, err
 	}
 	if r == nil {
-		ref = apiReference(o, newID())
 		store, records, err = createTranscript(o.RuntimeHome, ref)
 	} else {
-		ref = *r
 		store, records, err = openTranscript(o.RuntimeHome, ref)
 	}
 	if err != nil {
@@ -434,7 +437,6 @@ func openAPI(ctx context.Context, o Options, r *Ref) (*Session, error) {
 		return nil, err
 	}
 	if ws != nil {
-		ws.id = ref.ID
 		if err = setupWorkbenchCommands(ws, o, ref.ID); err != nil {
 			store.close()
 			ws.close()
@@ -461,19 +463,12 @@ func openAPI(ctx context.Context, o Options, r *Ref) (*Session, error) {
 		complete = completion.Complete
 	}
 	a := &apiSession{store: store, workspace: ws, complete: complete, tools: apiTools(o), system: o.Instructions.Text, resultLimit: o.Restriction.Tools.resultLimit(), records: records, responses: countResponses(records), released: make(chan struct{}), failed: s.fail}
-	additions, recovery := recoverTranscript(records)
-	for _, addition := range additions {
-		addition.Text = bound(addition.Text, a.resultLimit)
-		if err = a.append(addition); err != nil {
-			store.close()
-			ws.close()
-			return nil, err
-		}
+	if err = restoreAPIRecovery(a, ws, o, ref, r == nil); err != nil {
+		return nil, err
 	}
-	a.recovery = recovery
 	s.api = a
 	if ws != nil {
-		ws.failed = s.failWorkspace
+		ws.setFailed(s.failWorkspace)
 	}
 	// No onRefusal: the loop owns every call it hands the host, so it reports
 	// each refusal on the turn itself, in order.
@@ -504,7 +499,7 @@ func (s *Session) activeTurnID() string {
 
 // apiToolHost is the caller's host with the library's workbench and skill
 // calls answered, in that order, in front of the caller's handler.
-func apiToolHost(o Options, ws *workspace) ToolHost {
+func apiToolHost(o Options, ws *workbenchHost) ToolHost {
 	host := o.Restriction.Tools
 	if o.skills != nil {
 		run := o.SkillRun
@@ -655,4 +650,26 @@ func (a *apiSession) shutdown(host *toolHost) {
 		a.workspace.close()
 		close(a.released)
 	}()
+}
+
+// restoreAPIRecovery writes unknown outcomes before admitting any tool. A
+// failure gives up prepared resources; a fresh failed session leaves no state.
+func restoreAPIRecovery(a *apiSession, ws *workbenchHost, o Options, ref Ref, fresh bool) error {
+	additions, recovery := recoverTranscript(a.records)
+	for _, addition := range additions {
+		addition.Text = bound(addition.Text, a.resultLimit)
+		if err := a.append(addition); err != nil {
+			if ws != nil && ws.commands != nil {
+				_ = ws.commands.close()
+			}
+			a.store.close()
+			ws.close()
+			if fresh {
+				_ = os.RemoveAll(sessionDir(o.RuntimeHome, ref.ID))
+			}
+			return err
+		}
+	}
+	a.recovery = recovery
+	return nil
 }
