@@ -15,7 +15,7 @@ import (
 )
 
 // A versioned template is shared by commands and the disposable canary.
-const workbenchSeatbeltVersion = "seatbelt-workbench-v5"
+const workbenchSeatbeltVersion = "seatbelt-workbench-v6"
 
 func seatbeltProfile(l workbenchLayout) string {
 	var b strings.Builder
@@ -64,7 +64,7 @@ func seatbeltProfile(l workbenchLayout) string {
 	for _, p := range writes {
 		fmt.Fprintf(&b, "; Only private scratch and the opted-in workspace are writable.\n(allow file-write* (subpath %s))\n", strconv.Quote(p))
 	}
-	b.WriteString("; Repository metadata cannot be written, unlinked, moved or linked, including case aliases.\n(deny file-write* (regex #\"(^|/)[.][gG][iI][tT][ .]*(/|$)\"))\n(deny file-link (regex #\"(^|/)[.][gG][iI][tT][ .]*(/|$)\"))\n")
+	fmt.Fprintf(&b, "; Private scratch may host disposable repositories; preserve metadata elsewhere.\n(deny file-write* (require-all (regex #\"(^|/)[.][gG][iI][tT][ .]*(/|$)\") (require-not (subpath %s))))\n(deny file-link (require-all (regex #\"(^|/)[.][gG][iI][tT][ .]*(/|$)\") (require-not (subpath %s))))\n", strconv.Quote(l.Tmp), strconv.Quote(l.Tmp))
 	// Seatbelt's regular expressions have no counted repetition, so each
 	// hex digit of the temporary's name is spelled out.
 	temporary := `(^|/)[.]harness-workbench-` + strings.Repeat("[0-9a-f]", 32) + "-" + strings.Repeat("[0-9a-f]", 16) + `[.]tmp$`

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -54,6 +56,31 @@ func TestCommandSandboxRunsSelectedDeveloperTools(t *testing.T) {
 	}
 	if r.ExitCode != 0 || !strings.Contains(r.Stdout, "built") {
 		t.Fatalf("developer tools unusable: %+v", r)
+	}
+}
+
+func TestCommandSandboxGitMetadataOutsideScratchIsProtected(t *testing.T) {
+	opts := commandSandboxOptions(t, false)
+	s := openTestCommandSandbox(t, opts)
+	run := func(command string) CommandResult {
+		t.Helper()
+		r, err := s.Run(context.Background(), CommandRequest{Command: command})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	if r := run(`git init -q "$TMPDIR/fixture" && git -C "$TMPDIR/fixture" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m x && echo ok > "$TMPDIR/fixture/.git/probe"`); r.ExitCode != 0 {
+		t.Fatalf("private git repository unusable: %+v", r)
+	}
+	if r := run("echo x > .git/probe"); r.ExitCode == 0 {
+		t.Fatalf("workspace git write succeeded: %+v", r)
+	}
+	if _, err := os.Stat(filepath.Join(opts.WorkDir, ".git", "probe")); !os.IsNotExist(err) {
+		t.Fatalf("workspace git probe exists: %v", err)
+	}
+	if r := run("mkdir nested && git init -q nested"); r.ExitCode == 0 {
+		t.Fatalf("workspace nested git init succeeded: %+v", r)
 	}
 }
 
