@@ -43,3 +43,28 @@ func TestCommandSandboxStartedServerWithoutLoopback(t *testing.T) {
 	}
 	h.Stop()
 }
+
+// The /usr/bin shims resolve the owner's xcode-select choice through /var and,
+// for a full Xcode, need its whole bundle and license acceptance.
+func TestCommandSandboxRunsSelectedDeveloperTools(t *testing.T) {
+	s := openTestCommandSandbox(t, commandSandboxOptions(t, false))
+	r, err := s.Run(context.Background(), CommandRequest{Command: "printf 'int main(void){return 0;}' > a.c && /usr/bin/cc a.c -o a && ./a && /usr/bin/git --version >/dev/null && /usr/bin/make --version >/dev/null && echo built"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.ExitCode != 0 || !strings.Contains(r.Stdout, "built") {
+		t.Fatalf("developer tools unusable: %+v", r)
+	}
+}
+
+func TestDeveloperBundle(t *testing.T) {
+	for dir, want := range map[string]string{
+		"/Applications/Xcode.app/Contents/Developer":      "/Applications/Xcode.app",
+		"/Applications/Xcode-beta.app/Contents/Developer": "/Applications/Xcode-beta.app",
+		"/Library/Developer/CommandLineTools":             "/Library/Developer/CommandLineTools",
+	} {
+		if got := developerBundle(dir); got != want {
+			t.Errorf("developerBundle(%q) = %q, want %q", dir, got, want)
+		}
+	}
+}

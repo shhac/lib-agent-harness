@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// Frozen stage-A payload: never update this to accommodate a new key.
+// Frozen stage-A payload shape: only the pinned template below may change it.
 func legacyworkbenchProbeKey(o Options, system []string) (string, error) {
 	info, err := os.Stat("/usr/bin/sandbox-exec")
 	if err != nil {
@@ -30,7 +30,7 @@ func legacyworkbenchProbeKey(o Options, system []string) (string, error) {
 		Write, Loopback                       bool
 		Read, System, Env                     []string
 		Background                            bool
-	}{"workbench", "seatbelt-workbench-v4" + ":" + legacySeatbeltTemplateDigest, o.WorkDir, o.RuntimeHome, hex.EncodeToString(binaryHash[:]), info.Size(), info.ModTime(), o.Write, o.Loopback, o.Read, system, o.Env, o.Background})
+	}{"workbench", "seatbelt-workbench-v5" + ":" + legacySeatbeltTemplateDigest, o.WorkDir, o.RuntimeHome, hex.EncodeToString(binaryHash[:]), info.Size(), info.ModTime(), o.Write, o.Loopback, o.Read, system, o.Env, o.Background})
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:]), nil
 }
@@ -50,9 +50,9 @@ func TestWorkbenchProofKeyLegacyPayload(t *testing.T) {
 	}
 }
 
-// The profile bytes for this fixed layout are part of the cache key. Never
-// regenerate this digest to accommodate the package move.
-const legacySeatbeltTemplateDigest = "78a136fe74fd9956132489effed0d86409ed6e0c44fb181722a9c0dd636d4c33"
+// The profile bytes for this fixed layout are part of the cache key. Regenerate
+// this digest only together with a workbenchSeatbeltVersion bump.
+const legacySeatbeltTemplateDigest = "d9e772ec5588a548dd54288ff6268dcad9c7c64245a0344466652985e6130b81"
 
 func TestWorkbenchSeatbeltTemplatePinned(t *testing.T) {
 	system := []string{"/System", "/usr", "/bin", "/sbin", "/Library/Developer/CommandLineTools", "/opt/homebrew"}

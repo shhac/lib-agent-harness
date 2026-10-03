@@ -140,7 +140,7 @@ func TestWorkbenchSeatbeltProfile(t *testing.T) {
 		for _, loop := range []bool{false, true} {
 			l := workbenchLayout{Work: "/workspace", Home: "/runtime/home", Tmp: "/runtime/tmp", Read: []string{"/readset"}, System: []string{"/System", "/usr"}, Write: write, Loopback: loop}
 			profile := seatbeltProfile(l)
-			for _, required := range []string{"(deny default)", "(require-not (subpath \"/System/Volumes/Data\"))", "(allow process-exec)", "(allow process-fork)", "(target same-sandbox)", "(deny file-link", "(deny file-write*", "(subpath \"/readset\")", "(literal \"/private/etc/passwd\")", "(allow file-read-data (literal \"/\"))"} {
+			for _, required := range []string{"(deny default)", "(require-not (subpath \"/System/Volumes/Data\"))", "(allow process-exec)", "(allow process-fork)", "(target same-sandbox)", "(deny file-link", "(deny file-write*", "(subpath \"/readset\")", "(literal \"/private/etc/passwd\")", "(allow file-read-data (literal \"/\"))", "(allow file-read-metadata (literal \"/var\"))"} {
 				// Public etc entries use subpath so an optional directory (ssl/certs)
 				// and regular files share one pinned list.
 				if required == "(literal \"/private/etc/passwd\")" {

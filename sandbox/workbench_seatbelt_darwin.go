@@ -15,14 +15,14 @@ import (
 )
 
 // A versioned template is shared by commands and the disposable canary.
-const workbenchSeatbeltVersion = "seatbelt-workbench-v4"
+const workbenchSeatbeltVersion = "seatbelt-workbench-v5"
 
 func seatbeltProfile(l workbenchLayout) string {
 	var b strings.Builder
 	b.WriteString("(version 1)\n(deny default)\n")
 	b.WriteString("; Shells and their children execute within this sandbox.\n(allow process-exec)\n(allow process-fork)\n(allow signal (target same-sandbox))\n")
 	b.WriteString("; Hardware and OS version queries needed by runtimes, excluding process arguments.\n(allow sysctl-read (sysctl-name-regex #\"^(hw[.]|kern[.]os|kern[.]max|machdep[.]cpu[.])\") (sysctl-name \"kern.argmax\"))\n; Minimal command-line runtime services, excluding keychains.\n(allow mach-lookup (global-name \"com.apple.system.logger\") (global-name \"com.apple.system.notification_center\"))\n")
-	for _, p := range []string{"/private", "/private/etc", "/private/var", "/etc", "/dev"} {
+	for _, p := range []string{"/private", "/private/etc", "/private/var", "/etc", "/var", "/dev"} {
 		fmt.Fprintf(&b, "; Resolve public runtime configuration without directory listings.\n(allow file-read-metadata (literal %s))\n", strconv.Quote(p))
 	}
 	// macOS 27 aborts a shell that cannot read the root directory's own
@@ -89,8 +89,26 @@ func workbenchSystem(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	dirs = append(dirs, xcode)
+	dirs = append(dirs, developerBundle(xcode))
+	// Xcode's tools refuse to run until they read the owner's license acceptance.
+	if _, err := os.Stat(xcodeLicense); err == nil {
+		dirs = append(dirs, xcodeLicense)
+	}
 	return dirs, nil
+}
+
+const xcodeLicense = "/Library/Preferences/com.apple.dt.Xcode.plist"
+
+// developerBundle widens a selected Xcode's developer folder to its app
+// bundle: xcrun stats the bundle's Info.plist and Xcode's tools load
+// SharedFrameworks beside Contents/Developer.
+func developerBundle(dir string) string {
+	for p := dir; p != filepath.Dir(p); p = filepath.Dir(p) {
+		if strings.HasSuffix(p, ".app") {
+			return p
+		}
+	}
+	return dir
 }
 
 func normalizeWorkbenchSystem(o Options, standalone bool) (Options, error) {
