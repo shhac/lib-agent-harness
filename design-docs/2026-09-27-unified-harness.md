@@ -247,6 +247,13 @@ classifies any library failure the same way, whichever mode produced it.
   asked for by crew-assistant's researcher and checked live on macOS 27.
   v0.13.2 drops macOS's background band from `Background`, keeping nice 10:
   the band made QA's test suites time out on a busy machine.
+- **Command Code** (unreleased): `harness.CommandCode`, sessions only, over
+  `cmd acp` and checked against Command Code 1.74.1. It is a named engine, not
+  a generic ACP one: each agent's quirks (Command Code resumes an unknown id as
+  an empty conversation, takes no instructions, and asks questions through
+  permission requests) need their own verified handling and their own
+  `Support` claims. The ACP framing and tool-content parsing are shared with
+  Grok. See [the release note](../release-notes/command-code.md).
 - **Not yet:** streamed text deltas for API endpoints, composed compaction,
   and the Responses dialect.
 
