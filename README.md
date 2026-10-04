@@ -279,21 +279,25 @@ directory.
 Command Code's Standard permission mode, which asks before each tool that
 changes anything, and `Policy.CommandCodePermission` answers those requests:
 `session.CommandCodeDenyWhenAsked` (the default) rejects each one and
-`session.CommandCodeAllowWhenAsked` approves each one once. Reads run without
-asking, and a permission rule in the operator's own Command Code configuration
-can still allow a tool. A tool that would switch mode is rejected under either
+`session.CommandCodeAllowWhenAsked` approves each one once. Deny-when-asked is
+not read-only: reads run without asking, and Command Code permission rules in
+the operator's configuration or a project's checked-in configuration can allow
+tools without asking. A tool that would switch mode is rejected under either
 policy, and a session that reports leaving Standard mode is stopped with
 `CapabilityChangedPermissionMode` (phase `DuringSession`). Questions Command
 Code asks the user through the same request are answered cancelled, never
-guessed. Inherited `CMD_*`, `COMMANDCODE_*` and `COMMAND_CODE_*` variables are
-not passed on, and adding them is refused. The model and effort are set
-with `session/set_config_option` and checked against the configuration the
-session reports; a value it refuses or does not apply is refused before the
+guessed. `CMD_ZDR` (zero data retention enforcement, failing requests rather
+than falling back to non-ZDR providers) and `CMD_LOCAL_ONLY` (no contact with
+Command Code's backend) are preserved when inherited and accepted as caller
+environment additions. Other `CMD_*`, `COMMANDCODE_*` and `COMMAND_CODE_*`
+variables are not passed on, and adding them is refused. The model and effort
+are set with `session/set_config_option` and checked against the configuration
+the session reports; a value it refuses or does not apply is refused before the
 first prompt. Command Code resumes an id it does not have as a new, empty
-conversation, so a resume first checks that `session/list` holds the
-conversation for `WorkDir`, and `Open` starts fresh when it does not. Steering
-is composed. `cmd acp` takes no instructions or skill paths, so
-`Instructions`, provided skills and `GlobalSkillsExclude` are refused, as are
+conversation, so a resume checks before and after `session/resume` that
+`session/list` holds the conversation for `WorkDir`, and `Open` starts fresh
+when it does not. Steering is composed. `cmd acp` takes no instructions or skill
+paths, so `Instructions`, provided skills and `GlobalSkillsExclude` are refused, as are
 restricted, sandboxed, browser and compacted sessions, account and quota reads,
 and Windows, where `cmd` names the system command interpreter. A turn reports
 its own usage, and the context is Command Code's own figure.

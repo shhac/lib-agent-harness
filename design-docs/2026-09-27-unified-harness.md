@@ -253,7 +253,7 @@ classifies any library failure the same way, whichever mode produced it.
   an empty conversation, takes no instructions, and asks questions through
   permission requests) need their own verified handling and their own
   `Support` claims. The ACP framing and tool-content parsing are shared with
-  Grok. See [the release note](../release-notes/command-code.md).
+  Grok. See [the release note](../release-notes/v0.25.0.md).
 - **Not yet:** streamed text deltas for API endpoints, composed compaction,
   and the Responses dialect.
 
