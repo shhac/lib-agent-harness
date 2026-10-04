@@ -50,9 +50,13 @@ type Session struct {
 	// commandCodeWatch is the Command Code session whose permission mode is
 	// being watched, commandCodeMode the mode it last reported, and
 	// commandCodeConfigured whether it was put in the asking mode.
+	// commandCodeEarly holds the last mode reported for a session before its
+	// watch was armed, which the reader can deliver ahead of the reply that
+	// names the session.
 	commandCodeWatch      string
 	commandCodeMode       string
 	commandCodeConfigured bool
+	commandCodeEarly      struct{ session, mode string }
 	// removeSkillFiles removes the private plugin this launch wrote, once
 	// the session is over.
 	removeSkillFiles func()

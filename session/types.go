@@ -111,9 +111,10 @@ type Policy struct {
 	// before each tool that changes anything: CommandCodeDenyWhenAsked, the
 	// default, rejects each request, and CommandCodeAllowWhenAsked approves
 	// each one once. Neither grants an "always" option. It governs only the
-	// requests Command Code actually makes: reads run without asking, and a
-	// permission rule in the operator's own Command Code configuration can
-	// allow a tool without asking.
+	// requests Command Code actually makes. Deny-when-asked is not read-only:
+	// reads run without asking, and Command Code permission rules in the
+	// operator's configuration or a project's checked-in configuration can
+	// allow tools without asking.
 	CommandCodePermission string `json:"command_code_permission,omitempty"`
 }
 
@@ -205,7 +206,11 @@ type Options struct {
 	// Env adds KEY=VALUE entries to the session's environment, after the
 	// harness has removed provider credentials and overrides. It is for
 	// ordinary settings such as a build cache inside the workspace; keys the
-	// harness manages or strips are refused. It is not part of a Ref.
+	// harness manages or strips are refused. Command Code preserves inherited
+	// CMD_ZDR (zero data retention enforcement) and CMD_LOCAL_ONLY (no contact
+	// with its backend) and accepts them as additions. Other CMD_*, COMMANDCODE_*
+	// and COMMAND_CODE_* variables are stripped and refused. It is not part of
+	// a Ref.
 	Env []string
 	// Context, when set, is asked for the caller's current context at the
 	// start of a turn whose conversation is new or was compacted since the last

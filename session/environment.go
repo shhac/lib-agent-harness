@@ -57,9 +57,13 @@ func grokManaged(key string) bool {
 
 // commandCodeManaged is what a Command Code session neither inherits nor
 // accepts as an addition: Command Code's own variables, which change where it
-// connects, which providers it uses and how it runs.
+// connects, which providers it uses and how it runs, except its protective
+// switches.
 func commandCodeManaged(key string) bool {
 	upper := strings.ToUpper(key)
+	if upper == "CMD_ZDR" || upper == "CMD_LOCAL_ONLY" {
+		return false
+	}
 	return strings.HasPrefix(upper, "CMD_") || strings.HasPrefix(upper, "COMMANDCODE_") || strings.HasPrefix(upper, "COMMAND_CODE_")
 }
 

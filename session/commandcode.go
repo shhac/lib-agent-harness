@@ -16,7 +16,7 @@ package session
 //   - session/resume {sessionId, cwd, mcpServers} succeeds for any id: one
 //     Command Code does not have is opened as a new, empty conversation under
 //     that id. session/list {cwd} lists the conversations it holds for a
-//     directory, so a resume is checked against it first.
+//     directory, so a resume is checked against it before and after.
 //   - session/set_config_option {sessionId, configId, value} sets the model or
 //     the effort and answers with the resulting configOptions. An unknown value
 //     is refused with -32602; an effort for a model without one with -32601.
@@ -52,8 +52,8 @@ import (
 // to Command Code.
 const commandCodeProtocolVersion = 1
 
-// commandCodeAskingMode is the permission mode every session runs in, so that
-// every change Command Code's tools would make reaches the session's policy.
+// commandCodeAskingMode is the permission mode every session runs in. Tools
+// allowed by configuration can still run without asking.
 const commandCodeAskingMode = "default"
 
 // commandCodeListPages bounds how far session/list is followed when looking
@@ -240,6 +240,16 @@ func (s *Session) initializeCommandCode(ctx context.Context, resume bool) error 
 	if err != nil {
 		return err
 	}
+	if resume {
+		held, err := s.commandCodeHolds(ctx, id)
+		if err != nil {
+			return err
+		}
+		if !held {
+			s.closeCommandCodeSession(id)
+			return errConversationGone
+		}
+	}
 	state, err := parseCommandCodeSession(body)
 	if err != nil {
 		return err
@@ -311,16 +321,21 @@ func sameDirectory(a, b string) bool {
 // here on the session watches the mode Command Code reports (see
 // commandCodeModeUpdate), and the mode is checked again once the rest is set.
 func (s *Session) configureCommandCode(ctx context.Context, id string, state commandCodeSessionState) error {
+	// Command Code announces a mode only when it changes, so set_mode to the
+	// mode a session already runs in reports nothing. The reply's mode is
+	// therefore the baseline, unless a later report reached the reader first.
 	s.mu.Lock()
-	s.commandCodeWatch, s.commandCodeMode = id, state.mode
+	mode := state.mode
+	if s.commandCodeEarly.session == id {
+		mode = s.commandCodeEarly.mode
+	}
+	s.commandCodeWatch, s.commandCodeMode, s.commandCodeEarly.session = id, mode, ""
 	s.mu.Unlock()
-	if state.mode != commandCodeAskingMode {
-		if !slices.Contains(state.modes, commandCodeAskingMode) {
-			return &CapabilityError{Engine: harness.CommandCode, Code: CapabilityChangedPermissionMode, Phase: BeforeFirstPrompt}
-		}
-		if _, err := s.transport.request(ctx, "session/set_mode", map[string]any{"sessionId": id, "modeId": commandCodeAskingMode}); err != nil {
-			return commandCodeConfigRefused(err, CapabilityChangedPermissionMode)
-		}
+	if !slices.Contains(state.modes, commandCodeAskingMode) {
+		return &CapabilityError{Engine: harness.CommandCode, Code: CapabilityChangedPermissionMode, Phase: BeforeFirstPrompt}
+	}
+	if _, err := s.transport.request(ctx, "session/set_mode", map[string]any{"sessionId": id, "modeId": commandCodeAskingMode}); err != nil {
+		return commandCodeConfigRefused(err, CapabilityChangedPermissionMode)
 	}
 	config := state.config
 	o := s.options
@@ -381,6 +396,8 @@ func (s *Session) commandCodeModeUpdate(m map[string]json.RawMessage) bool {
 	ours := p.SessionID != "" && p.SessionID == s.commandCodeWatch
 	if ours {
 		s.commandCodeMode = p.Update.Mode
+	} else if p.SessionID != "" && !s.commandCodeConfigured {
+		s.commandCodeEarly.session, s.commandCodeEarly.mode = p.SessionID, p.Update.Mode
 	}
 	stop := ours && s.commandCodeConfigured && p.Update.Mode != commandCodeAskingMode
 	s.mu.Unlock()
@@ -419,10 +436,10 @@ func commandCodeConfigRefused(err error, code string) error {
 	return err
 }
 
-// closeCommandCodeSession closes a session this launch created and then
-// refused before any prompt. Command Code lists only conversations that have
-// a message, so nothing of it remains. It is best effort: the session is
-// closing.
+// closeCommandCodeSession closes a session this launch created or resumed as
+// empty and then refused before any prompt. Command Code lists only
+// conversations that have a message, so nothing of it remains. It is best
+// effort: the session is closing.
 func (s *Session) closeCommandCodeSession(id string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -466,6 +483,7 @@ func commandCodePermissionOutcome(raw json.RawMessage, permission string) map[st
 		return cancelled
 	}
 	chosen := map[string]string{}
+	ids := map[string]bool{}
 	for _, option := range p.Options {
 		if option.ID == "" {
 			continue
@@ -473,7 +491,11 @@ func commandCodePermissionOutcome(raw json.RawMessage, permission string) map[st
 		if _, seen := chosen[option.Kind]; seen {
 			return cancelled
 		}
+		if ids[option.ID] {
+			return cancelled
+		}
 		chosen[option.Kind] = option.ID
+		ids[option.ID] = true
 	}
 	allow, reject := chosen["allow_once"], chosen["reject_once"]
 	if allow == "" || reject == "" {

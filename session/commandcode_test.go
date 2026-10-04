@@ -25,10 +25,12 @@ const (
 	// commandCodeFixtureStubborn makes set_config_option answer without
 	// changing anything, as a harness that ignored the request would.
 	commandCodeFixtureStubborn = "LIB_HARNESS_COMMAND_CODE_FIXTURE_STUBBORN"
-	// commandCodeFixtureSetMode is how set_mode behaves: "" changes the mode
+	// commandCodeFixtureSetMode is how set_mode behaves: "" or "report" changes the mode
 	// and announces it, "refuse" answers -32602, "silent" answers without
 	// changing anything.
-	commandCodeFixtureSetMode = "LIB_HARNESS_COMMAND_CODE_FIXTURE_SET_MODE"
+	commandCodeFixtureSetMode     = "LIB_HARNESS_COMMAND_CODE_FIXTURE_SET_MODE"
+	commandCodeFixtureStartupMode = "LIB_HARNESS_COMMAND_CODE_FIXTURE_STARTUP_MODE"
+	commandCodeFixtureListOnce    = "LIB_HARNESS_COMMAND_CODE_FIXTURE_LIST_ONCE"
 	// commandCodeFixtureResolve makes session/list name each directory by its
 	// resolved path, as Command Code may store it.
 	commandCodeFixtureResolve = "LIB_HARNESS_COMMAND_CODE_FIXTURE_RESOLVE"
@@ -51,7 +53,8 @@ func runCommandCodeFixture() int {
 	record("args", strings.Join(os.Args[1:], " "))
 	record("home", os.Getenv("HOME"))
 	record("codex_home", os.Getenv("CODEX_HOME"))
-	record("inherited", os.Getenv("CMD_LOCAL_ONLY")+","+os.Getenv("COMMANDCODE_SKIP_UPDATES")+","+os.Getenv("COMMAND_CODE_TELEMETRY_SYNC"))
+	record("protective", os.Getenv("CMD_ZDR")+","+os.Getenv("CMD_LOCAL_ONLY"))
+	record("inherited", os.Getenv("CMD_UNMANAGED")+","+os.Getenv("COMMANDCODE_SKIP_UPDATES")+","+os.Getenv("COMMAND_CODE_TELEMETRY_SYNC"))
 	mode := os.Getenv(commandCodeFixtureMode)
 	if mode == "" {
 		mode = "default"
@@ -81,6 +84,12 @@ func runCommandCodeFixture() int {
 	}
 	update := func(session string, u map[string]any) bool {
 		return send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": session, "update": u}})
+	}
+	startupMode := func(session string) {
+		if os.Getenv(commandCodeFixtureStartupMode) == "1" {
+			mode = "bypass"
+			update(session, map[string]any{"sessionUpdate": "current_mode_update", "currentModeId": mode})
+		}
 	}
 	config := func() []any {
 		var modelOptions []any
@@ -122,6 +131,7 @@ func runCommandCodeFixture() int {
 		_ = json.Unmarshal(answer["result"], &outcome)
 		return outcome.Outcome.Outcome + ":" + outcome.Outcome.OptionID, true
 	}
+	listCalls := 0
 	for {
 		m, ok := next()
 		if !ok {
@@ -142,9 +152,19 @@ func runCommandCodeFixture() int {
 			state := sessionState()
 			state["sessionId"] = "cc-session-1"
 			reply(state)
+			startupMode("cc-session-1")
 		case "session/list":
 			record("list", string(m["params"]))
+			listCalls++
 			cwd := str(p, "cwd")
+			if os.Getenv(commandCodeFixtureListOnce) == "1" {
+				sessions := []any{}
+				if listCalls == 1 {
+					sessions = append(sessions, map[string]any{"sessionId": "cc-session-1", "cwd": cwd})
+				}
+				reply(map[string]any{"sessions": sessions})
+				continue
+			}
 			if os.Getenv(commandCodeFixtureResolve) == "1" {
 				if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
 					cwd = resolved
@@ -159,6 +179,7 @@ func runCommandCodeFixture() int {
 		case "session/resume":
 			record("resume", string(m["params"]))
 			reply(sessionState())
+			startupMode(str(p, "sessionId"))
 		case "session/close":
 			record("close", str(p, "sessionId"))
 			reply(map[string]any{})
@@ -170,8 +191,11 @@ func runCommandCodeFixture() int {
 				continue
 			case "silent":
 			default:
-				mode = str(p, "modeId")
-				update(str(p, "sessionId"), map[string]any{"sessionUpdate": "current_mode_update", "currentModeId": mode})
+				// As Command Code 1.74.1 does, announce only a change.
+				if str(p, "modeId") != mode {
+					mode = str(p, "modeId")
+					update(str(p, "sessionId"), map[string]any{"sessionUpdate": "current_mode_update", "currentModeId": mode})
+				}
 			}
 			reply(map[string]any{})
 		case "session/set_config_option":
@@ -289,7 +313,7 @@ func commandCodeFixtureOptions(t *testing.T) (Options, string) {
 
 func TestCommandCodeSessionOverTheAgentProtocol(t *testing.T) {
 	o, log := commandCodeFixtureOptions(t)
-	t.Setenv("CMD_LOCAL_ONLY", "1")
+	t.Setenv("CMD_UNMANAGED", "1")
 	t.Setenv("COMMANDCODE_SKIP_UPDATES", "1")
 	t.Setenv("COMMAND_CODE_TELEMETRY_SYNC", "1")
 	o.Model, o.Effort = "fixture-fast", "max"
@@ -361,7 +385,7 @@ func TestCommandCodeSessionOverTheAgentProtocol(t *testing.T) {
 	if logged["home"][0] != os.Getenv("HOME") || logged["codex_home"][0] != "" {
 		t.Errorf("environment: home %q codex home %q", logged["home"], logged["codex_home"])
 	}
-	// Command Code's own variables are no more inherited than accepted.
+	// Command Code's managed variables are no more inherited than accepted.
 	if logged["inherited"][0] != ",," {
 		t.Errorf("inherited Command Code variables: %q", logged["inherited"])
 	}
@@ -373,7 +397,7 @@ func TestCommandCodeSessionOverTheAgentProtocol(t *testing.T) {
 	if json.Unmarshal([]byte(logged["new"][0]), &created) != nil || created.Cwd != o.WorkDir || created.MCP == nil || len(created.MCP) != 0 || created.Meta != nil {
 		t.Errorf("session/new: %s", logged["new"])
 	}
-	if !slices.Equal(logged["config"], []string{"model=fixture-fast", "effort=max"}) || len(logged["mode"]) != 0 {
+	if !slices.Equal(logged["config"], []string{"model=fixture-fast", "effort=max"}) || !slices.Equal(logged["mode"], []string{"default"}) {
 		t.Errorf("configuration: %q mode %q", logged["config"], logged["mode"])
 	}
 	if len(logged["refused"]) != 1 {
@@ -393,13 +417,54 @@ func TestCommandCodeSessionOverTheAgentProtocol(t *testing.T) {
 		Session string `json:"sessionId"`
 		Cwd     string `json:"cwd"`
 	}
-	if len(logged["list"]) != 2 || json.Unmarshal([]byte(logged["resume"][0]), &resumedWith) != nil || resumedWith.Session != "cc-session-1" || resumedWith.Cwd != o.WorkDir {
+	if len(logged["list"]) != 4 || json.Unmarshal([]byte(logged["resume"][0]), &resumedWith) != nil || resumedWith.Session != "cc-session-1" || resumedWith.Cwd != o.WorkDir {
 		t.Errorf("session/list %q, session/resume %q", logged["list"], logged["resume"])
 	}
 	// A resumed process starts from Command Code's defaults, so the model and
 	// effort are applied again.
 	if !slices.Equal(logged["config"], []string{"model=fixture-fast", "effort=max", "model=fixture-fast", "effort=max"}) {
 		t.Errorf("resumed configuration: %q", logged["config"])
+	}
+	if !slices.Equal(logged["mode"], []string{"default", "default"}) {
+		t.Errorf("resumed mode: %q", logged["mode"])
+	}
+}
+
+func TestCommandCodeProtectiveEnvironment(t *testing.T) {
+	for _, source := range []string{"inherited", "additions"} {
+		t.Run(source, func(t *testing.T) {
+			o, log := commandCodeFixtureOptions(t)
+			t.Setenv("CMD_ZDR", "1")
+			t.Setenv("CMD_LOCAL_ONLY", "1")
+			t.Setenv("CMD_UNMANAGED", "1")
+			t.Setenv("COMMANDCODE_SKIP_UPDATES", "1")
+			t.Setenv("COMMAND_CODE_TELEMETRY_SYNC", "1")
+			want := "1,1"
+			if source == "additions" {
+				o.Env = []string{"CMD_ZDR=true", "CMD_LOCAL_ONLY=true"}
+				want = "true,true"
+			}
+			s, err := Start(testContext(t), o)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s.Close()
+			logged := grokFixtureLogged(t, log)
+			if !slices.Equal(logged["protective"], []string{want}) {
+				t.Errorf("protective environment: %q", logged["protective"])
+			}
+			if !slices.Equal(logged["inherited"], []string{",,"}) {
+				t.Errorf("managed environment: %q", logged["inherited"])
+			}
+			for _, entry := range []string{"CMD_UNMANAGED=1", "COMMANDCODE_SKIP_UPDATES=1", "COMMAND_CODE_TELEMETRY_SYNC=1"} {
+				o.Env = []string{entry}
+				_, err := normalize(o)
+				var refusal *UnsupportedError
+				if !errors.As(err, &refusal) || refusal.Code != RefusedEnvManaged {
+					t.Errorf("managed addition %s: %v", entry, err)
+				}
+			}
+		})
 	}
 }
 
@@ -428,6 +493,131 @@ func TestCommandCodeOpenStartsFreshWhenTheConversationIsGone(t *testing.T) {
 	}
 	if got := grokFixtureLogged(t, log)["resume"]; len(got) != 0 {
 		t.Fatalf("a conversation Command Code does not hold was resumed: %q", got)
+	}
+}
+
+func TestCommandCodeConversationDisappearsDuringResume(t *testing.T) {
+	for _, operation := range []string{"Resume", "Open"} {
+		t.Run(operation, func(t *testing.T) {
+			o, log := commandCodeFixtureOptions(t)
+			t.Setenv(commandCodeFixtureListOnce, "1")
+			ctx := testContext(t)
+			n, err := normalize(o)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ref := reference(n, "cc-session-1")
+			if operation == "Open" {
+				s, opened, err := Open(ctx, o, &ref)
+				if err != nil {
+					t.Fatal(err)
+				}
+				s.Close()
+				if opened.Resumed || opened.Fresh != FreshUnavailable || s.Ref().ID != "cc-session-1" {
+					t.Fatalf("%+v %+v", opened, s.Ref())
+				}
+			} else {
+				s, err := Resume(ctx, o, ref)
+				if s != nil {
+					s.Close()
+				}
+				if !errors.Is(err, errConversationGone) {
+					t.Fatalf("a vanished conversation was resumed: %v", err)
+				}
+			}
+			logged := grokFixtureLogged(t, log)
+			if len(logged["list"]) != 2 || len(logged["resume"]) != 1 || !slices.Equal(logged["close"], []string{"cc-session-1"}) {
+				t.Fatalf("list %q resume %q close %q", logged["list"], logged["resume"], logged["close"])
+			}
+			if operation == "Open" && len(logged["new"]) != 1 {
+				t.Fatalf("a fresh conversation was not created: %q", logged["new"])
+			}
+		})
+	}
+}
+
+func TestCommandCodeStartupModeUpdate(t *testing.T) {
+	for _, operation := range []string{"start", "resume"} {
+		for _, setMode := range []string{"report", "refuse", "silent"} {
+			t.Run(operation+"/"+setMode, func(t *testing.T) {
+				o, log := commandCodeFixtureOptions(t)
+				t.Setenv(commandCodeFixtureMode, "default")
+				t.Setenv(commandCodeFixtureStartupMode, "1")
+				t.Setenv(commandCodeFixtureSetMode, setMode)
+				ctx := testContext(t)
+				var s *Session
+				var err error
+				if operation == "resume" {
+					n, normalizeErr := normalize(o)
+					if normalizeErr != nil {
+						t.Fatal(normalizeErr)
+					}
+					s, err = Resume(ctx, o, reference(n, "cc-session-1"))
+				} else {
+					s, err = Start(ctx, o)
+				}
+				if s != nil {
+					defer s.Close()
+				}
+				if setMode != "report" {
+					var failure *CapabilityError
+					if !errors.As(err, &failure) || failure.Code != CapabilityChangedPermissionMode || failure.Phase != BeforeFirstPrompt {
+						t.Fatalf("a startup mode change was accepted: %v", err)
+					}
+				} else {
+					if err != nil {
+						t.Fatal(err)
+					}
+					s.mu.Lock()
+					mode := s.commandCodeMode
+					s.mu.Unlock()
+					if mode != commandCodeAskingMode {
+						t.Fatalf("mode: %q", mode)
+					}
+				}
+				if got := grokFixtureLogged(t, log)["mode"]; !slices.Equal(got, []string{"default"}) {
+					t.Fatalf("the asking mode was not requested: %q", got)
+				}
+			})
+		}
+	}
+}
+
+func TestCommandCodeModeUpdateBeforeTheWatchIsArmed(t *testing.T) {
+	for _, setMode := range []string{"report", "refuse", "silent"} {
+		t.Run(setMode, func(t *testing.T) {
+			s := &Session{options: Options{Provider: harness.Provider{Engine: harness.CommandCode}}}
+			// The reader consumed the update before configuration could arm its watch.
+			notify(s, `{"method":"session/update","params":{"sessionId":"cc-session-1","update":{"sessionUpdate":"current_mode_update","currentModeId":"bypass"}}}`)
+			w := &fakeWire{requestFn: func(method string, p map[string]any) (json.RawMessage, error) {
+				if method != "session/set_mode" || p["sessionId"] != "cc-session-1" || p["modeId"] != commandCodeAskingMode {
+					t.Fatalf("unexpected request: %s %v", method, p)
+				}
+				switch setMode {
+				case "refuse":
+					return nil, &commandCodeRefusal{rpc: -32602, code: commandCodeInvalidParams}
+				case "silent":
+				default:
+					notify(s, `{"method":"session/update","params":{"sessionId":"cc-session-1","update":{"sessionUpdate":"current_mode_update","currentModeId":"default"}}}`)
+				}
+				return json.RawMessage(`{}`), nil
+			}}
+			s.transport = w
+			err := s.configureCommandCode(testContext(t), "cc-session-1", commandCodeSessionState{mode: "default", modes: []string{"default", "bypass"}, config: commandCodeConfig{model: "fixture-default"}})
+			if setMode == "report" {
+				if err != nil || s.commandCodeMode != commandCodeAskingMode || !s.commandCodeConfigured {
+					t.Fatalf("mode %q configured %v: %v", s.commandCodeMode, s.commandCodeConfigured, err)
+				}
+			} else {
+				var failure *CapabilityError
+				if !errors.As(err, &failure) || failure.Code != CapabilityChangedPermissionMode || failure.Phase != BeforeFirstPrompt || s.commandCodeConfigured {
+					t.Fatalf("a stale reply mode was trusted: %v", err)
+				}
+			}
+			if !slices.Equal(w.calls, []string{"session/set_mode"}) {
+				t.Fatalf("requests: %q", w.calls)
+			}
+		})
 	}
 }
 
@@ -585,6 +775,7 @@ func TestCommandCodePermissionNeverGrantsMoreThanOnce(t *testing.T) {
 		`{"options":[{"optionId":"allow_once","kind":"allow_once"}]}`,
 		`{"options":[{"optionId":"reject_once","kind":"reject_once"}]}`,
 		`{"options":[{"optionId":"a","kind":"allow_once"},{"optionId":"b","kind":"allow_once"},{"optionId":"r","kind":"reject_once"}]}`,
+		`{"options":[{"optionId":"same","kind":"allow_once"},{"optionId":"same","kind":"reject_once"}]}`,
 		`not json`,
 	} {
 		for _, policy := range []string{CommandCodeDenyWhenAsked, CommandCodeAllowWhenAsked} {
@@ -730,7 +921,7 @@ func TestCommandCodeRefusesWhatItCannotCarry(t *testing.T) {
 		"grok policy":          func(o *Options) { o.Policy.GrokPermission = GrokAllowWhenAsked },
 		"claude policy":        func(o *Options) { o.Policy.ClaudePermission = "dontAsk" },
 		"unknown permission":   func(o *Options) { o.Policy.CommandCodePermission = "always" },
-		"managed environment":  func(o *Options) { o.Env = []string{"CMD_LOCAL_ONLY=1"} },
+		"managed environment":  func(o *Options) { o.Env = []string{"CMD_UNMANAGED=1"} },
 	} {
 		t.Run(name, func(t *testing.T) {
 			o := base
