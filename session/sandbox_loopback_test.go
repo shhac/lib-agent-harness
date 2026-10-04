@@ -4,18 +4,22 @@ package session
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/sandboxprobe"
 	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
@@ -86,14 +90,143 @@ func TestLoopbackCanaryUnsandboxedIsCaught(t *testing.T) {
 	}
 }
 
-// Claude Code 2.1.283 in dontAsk mode auto-allows a sandboxed command only
-// when it is a flat list of plain commands.
-func TestLoopbackCanaryIsFlat(t *testing.T) {
-	script := loopbackCanary(1, "192.0.2.1", 443, 2)
-	for _, refused := range []string{"()", "(", "{", "exit"} {
-		if strings.Contains(script, refused) {
-			t.Errorf("canary contains %q:\n%s", refused, script)
+// flatCanary limits shell syntax and commands to the original nc shape.
+// It does NOT approximate dontAsk approval: the old check accepted Perl -e,
+// which the owner-run CLI refused. Only owner evidence proves auto-allow.
+func flatCanary(script string) bool {
+	var outside strings.Builder
+	quoted := false
+	for i := 0; i < len(script); i++ {
+		c := script[i]
+		if c == '\\' && !quoted {
+			if i+1 >= len(script) {
+				return false
+			}
+			i++
+			outside.WriteByte(' ')
+			continue
 		}
+		if c == '\'' {
+			quoted = !quoted
+			outside.WriteByte(' ')
+			continue
+		}
+		if !quoted {
+			outside.WriteByte(c)
+		}
+	}
+	if quoted {
+		return false
+	}
+	plain := outside.String()
+	if strings.ContainsAny(plain, "(){}`;") || strings.Contains(plain, "$(") {
+		return false
+	}
+	if regexp.MustCompile(`(^|[^a-zA-Z0-9_])exit([^a-zA-Z0-9_]|$)`).MatchString(plain) {
+		return false
+	}
+	// Only &&, || and & join commands; a pipe is not an allowed join.
+	plain = strings.ReplaceAll(plain, "||", "\n")
+	plain = strings.ReplaceAll(plain, ">&", ">")
+	plain = strings.ReplaceAll(plain, "<&", "<")
+	if strings.Contains(plain, "|") {
+		return false
+	}
+	for _, command := range regexp.MustCompile("[\n&]+").Split(plain, -1) {
+		words := strings.Fields(command)
+		if len(words) == 0 {
+			continue
+		}
+		switch words[0] {
+		case "nc", "echo", "sleep":
+		case "command":
+			if len(words) < 3 || words[1] != "-v" || words[2] != "nc" {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func TestLoopbackCanaryIsFlat(t *testing.T) {
+	if !flatCanary(loopbackCanary(1, "192.0.2.1", 443, 2)) {
+		t.Fatal("legacy canary is not flat")
+	}
+	for _, bad := range []string{"(echo x)", "f() { echo x; }", "{ echo x; }", "exit 0", "echo $(id)", "echo `id`", "echo x | cat", "/usr/bin/perl -e 'print 1'", "python3 -c 'print(1)'", "sh -c 'echo x'"} {
+		if flatCanary(bad) {
+			t.Errorf("accepted %q", bad)
+		}
+	}
+	if !flatCanary("echo '( ) { } exit $(id) `id`'") {
+		t.Fatal("quoted shell syntax rejected")
+	}
+}
+
+func TestClaudeInterfaceJudgment(t *testing.T) {
+	attempts := sandboxprobe.InterfaceAttempts([]string{"192.0.2.1"}, false, true)
+	base := "loopback\nbound\ncanary-ran\n"
+	good := "interface-result:0:0\ninterface-result:1:0\ninterface-result:2:65\ninterface-canary-ran\n"
+	for _, tc := range []struct{ name, output, code string }{
+		{"proved", base + good, ""},
+		{"escape wins", "outside\ninterface-result:no\n", CapabilitySandboxNotEnforced},
+		{"missing loopback", good, CapabilitySandboxUnavailable},
+		{"missing index", base + strings.ReplaceAll(good, "interface-result:1:0\n", ""), CapabilitySandboxUnavailable},
+		{"duplicate", base + good + "interface-result:0:0\n", CapabilitySandboxUnavailable},
+		{"garbled", base + strings.ReplaceAll(good, "1:0", "1:bad"), CapabilitySandboxUnavailable},
+		{"missing Perl", base + strings.ReplaceAll(good, "1:0", "1:999"), CapabilitySandboxUnavailable},
+		{"no interface terminator", base + strings.ReplaceAll(good, "interface-canary-ran\n", ""), CapabilitySandboxUnavailable},
+		{"TCP denied", base + strings.ReplaceAll(good, "0:0", "0:13"), CapabilityLoopbackClaimChanged},
+		{"UDP denied", base + strings.ReplaceAll(good, "1:0", "1:1"), CapabilityLoopbackClaimChanged},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			evidence, err := judgeClaudeLoopback(tc.output, true, attempts)
+			if tc.code != "" {
+				if capabilityCode(t, err) != tc.code || len(evidence.observations) != 0 {
+					t.Fatal("wrong refusal or unsettled observations")
+				}
+			} else if err != nil || evidence.observations[2].Errno != 65 || evidence.detail != "binds on all local interfaces: observed allowed" {
+				t.Fatalf("%+v %v", evidence, err)
+			}
+		})
+	}
+	unavailable := fmt.Sprintf("interface-result:0:%d\ninterface-result:1:%d\ninterface-result:2:65\ninterface-canary-ran\n", sandboxprobe.AddressUnavailableErrno(), sandboxprobe.AddressUnavailableErrno())
+	evidence, err := judgeClaudeLoopback(base+unavailable, true, attempts)
+	if err != nil || evidence.detail != "no interface binds available; wildcard binds tested" {
+		t.Fatalf("%+v %v", evidence, err)
+	}
+}
+
+func TestLoopbackEvidencePublication(t *testing.T) {
+	cache := &verificationCache{seen: map[string]bool{}}
+	attempts := sandboxprobe.InterfaceAttempts([]string{"192.0.2.1"}, false, true)
+	evidence, err := judgeClaudeLoopback("loopback\nbound\ncanary-ran\ninterface-result:0:0\ninterface-result:1:0\ninterface-result:2:65\ninterface-canary-ran\n", true, attempts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.settleSandbox(context.Background(), harness.Claude, "proved", evidence, nil); err != nil {
+		t.Fatal(err)
+	}
+	evidence.observations[0].Errno = 13
+	cache.mu.Lock()
+	if !cache.seen["proved"] || cache.loopback["proved"].observations[0].Errno != 0 {
+		t.Fatal("evidence missing or aliases caller")
+	}
+	cache.mu.Unlock()
+	for _, output := range []string{"", "outside\n"} {
+		evidence, err := judgeClaudeLoopback(output, true, attempts)
+		if err == nil || len(evidence.observations) != 0 {
+			t.Fatal("refusal retained observations")
+		}
+		if cache.settleSandbox(context.Background(), harness.Claude, "refused", evidence, err) == nil || cache.holds("refused") {
+			t.Fatal("refusal published evidence")
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if code := capabilityCode(t, cache.settleSandbox(ctx, harness.Claude, "cancelled", evidence, nil)); code != CapabilityProbeTimeout || cache.holds("cancelled") {
+		t.Fatal("cancelled proof published evidence")
 	}
 }
 
@@ -193,5 +326,22 @@ func TestLoopbackSettingsAndRefusals(t *testing.T) {
 	var unsupported *UnsupportedError
 	if !errors.As(err, &unsupported) || unsupported.Code != RefusedNotOffered {
 		t.Fatalf("Codex loopback: %v", err)
+	}
+}
+
+func TestVerificationCacheHasOnlySettledLoopbackEntries(t *testing.T) {
+	cache := &verificationCache{seen: map[string]bool{}}
+	cache.record("native")
+	cache.recordLoopback("base-sandbox", loopbackEvidence{})
+	if cache.loopback != nil {
+		t.Fatal("non-loopback verification allocated observations")
+	}
+	if !cache.holds("native") || !cache.holds("base-sandbox") {
+		t.Fatal("ordinary verification lost")
+	}
+	cache.recordLoopback("loopback", loopbackEvidence{observations: []sandboxprobe.InterfaceObservation{{Address: "192.0.2.1", Operation: "bind", Errno: 0}}})
+	cache.record("another-native")
+	if len(cache.loopback) != 1 {
+		t.Fatal("non-loopback key polluted observations")
 	}
 }

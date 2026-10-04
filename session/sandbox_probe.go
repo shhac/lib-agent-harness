@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -32,10 +33,24 @@ func verifySandbox(ctx context.Context, o Options, l *launch) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, sandboxProbeTimeout)
 	defer cancel()
-	if err = engines[o.Provider.Engine].sandbox.probe(ctx, o, l); err != nil {
+	evidence, err := engines[o.Provider.Engine].sandbox.probe(ctx, o, l)
+	return verified.settleSandbox(ctx, o.Provider.Engine, key, evidence, err)
+}
+
+// Settlement is shared by fake and native transports. Partial or cancelled
+// proofs never publish a verified key, even when they collected positive data.
+func (c *verificationCache) settleSandbox(ctx context.Context, engine harness.Engine, key string, evidence loopbackEvidence, err error) error {
+	var capability *CapabilityError
+	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && (!errors.As(err, &capability) || capability.Code != CapabilityProbeTimeout) {
 		return err
 	}
-	verified.record(key)
+	if ctx.Err() != nil {
+		return &CapabilityError{Engine: engine, Code: CapabilityProbeTimeout, Phase: BeforeLaunch}
+	}
+	if err != nil {
+		return err
+	}
+	c.recordLoopback(key, evidence)
 	return nil
 }
 

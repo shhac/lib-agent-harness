@@ -43,9 +43,10 @@ type Sandbox struct {
 	// names no domain, because a domain rule would also open the shell's
 	// network, and Codex searches through its provider.
 	Web bool
-	// Loopback permits binds and inbound on every local interface on macOS.
-	// A server bound to 0.0.0.0 or a LAN address may be reachable from other
-	// machines. Outbound off-machine traffic stays refused, proved before launch.
+	// Loopback requests proved on-machine networking. The base Claude proof
+	// must pass before launch. On macOS allowLocalBinding permits binds and
+	// inbound connections on every local interface, not local-only binds.
+	// Optional interface diagnostics do not gate that base capability.
 	Loopback bool
 	// LoopbackLocalOnly requires Loopback and refuses unproved local-only binds.
 	LoopbackLocalOnly bool
@@ -243,8 +244,8 @@ type sandboxSupport struct {
 	// as Codex's runtime home and browser bridge.
 	prepare func(context.Context, Options, *launch) error
 	// probe proves the sandbox the arguments describe, with a disposable
-	// login and no inference.
-	probe func(context.Context, Options, *launch) error
+	// login and no inference, returning optional private network observations.
+	probe func(context.Context, Options, *launch) (loopbackEvidence, error)
 	// hostTools are the arguments that give the session the open tool
 	// channel.
 	hostTools func(*toolHost) ([]string, error)
@@ -260,11 +261,11 @@ var (
 			return args
 		},
 		prepare: prepareCodexSandbox,
-		probe: func(ctx context.Context, o Options, l *launch) error {
+		probe: func(ctx context.Context, o Options, l *launch) (loopbackEvidence, error) {
 			if err := probeCodexSandbox(ctx, o); err != nil || !o.Browser {
-				return err
+				return loopbackEvidence{}, err
 			}
-			return probeCodexBrowserSandbox(ctx, o, l)
+			return loopbackEvidence{}, probeCodexBrowserSandbox(ctx, o, l)
 		},
 		hostTools: func(host *toolHost) ([]string, error) {
 			server, err := codexHostedServer(host)
@@ -276,9 +277,9 @@ var (
 	}
 	claudeSandbox = &sandboxSupport{
 		args: claudeSandboxArgs,
-		probe: func(ctx context.Context, o Options, l *launch) error {
+		probe: func(ctx context.Context, o Options, l *launch) (loopbackEvidence, error) {
 			if err := probeClaudeSandbox(ctx, o); err != nil || !o.Sandbox.Loopback {
-				return err
+				return loopbackEvidence{}, err
 			}
 			return probeClaudeLoopback(ctx, o, l)
 		},

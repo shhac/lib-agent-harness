@@ -1,0 +1,40 @@
+package sandboxprobe
+
+import (
+	"fmt"
+	"strings"
+)
+
+// macOS ships Perl itself; python3 may be an Xcode installation shim.
+func InterfacePerlCanary(attempts []InterfaceAttempt) string {
+	program := `use strict; use warnings; use Socket qw(:all);
+$|=1;
+my $i=0;
+while (@ARGV) {
+ my ($host,$port,$op)=splice(@ARGV,0,3);
+ $port=9 if $op eq "udp" && $port==0;
+ my ($error,@addresses)=getaddrinfo($host,$port,{family=>index($host,":")>=0?AF_INET6:AF_INET,socktype=>$op eq "bind"?SOCK_STREAM:SOCK_DGRAM,flags=>AI_NUMERICHOST});
+ my $result=999;
+ if (!$error && @addresses) {
+  my $a=$addresses[0];
+  if (socket(my $s,$a->{family},$a->{socktype},$a->{protocol})) {
+   my $ok;
+   if ($op eq "udp") { $ok=defined(send($s,"canary",0,$a->{addr})); }
+   else { $ok=bind($s,$a->{addr}); if ($ok && $op eq "bind") { $ok=listen($s,1); } }
+   $result=$ok?0:0+$!;
+   close($s);
+  } else { $result=0+$!; }
+ }
+ print "interface-result:$i:$result\n";
+ $i++;
+}
+print "interface-canary-ran\n";
+`
+	args := []string{"/usr/bin/perl", "-e", ShellQuote(program), "--"}
+	for _, a := range attempts {
+		args = append(args, ShellQuote(a.Address), fmt.Sprint(a.Port), ShellQuote(a.Operation))
+	}
+	return strings.Join(args, " ") + "\n"
+}
+
+func ShellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }

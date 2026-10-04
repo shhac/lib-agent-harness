@@ -203,7 +203,7 @@ type CapabilityError struct {
 	Code      string
 	Phase     string
 	Tools     []string
-	// Reason is a fixed Bridge* value when Code is browser_bridge_unavailable.
+	// Reason is a fixed Bridge* value for browser_bridge_unavailable.
 	Reason string
 }
 

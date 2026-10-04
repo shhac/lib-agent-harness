@@ -202,8 +202,9 @@ func binaryIdentity(o Options) (string, fs.FileInfo, error) {
 var verified = &verificationCache{seen: map[string]bool{}}
 
 type verificationCache struct {
-	mu   sync.Mutex
-	seen map[string]bool
+	mu       sync.Mutex
+	seen     map[string]bool
+	loopback map[string]loopbackEvidence
 }
 
 func (c *verificationCache) holds(key string) bool {
@@ -211,11 +212,23 @@ func (c *verificationCache) holds(key string) bool {
 	defer c.mu.Unlock()
 	return c.seen[key]
 }
-func (c *verificationCache) record(key string) {
+func (c *verificationCache) record(key string) { c.recordLoopback(key, loopbackEvidence{}) }
+func (c *verificationCache) recordLoopback(key string, evidence loopbackEvidence) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if len(c.seen) > 64 {
 		c.seen = map[string]bool{}
+		c.loopback = nil
+	}
+	if len(evidence.observations) > 0 || len(evidence.interfaces) > 0 {
+		if c.loopback == nil {
+			c.loopback = map[string]loopbackEvidence{}
+		}
+		evidence.observations = append(evidence.observations[:0:0], evidence.observations...)
+		evidence.interfaces = append(evidence.interfaces[:0:0], evidence.interfaces...)
+		c.loopback[key] = evidence
+	} else {
+		delete(c.loopback, key)
 	}
 	c.seen[key] = true
 }

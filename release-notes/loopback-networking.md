@@ -51,8 +51,7 @@ the Linux proof key and session power digest.
 crew-assistant follow-up: check_loopback and CA-79 must show the all-interface
 macOS wording and allow a per-project choice of local-only (refused on macOS)
 or all-interfaces. Reference the field, Feature and refusal above.
-LAH-40 must retain the macOS selected-port refusal; LAH-41 extends Claude
-interface canaries. No release tag or consumer-app change is made here.
+LAH-40 must retain the macOS selected-port refusal. No release tag or consumer-app change is made here.
 
 The macOS interface client uses base-system /usr/bin/perl; it does not invoke
 the Xcode python3 shim or require developer tools. Interface witnesses try
@@ -74,3 +73,28 @@ excluded from non-loopback escape evidence. The revised Perl-client proof
 still requires a real unsandboxed run; the owner's earlier Python-client run
 passed sandboxcheck and the interface proof but failed the now-corrected
 literal-host assertion.
+
+## Claude macOS interface diagnostics (unreleased; non-breaking)
+
+Claude macOS Loopback remains offered after its existing base nc proof passes.
+Support is Unknown until launch verification: localhost reach and bind must
+succeed, and off-machine access must be refused. Start, Resume and
+VerifySandbox retain that proof path. Strict LoopbackLocalOnly remains refused.
+
+The all-interface exposure is stated from LAH-39 real-Seatbelt evidence:
+allowLocalBinding admits binds and inbound connections on every local
+interface, so wildcard and LAN listeners may be reachable externally. No
+local-only claim is made. The discarded draft-only interface-canary refusal
+is removed; no consumer migration is required.
+
+Optional flat nc diagnostics record TCP source-bind, UDP source-bind and UDP
+send host observations, or unavailable measurements, privately beside the
+base verification. Unavailable diagnostics do not remove the capability.
+Wildcard observations mean any peer, not a verified unspecified source bind.
+No errno is inferred from exit status, and no permissions are widened.
+The owner runner prints redacted per-class results without failing solely
+because these optional measurements cannot run.
+
+Shared helpers retain their aliases, Perl byte pin and workbench profile pin.
+Linux canary bytes/reason, Windows refusal and durable formats are unchanged.
+No consumer-app update or release tag is needed for this additive change.

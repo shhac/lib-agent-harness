@@ -154,6 +154,9 @@ func Support(e Engine, op Operation, f Feature) Capability {
 // sandboxed hosting of a CLI harness are unavailable on Windows. An API
 // session has no process to contain, so it is unaffected.
 func platform(e Engine, op Operation, f Feature, c Capability) Capability {
+	if runtime.GOOS == "darwin" && e == Claude && op == Session && f == Loopback {
+		return Capability{Unknown, claudeLoopbackExposureReason}
+	}
 	if e == OpenAICompatible && op == Session && runtime.GOOS == "linux" {
 		switch f {
 		case Sandbox:
@@ -422,3 +425,6 @@ var supportTable = map[supportKey]Capability{
 
 // LoopbackLocalOnlySeatbeltReason names the macOS local-bind limitation.
 const LoopbackLocalOnlySeatbeltReason = "loopback_local_only_unenforceable: Seatbelt network filters accept only * or localhost hosts, and localhost admits binds and inbound connections on every local interface (owner-run evidence); local-only loopback cannot be enforced on macOS"
+
+// Interface exposure is platform evidence, distinct from the per-launch proof.
+const claudeLoopbackExposureReason = "macOS Claude Loopback is proved at launch by localhost reach and bind plus outbound off-machine refusal; LAH-39 real-Seatbelt evidence shows allowLocalBinding (local ip *:*) admits binds and inbound connections on every local interface, so 0.0.0.0 and LAN listeners may be reachable from other machines; no local-only claim; interface-address TCP bind, UDP bind and UDP send diagnostics record observations or unavailable measurements without gating the base proof"

@@ -15,6 +15,8 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -40,26 +42,79 @@ func freeLoopbackPort() (int, error) { return sandboxprobe.FreeLoopbackPort() }
 
 // probeClaudeLoopback runs the canary through the session's own arguments in
 // a disposable home with a dummy credential.
-func probeClaudeLoopback(ctx context.Context, o Options, l *launch) error {
+func probeClaudeLoopback(ctx context.Context, o Options, l *launch) (loopbackEvidence, error) {
 	unavailable := &CapabilityError{Engine: harness.Claude, Code: CapabilitySandboxUnavailable, Phase: BeforeLaunch}
 	witness, ok := offMachineWitness(ctx)
 	if !ok {
-		return unavailable
+		return loopbackEvidence{}, unavailable
 	}
 	loop, loopWait, loopReached, err := countingListener("127.0.0.1:0")
 	if err != nil {
-		return unavailable
+		return loopbackEvidence{}, unavailable
 	}
 	defer func() { loop.Close(); loopWait.Wait() }()
 	bindPort, err := freeLoopbackPort()
 	if err != nil {
-		return unavailable
+		return loopbackEvidence{}, unavailable
 	}
 	canary := loopbackCanary(loop.Addr().(*net.TCPAddr).Port, witness, 443, bindPort)
 
+	output, err := runClaudeLoopbackCanary(ctx, o, l, canary)
+	if err != nil {
+		return loopbackEvidence{}, err
+	}
+	// An observed escape survives cancellation; positive output never does.
+	if err := judgeLoopback(output, true); err != nil {
+		if capability, ok := err.(*CapabilityError); ok && capability.Code == CapabilitySandboxNotEnforced {
+			return loopbackEvidence{}, err
+		}
+	}
+	time.Sleep(300 * time.Millisecond)
+	evidence, err := settleClaudeLoopback(ctx, output, loopReached())
+	if err == nil && runtime.GOOS == "darwin" {
+		evidence.interfaces = probeClaudeInterfaceDiagnostics(ctx, o, l)
+	}
+	return evidence, err
+}
+
+// Settle negative escape evidence before deadlines; cancellation can never
+// promote complete positive output into a verification success.
+func settleClaudeLoopback(ctx context.Context, output string, reached bool) (loopbackEvidence, error) {
+	evidence, err := judgeClaudeLoopback(output, reached, nil)
+	if capability, ok := err.(*CapabilityError); ok && capability.Code == CapabilitySandboxNotEnforced {
+		return loopbackEvidence{}, err
+	}
+	if ctx.Err() != nil {
+		return loopbackEvidence{}, &CapabilityError{Engine: harness.Claude, Code: CapabilityProbeTimeout, Phase: BeforeLaunch}
+	}
+	return evidence, err
+}
+
+// Shared transport for the installed-runtime nc candidate and the live Linux proof.
+// No inference, native login or verification-cache success is produced here.
+func runClaudeLoopbackCanary(ctx context.Context, o Options, l *launch, canary string, payload ...string) (string, error) {
+	unavailable := &CapabilityError{Engine: harness.Claude, Code: CapabilitySandboxUnavailable, Phase: BeforeLaunch}
+	dir, err := os.MkdirTemp("", "agent-harness-loopback-")
+	if err != nil {
+		return "", unavailable
+	}
+	defer os.RemoveAll(dir)
+	// Keep the UDP payload inside the native probe working directory. No
+	// read permission or working-directory allowlist needs expansion.
+	if len(payload) > 0 {
+		data, err := os.ReadFile(payload[0])
+		if err != nil {
+			return "", unavailable
+		}
+		path := filepath.Join(dir, "udp-payload")
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			return "", unavailable
+		}
+		canary = strings.ReplaceAll(canary, sandboxprobe.ShellQuote(payload[0]), sandboxprobe.ShellQuote(path))
+	}
 	provider, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return unavailable
+		return "", unavailable
 	}
 	result := make(chan string, 1)
 	server := &http.Server{ReadHeaderTimeout: 5 * time.Second, Handler: canaryProvider(canary, result)}
@@ -67,15 +122,12 @@ func probeClaudeLoopback(ctx context.Context, o Options, l *launch) error {
 	go func() { defer close(done); _ = server.Serve(provider) }()
 	defer func() { _ = server.Close(); <-done }()
 
-	dir, err := os.MkdirTemp("", "agent-harness-loopback-")
-	if err != nil {
-		return unavailable
-	}
-	defer os.RemoveAll(dir)
 	probeCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var output string
+	settled := make(chan struct{})
 	go func() {
+		defer close(settled)
 		select {
 		case output = <-result:
 		case <-probeCtx.Done():
@@ -84,29 +136,59 @@ func probeClaudeLoopback(ctx context.Context, o Options, l *launch) error {
 	}()
 	_ = driveProbe(probeCtx, o, l, dir, provider.Addr().String())
 	cancel()
-	if ctx.Err() != nil {
-		return &CapabilityError{Engine: harness.Claude, Code: CapabilityProbeTimeout, Phase: BeforeLaunch}
+	<-settled
+	// A buffered result already delivered by the provider wins a cancellation race.
+	if output == "" {
+		select {
+		case output = <-result:
+		default:
+		}
 	}
-	// The listeners may accept a moment after the canary's client has exited.
-	time.Sleep(300 * time.Millisecond)
-	return judgeLoopback(output, loopReached())
+	return output, nil
 }
 
-// judgeLoopback decides the proof from the canary's report and from what the
-// probe's loopback listener saw. Loopback must have worked both ways, and the
-// off-machine address must have been refused.
-func judgeLoopback(output string, loopReached bool) error {
+// loopbackEvidence is private, process-local evidence of a settled whole proof.
+type loopbackEvidence struct {
+	observations []sandboxprobe.InterfaceObservation
+	// Optional nc observations, including unavailable measurements. These
+	// describe diagnostics; only the base proof authorizes a session.
+	interfaces []ncInterfaceObservation
+	detail     string
+}
+
+func judgeLoopback(output string, reached bool) error {
+	_, err := judgeClaudeLoopback(output, reached, nil)
+	return err
+}
+
+// judgeClaudeLoopback settles escape evidence first, then completeness, then
+// the advertised macOS bind contract. Send observations never prove binds.
+// The errno branch is not a live Claude client: it retains the original judge
+// regression cases. Production diagnostics use nc host observations instead.
+func judgeClaudeLoopback(output string, loopReached bool, attempts []sandboxprobe.InterfaceAttempt) (loopbackEvidence, error) {
 	lines := map[string]bool{}
 	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
 		lines[strings.TrimSpace(line)] = true
 	}
 	if lines[loopbackOutside] {
-		return &CapabilityError{Engine: harness.Claude, Code: CapabilitySandboxNotEnforced, Phase: BeforeLaunch}
+		return loopbackEvidence{}, &CapabilityError{Engine: harness.Claude, Code: CapabilitySandboxNotEnforced, Phase: BeforeLaunch}
 	}
 	if !lines[canaryRan] || lines[canaryNoClient] || !lines[loopbackReached] || !lines[loopbackBound] || !loopReached {
-		return &CapabilityError{Engine: harness.Claude, Code: CapabilitySandboxUnavailable, Phase: BeforeLaunch}
+		return loopbackEvidence{}, &CapabilityError{Engine: harness.Claude, Code: CapabilitySandboxUnavailable, Phase: BeforeLaunch}
 	}
-	return nil
+	evidence := loopbackEvidence{}
+	if attempts != nil {
+		observed, outcome := sandboxprobe.JudgeInterfaceAttempts(output, attempts, sandboxprobe.InterfaceAllLocal)
+		if outcome == "" {
+			outcome = sandboxprobe.RequireInterfaceExposure(observed)
+		}
+		if outcome != "" {
+			return loopbackEvidence{}, &CapabilityError{Engine: harness.Claude, Code: string(outcome), Phase: BeforeLaunch}
+		}
+		evidence.observations = observed
+		evidence.detail = sandboxprobe.InterfaceExposureDetail(observed, false)
+	}
+	return evidence, nil
 }
 
 // canaryProvider answers the turn's first request with the canary as one shell

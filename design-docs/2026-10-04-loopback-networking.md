@@ -306,7 +306,7 @@ for Claude allowLocalBinding (*:*). Runtime observations take precedence.
 | Standalone commands, LAH-11 | Affected; truthful all-interface contract and interface canary |
 | Workbench run_command | Affected; same profile/proof, corrected Support and docs |
 | Native Codex loopback, LAH-19 | Not affected; already Unsupported, no enabled rule |
-| Claude Sandbox.Loopback | Wording affected: allowLocalBinding uses *:*; interface canary belongs to LAH-41 |
+| Claude Sandbox.Loopback | allowLocalBinding uses *:*; offered after the base nc proof; all-interface exposure from LAH-39; optional interface measurements may be unavailable |
 | Selected ports, LAH-40 | No proved local-only Seatbelt form; retain named macOS refusal |
 
 ### Strict requests and proof settlement
@@ -373,3 +373,63 @@ rule-form/interface checks to the suite and runs sandboxcheck on macOS and
 Linux. Team sandbox results and cross-compilation are not runtime Seatbelt,
 bubblewrap or Windows proof. The final delivery records their actual outcomes
 and requests the owner run at the exact recorded draft revision.
+
+### Claude session loopback and optional interface observations
+
+macOS Support(Claude, Session, Loopback) is Unknown, proved before launch for
+the installed binary and configuration. The existing flat nc base canary
+requires localhost reach and bind, and refuses off-machine access to an address
+reachable by the host. Observed escape wins over incomplete output or timeout.
+Cancelled positive output is never cached. Start, Resume and VerifySandbox
+share the same proof path; optional interface measurements cannot remove a
+working base capability. Only strict native LoopbackLocalOnly is refused.
+
+The all-interfaces claim comes from LAH-39 real-Seatbelt evidence for
+allowLocalBinding (local ip "*:*"), not from successful Claude per-class
+measurements. Binds and inbound connections are admitted on every local
+interface; wildcard and LAN servers may be reachable from other machines.
+Nothing claims local-only confinement.
+
+After the macOS base proof, a separate bounded diagnostic enumerates host
+addresses and tries flat nc commands. TCP source binds connect to individual
+host TCP witnesses; UDP source binds send a nonce to UDP witnesses. Separate
+UDP sends target own-interface and wildcard destinations. Markers report each
+command’s ok/fail status; witnesses report source and nonce observations.
+Wildcard outcomes explicitly say any peer, since the observed source alone
+does not establish an unspecified bind. No process status is converted into
+a socket errno or a denial/address-unavailable distinction. Missing, duplicate
+or malformed markers, unavailable listeners, enumeration failure, interpreter
+refusal or diagnostic timeout are recorded as unavailable measurements.
+Complete commands without matching host evidence are recorded as not observed.
+These outcomes never gate Loopback or infer a changed platform bind contract.
+
+Each uncached macOS verification pays for a second Claude launch before
+Start, Resume or VerifySandbox returns, adding up to roughly ten seconds.
+The AND/OR nc commands run in the background concurrently, with one
+three-second sleep before the terminator. This bounds the nc waiting window
+independently of the number of interface attempts; missing completion markers
+remain unavailable measurements. The twelve-second parent-deadline margin
+reserves time for diagnostic settlement.
+
+UDP-send witnesses briefly listen on host LAN interfaces and wildcard
+addresses, so other machines can reach them during this window. Only exact
+nonce payloads count. Cleanup closes all listeners and waits for their readers.
+
+Payloads, homes, listeners and ports are disposable and per-probe. No native
+permissions, settings or allowlists change. A diagnostic has its own bounded
+timeout and is omitted when insufficient base-proof time remains. Base proof
+success plus private diagnostic observations publish atomically under the
+verification-cache mutex; no positive data is published on parent cancellation.
+Cache restart re-proves; settings, digests and durable formats are unchanged.
+
+Shared pure interface helpers and legacy sandbox aliases retain the pinned
+Perl bytes and workbench profile hash. The errno-based session judge remains
+explicitly marked as regression scaffolding; live nc diagnostics store host
+observations instead. The flatness checker only limits shell syntax and command
+names; installed-runtime evidence is necessary for dontAsk approval.
+
+The README owner runner passes raw options to VerifySandbox, asserts offered
+Loopback after the base proof, and prints the redacted per-class observations,
+including unavailable measurements without failing the base check. CI never
+requires a commercial CLI or credentials. Linux’s original nc bytes and reason
+and Windows’s refusal are unchanged.

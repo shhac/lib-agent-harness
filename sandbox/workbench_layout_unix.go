@@ -4,7 +4,8 @@ package sandbox
 
 import (
 	"os"
-	"strings"
+
+	"github.com/shhac/lib-agent-harness/internal/sandboxprobe"
 )
 
 type workbenchLayout struct {
@@ -22,4 +23,4 @@ func workbenchProbeEnvironment(l workbenchLayout) []string {
 func workbenchCapability(code string) *ProofError {
 	return &ProofError{Code: code}
 }
-func workbenchShellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
+func workbenchShellQuote(s string) string { return sandboxprobe.ShellQuote(s) }

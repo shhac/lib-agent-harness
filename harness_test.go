@@ -310,8 +310,20 @@ func TestLoopbackClaims(t *testing.T) {
 		}
 	}
 	claude := Support(Claude, Session, Loopback)
-	if (runtime.GOOS == "windows") == (claude.Availability == Unknown) || claude.Reason == "" {
+	if (runtime.GOOS == "windows" && claude.Availability != Unsupported) || (runtime.GOOS != "windows" && claude.Availability != Unknown) || claude.Reason == "" {
 		t.Fatalf("Claude session loopback on %s: %+v", runtime.GOOS, claude)
+	}
+	if runtime.GOOS == "darwin" {
+		want := "macOS Claude Loopback is proved at launch by localhost reach and bind plus outbound off-machine refusal; LAH-39 real-Seatbelt evidence shows allowLocalBinding (local ip *:*) admits binds and inbound connections on every local interface, so 0.0.0.0 and LAN listeners may be reachable from other machines; no local-only claim; interface-address TCP bind, UDP bind and UDP send diagnostics record observations or unavailable measurements without gating the base proof"
+		if claude.Reason != want {
+			t.Fatalf("Claude macOS reason changed: %s", claude.Reason)
+		}
+	} else if runtime.GOOS == "windows" {
+		if claude.Reason != "restricted and sandboxed hosting are unavailable on Windows" {
+			t.Fatal(claude.Reason)
+		}
+	} else if claude.Reason != supportTable[supportKey{Claude, Session, Loopback}].Reason {
+		t.Fatal("non-darwin reason changed")
 	}
 	for _, e := range Engines() {
 		for _, op := range Operations() {

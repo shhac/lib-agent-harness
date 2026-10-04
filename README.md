@@ -1121,6 +1121,7 @@ Callers requiring strict local-only networking set both `Loopback: true` and
 | Standalone sandbox.Open Loopback | All-interface binds/inbound; outbound on-machine only, proved | Private per-command loopback, proved | Unsupported |
 | Standalone sandbox.Open LoopbackLocalOnly | Refused: `loopback_local_only_unenforceable` | Private namespace with only lo; host-interface binds must be EADDRNOTAVAIL | Unsupported |
 | Workbench.Commands.LoopbackLocalOnly | Same named Seatbelt refusal | Unsupported; standalone Open offers it | Unsupported |
+| Claude Sandbox.Loopback | Existing nc base proof, Unknown until verified; all-interface exposure | Existing nc proof, Unknown until verified | Unsupported |
 | Sandbox.LoopbackLocalOnly (native sessions) | Unsupported | Unsupported | Unsupported |
 
 The field is also available on the deprecated session.CommandSandboxOptions.
@@ -1153,25 +1154,57 @@ records address classes and the tested draft. That historical Python-client
 run does not verify the revised Perl client. Real tests print address classes
 without raw host addresses; loopback interfaces are excluded from escape tests.
 
-
 API workbench sessions use `Workbench.Commands.Loopback`; see the Workbench
 section for their separately proved macOS sandbox.
 
-`Sandbox.Loopback` lets a sandboxed Claude session start a local server and
-request it. On macOS, Claude Code allowLocalBinding permits binds and inbound connections
-on every local interface: a server bound to 0.0.0.0 or a LAN address may be
-reachable from other machines. Outbound off-machine traffic stays refused,
-and the domain allowlist stays empty. Its interface-address canary extension
-is tracked separately in LAH-41; the current proof checks loopback and an
-off-machine witness. Anything the project needs at run time must therefore be local.
+Claude `Sandbox.Loopback` stays offered on macOS and Linux after the existing
+base proof succeeds: localhost must be reachable and bindable, and an
+off-machine address reachable by the host must be refused inside the sandbox.
+Support is Unknown until verified for the installed binary and launch settings.
+On macOS, LAH-39’s real-Seatbelt evidence establishes that allowLocalBinding
+(`local ip "*:*"`) permits binds and inbound connections on every local
+interface. Wildcard and LAN listeners may be reachable from other machines;
+there is no local-only claim. Only the strict `LoopbackLocalOnly` request is
+refused; it remains Unsupported for native Claude sessions on every platform.
 
-The claim is proved before each launch, without inference. The session's own
-arguments drive Claude Code against a local provider that answers the first
-turn with one scripted shell call, the canary, and reads its result back. The
-canary must reach the probe's loopback listener, bind and reach one of its
-own, and be refused `api.anthropic.com` on 443, which the probe has just
-reached itself; if that address cannot be reached from outside the sandbox,
-nothing is proved and the session is refused.
+After a successful macOS base proof, optional diagnostics try interface-address
+and wildcard TCP source binds, UDP source binds and UDP sends using flat nc
+commands and a local provider that refuses inference. Host listeners check
+peer addresses and nonce payloads. Each attempt records a host observation,
+an unconfirmed outcome, or unavailable measurement privately beside the
+verified key. Wildcard observations explicitly mean any peer, not proof that
+a client bound the unspecified address. Process exit statuses are never socket
+errnos; a failure alone does not distinguish denial from address unavailability.
+Missing, refused or incomplete diagnostics never invalidate the base proof.
+No per-class Claude results are claimed as already proved by installed-runtime
+evidence. Neither permissions nor allowlists are widened.
+
+Linux keeps its original nc canary bytes and capability reason. Windows keeps
+its pre-launch refusal. Standalone/workbench Seatbelt proofs retain their Perl
+client, profile and errno evidence. Base escape evidence wins over incomplete
+output or a deadline; cancellation publishes no positive verification.
+Observations and verified keys publish together in the process-local cache.
+Each uncached macOS proof also launches Claude once for diagnostics, adding
+up to roughly ten seconds before Start, Resume or VerifySandbox returns. nc
+attempts run concurrently, with one three-second settling delay rather than
+a one-second UDP wait per address. If fewer than twelve seconds remain in
+the proof deadline, diagnostics are recorded as unavailable. UDP-send witnesses
+briefly listen on each host interface and on wildcard addresses; other machines
+can reach these sockets during the diagnostic window. Only matching nonce
+payloads count, and all listeners close when the diagnostic settles.
+
+Owner runner on real macOS outside an enclosing sandbox with installed Claude:
+
+```sh
+AGENT_HARNESS_TEST_NO_SKIP=1 go test -race -count=1 -v -run TestClaudeLoopbackInterfaceRealProof ./session
+```
+
+The test requires the base Loopback proof to pass and prints the optional
+per-class interface table, with addresses redacted. Unavailable measurements
+are reported without failing the base capability check. Selecting the exact
+name opts in; `AGENT_HARNESS_TEST_CLAUDE_INTERFACE_PROOF=1` includes it in the
+full suite. Requested base-proof prerequisites fail rather than skip. A
+passing command-shape check does not prove native dontAsk approval.
 
 Codex 0.160.0 remains explicitly unsupported for `Sandbox.Loopback` on every
 platform. Owner experiments on macOS with the installed 0.160.0 binary found
@@ -1305,8 +1338,10 @@ permissions allow. For agents:
   nothing they should not use, rather than your everyday profile.
 - Limit the extension's site permissions to the sites the agent should
   visit, typically the local dev server.
-- For Claude, pair it with `Sandbox.Loopback`, so the agent's shell can start the project
-  and the browser can use it, while the shell reaches nothing off the machine.
+- On macOS and Linux, Claude may pair it with `Sandbox.Loopback` after its
+  base network proof succeeds. On macOS, dev-server listeners can bind every
+  local interface and may be reachable from other machines; request localhost
+  explicitly in the server configuration.
 
 A sandboxed Claude session admits the browser's tools beside its own, with explicit
 allow rules for the ones Claude Code 2.1.283 lists. `file_upload` (which reads
@@ -1315,8 +1350,10 @@ another agent in the browser's side panel) are denied, and a tool a later
 build adds stays refused until it is reviewed. `--strict-mcp-config` keeps
 only the browser's server, claude.ai connectors are switched off, and the
 startup report must show that server connected and no other server's tools.
-Checked live: a sandboxed session served a page on loopback, read it through
-Chrome, and found no `file_upload` tool.
+Historical browser-tool evidence: a sandboxed session served a page on
+loopback, read it through Chrome, and found no `file_upload` tool. That older
+run does not prove the macOS interface diagnostics. Loopback remains offered
+after its base proof; macOS listeners may expose every local interface.
 
 ### Background priority
 
