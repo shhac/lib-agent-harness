@@ -1136,6 +1136,17 @@ minutes and time out: it also throttles disk I/O and confines work to the
 efficiency cores. Nice 10 alone ran the same suite in 5.5 seconds at the same
 load while still yielding to foreground work.
 
+The background-tree test checks exact nice 10 inside the startup notification,
+then releases a waiting leader to fork a descendant. It waits for the
+descendant to report that it has detached into its own process group and
+compares its own priority reading, the parent's `getpriority` reading, and
+`ps`, checking process birth identities around the observations. Both a shell
+leader and a direct Go helper are covered. The original shell's automatic
+startup/fork path is also retained, with the leader held alive during inspection
+and detachment checked externally, so the controlled fixtures cannot conceal
+a startup race. Unix CI repeats this proof 20 times
+with capability skips forbidden; a skipped local run is not repetition evidence.
+
 ### Caller-hosted tools beside native ones
 
 `Sandbox.Tools` takes the same `ToolHost` a restriction does, and serves it the

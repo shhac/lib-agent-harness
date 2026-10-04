@@ -76,6 +76,9 @@ jobs:
       - name: Check the full suite inside bubblewrap
         if: runner.os == 'Linux'
         run: go run ./internal/cmd/sandboxcheck
+      - name: Repeat background tree priority proof
+        if: runner.os != 'Windows'
+        run: go test -race ./process -run '^TestBackgroundLowersTheWholeTree$' -count=20 -v
   linux-bwrap-080:
     name: linux (bubblewrap 0.8.0)
     runs-on: ubuntu-latest

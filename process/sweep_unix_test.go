@@ -228,54 +228,6 @@ func TestSweepReachesUnreadableChildrenOfMarkedProcesses(t *testing.T) {
 	waitGone(t, sleeper)
 }
 
-func niceOf(t *testing.T, pid int) string {
-	t.Helper()
-	out, err := exec.Command("ps", "-o", "nice=", "-p", strconv.Itoa(pid)).Output()
-	if err != nil {
-		t.Fatalf("ps: %v", err)
-	}
-	return strings.TrimSpace(string(out))
-}
-
-// The tree runs niced, including a descendant forked later into a process
-// group of its own, as an agent's background server is.
-func TestBackgroundLowersTheWholeTree(t *testing.T) {
-	testenv.RequireProcessGroup(t)
-	testenv.RequireGroupPriority(t)
-	testenv.RequireProcessStatus(t)
-	cmd, p, err := Command(context.Background(), "/bin/sh", "-c", `sleep 0.3; "$0" -test.run='^TestHelper$' -- detached >/dev/null 2>&1 & echo $!; sleep 1`, os.Args[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	cmd.Env = append(os.Environ(), "HARNESS_PROCESS_HELPER=1")
-	out := &lockedBuffer{}
-	cmd.Stdout = out
-	cmd.WaitDelay = time.Second
-	p.Background()
-	started := make(chan int, 1)
-	p.Notify(func(pid int) { started <- pid })
-	done := make(chan error, 1)
-	go func() { done <- p.Run() }()
-	deadline := time.Now().Add(3 * time.Second)
-	var child int
-	for child == 0 && time.Now().Before(deadline) {
-		child, _ = strconv.Atoi(strings.TrimSpace(out.String()))
-		time.Sleep(20 * time.Millisecond)
-	}
-	if child == 0 {
-		t.Fatal("no child pid")
-	}
-	t.Cleanup(func() { _ = syscall.Kill(child, syscall.SIGKILL) })
-	if got := niceOf(t, <-started); got != "10" {
-		t.Errorf("leader nice %s", got)
-	}
-	if got := niceOf(t, child); got != "10" {
-		t.Errorf("later descendant nice %s", got)
-	}
-	<-done
-	p.Close()
-}
-
 func TestRunReapsGroupWhenLeaderKilled(t *testing.T) {
 	testenv.RequireProcessGroup(t)
 	testenv.RequireProcessStatus(t)
