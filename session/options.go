@@ -162,11 +162,9 @@ func otherEnginePolicy(o Options) error {
 // defaulting each from this process's environment.
 func normalizePaths(o Options) (Options, error) {
 	cli := &o.Provider.CLI
+	entry := engines[o.Provider.Engine]
 	if cli.Binary == "" {
-		cli.Binary = string(o.Provider.Engine)
-		if o.Provider.Engine == harness.CommandCode {
-			cli.Binary = "cmd"
-		}
+		cli.Binary = entry.binary
 	}
 	var err error
 	if o.WorkDir == "" {
@@ -178,24 +176,17 @@ func normalizePaths(o Options) (Options, error) {
 	if err != nil {
 		return o, refuse(o, "work_dir", RefusedWorkDir, "invalid working directory")
 	}
-	if o.Provider.Engine == harness.CommandCode {
-		return commandCodeHome(o)
+	if entry.resolveHome != nil {
+		return entry.resolveHome(o)
 	}
 	if cli.Home == "" {
-		key, suffix := homeVariable(o.Provider.Engine), ".codex"
-		switch o.Provider.Engine {
-		case harness.Claude:
-			suffix = ".claude"
-		case harness.Grok:
-			suffix = ".grok"
-		}
-		cli.Home = os.Getenv(key)
+		cli.Home = os.Getenv(entry.homeVariable)
 		if cli.Home == "" {
 			home, e := os.UserHomeDir()
 			if e != nil {
 				return o, refuse(o, "home", RefusedHome, "home directory unavailable")
 			}
-			cli.Home = filepath.Join(home, suffix)
+			cli.Home = filepath.Join(home, entry.homeDir)
 		}
 	}
 	cli.Home, err = filepath.Abs(cli.Home)
@@ -221,18 +212,18 @@ func normalizeLimits(o Options) (Options, error) {
 	return o, nil
 }
 
-// normalizePolicy applies the native policy defaults and refuses a value the
-// engine does not recognise. Every Codex and Claude default is applied to
-// either of those engines, because every one of them is part of a Ref's digest.
-// Grok's references never existed without its own defaults, so it carries only
-// those.
+// normalizePolicy applies the engine's policy defaults and refuses a value it
+// does not recognise.
 func normalizePolicy(o Options) (Options, error) {
-	if o.Provider.Engine == harness.Grok {
-		return normalizeGrokPolicy(o)
-	}
-	if o.Provider.Engine == harness.CommandCode {
-		return normalizeCommandCodePolicy(o)
-	}
+	return engines[o.Provider.Engine].normalizePolicy(o)
+}
+
+// legacyPolicyDefaults applies every Codex and Claude default to either of
+// those engines, because every one of them is part of a Ref's digest. Grok's
+// and Command Code's references never existed without their own defaults, so
+// they carry only those. Caller-owned slices are frozen before fingerprinting
+// or launching.
+func legacyPolicyDefaults(o Options) Options {
 	if o.Policy.CodexSandbox == "" {
 		o.Policy.CodexSandbox = "read-only"
 	}
@@ -242,27 +233,33 @@ func normalizePolicy(o Options) (Options, error) {
 	if o.Policy.ClaudePermission == "" {
 		o.Policy.ClaudePermission = "dontAsk"
 	}
-	if o.Provider.Engine == harness.Codex {
-		switch o.Policy.CodexSandbox {
-		case "read-only", "workspace-write", "danger-full-access":
-		default:
-			return o, refuse(o, "policy", RefusedPolicy, "invalid Codex sandbox policy")
-		}
-		switch o.Policy.CodexApproval {
-		case "never", "on-request", "untrusted":
-		default:
-			return o, refuse(o, "policy", RefusedPolicy, "invalid Codex approval policy")
-		}
-	} else {
-		switch o.Policy.ClaudePermission {
-		case "dontAsk", "default", "acceptEdits", "plan", "auto":
-		default:
-			return o, refuse(o, "policy", RefusedPolicy, "invalid Claude permission policy")
-		}
-	}
-	// Freeze caller-owned slices before fingerprinting or launching.
 	if o.Policy.ClaudeTools != nil {
 		o.Policy.ClaudeTools = append([]string{}, o.Policy.ClaudeTools...)
+	}
+	return o
+}
+
+func normalizeCodexPolicy(o Options) (Options, error) {
+	o = legacyPolicyDefaults(o)
+	switch o.Policy.CodexSandbox {
+	case "read-only", "workspace-write", "danger-full-access":
+	default:
+		return o, refuse(o, "policy", RefusedPolicy, "invalid Codex sandbox policy")
+	}
+	switch o.Policy.CodexApproval {
+	case "never", "on-request", "untrusted":
+	default:
+		return o, refuse(o, "policy", RefusedPolicy, "invalid Codex approval policy")
+	}
+	return o, nil
+}
+
+func normalizeClaudePolicy(o Options) (Options, error) {
+	o = legacyPolicyDefaults(o)
+	switch o.Policy.ClaudePermission {
+	case "dontAsk", "default", "acceptEdits", "plan", "auto":
+	default:
+		return o, refuse(o, "policy", RefusedPolicy, "invalid Claude permission policy")
 	}
 	return o, nil
 }

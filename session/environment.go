@@ -17,28 +17,49 @@ import (
 // which come last so they take effect.
 func environment(o Options) []string {
 	env := baseEnvironment(o)
-	if o.Sandbox != nil && o.Provider.Engine == harness.Claude {
-		// Auto-memory would read and write the operator's own memory folders.
-		env = append(env, "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1")
-	}
-	if o.Provider.Engine == harness.Grok && o.Policy.GrokTelemetry == GrokTelemetryReduced {
-		env = nativecli.Override(env, nativecli.GrokReducedTelemetry...)
+	if overrides := engines[o.Provider.Engine].overrides; overrides != nil {
+		env = overrides(o, env)
 	}
 	return append(env, o.Env...)
 }
 
-// homeVariable names the environment variable that selects an engine's home.
-func homeVariable(e harness.Engine) string {
-	switch e {
-	case harness.Claude:
-		return "CLAUDE_CONFIG_DIR"
-	case harness.Grok:
-		return "GROK_HOME"
-	case harness.CommandCode:
-		// Command Code derives its home from the user's home directory.
-		return ""
+// claudeOverrides turns off auto-memory in a sandboxed session: it would read
+// and write the operator's own memory folders.
+func claudeOverrides(o Options, env []string) []string {
+	if o.Sandbox == nil {
+		return env
 	}
-	return "CODEX_HOME"
+	return append(env, "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1")
+}
+
+func grokOverrides(o Options, env []string) []string {
+	if o.Policy.GrokTelemetry != GrokTelemetryReduced {
+		return env
+	}
+	return nativecli.Override(env, nativecli.GrokReducedTelemetry...)
+}
+
+// homeVariable names the environment variable that selects an engine's home.
+func homeVariable(e harness.Engine) string { return engines[e].homeVariable }
+
+// codexHomeValue gives a restricted or sandboxed session its own runtime
+// home: the library wrote that home's configuration and shared the login into
+// it, so nothing the operator keeps beside their credential comes along.
+func codexHomeValue(o Options) (string, bool) {
+	if (o.Restriction != nil || o.Sandbox != nil) && o.RuntimeHome != "" {
+		return o.RuntimeHome, true
+	}
+	return o.Provider.CLI.Home, true
+}
+
+// claudeHomeValue leaves CLAUDE_CONFIG_DIR unset for the CLI's own default
+// home, where setting it would move Claude's project and credential lookup.
+func claudeHomeValue(o Options) (string, bool) {
+	home, err := os.UserHomeDir()
+	if err == nil && filepath.Clean(o.Provider.CLI.Home) == filepath.Join(home, ".claude") {
+		return "", false
+	}
+	return o.Provider.CLI.Home, true
 }
 
 // grokManaged is what a Grok session never inherits: its home, which the
@@ -86,10 +107,7 @@ func baseEnvironment(o Options) []string {
 		key, _, _ := strings.Cut(entry, "=")
 		// Retain USER and other OS identity variables: native keychain lookup uses
 		// them. Strip provider credentials/overrides to preserve subscription login.
-		if o.Provider.Engine == harness.Grok && grokManaged(key) {
-			continue
-		}
-		if o.Provider.Engine == harness.CommandCode && commandCodeManaged(key) {
+		if withheld := engines[o.Provider.Engine].withheld; withheld != nil && withheld(key) {
 			continue
 		}
 		if providerManaged(key) {
@@ -97,24 +115,18 @@ func baseEnvironment(o Options) []string {
 		}
 		env = append(env, entry)
 	}
-	// A restricted session runs in its own home: the library wrote that home's
-	// configuration and shared the login into it, so nothing the operator keeps
-	// beside their credential comes along.
-	selected := o.Provider.CLI.Home
-	if (o.Restriction != nil || o.Sandbox != nil) && o.RuntimeHome != "" && o.Provider.Engine == harness.Codex {
-		selected = o.RuntimeHome
-	}
-	key := homeVariable(o.Provider.Engine)
-	if key == "" {
+	entry := engines[o.Provider.Engine]
+	if entry.homeVariable == "" {
 		return env
 	}
-	if o.Provider.Engine == harness.Claude {
-		home, err := os.UserHomeDir()
-		if err == nil && filepath.Clean(selected) == filepath.Join(home, ".claude") {
-			return env
-		}
+	selected, set := o.Provider.CLI.Home, true
+	if entry.homeValue != nil {
+		selected, set = entry.homeValue(o)
 	}
-	return append(env, key+"="+selected)
+	if !set {
+		return env
+	}
+	return append(env, entry.homeVariable+"="+selected)
 }
 
 // providerManaged is what no session inherits: the homes the harness selects
@@ -150,16 +162,36 @@ func validateEnv(o Options) error {
 			strings.HasPrefix(upper, "DYLD_"), strings.HasPrefix(upper, "LD_"), upper == "NODE_OPTIONS", upper == "NODE_PATH", strings.HasPrefix(upper, "BUN_"),
 			strings.HasSuffix(upper, "_PROXY"), strings.HasPrefix(upper, "SSL_CERT_"), upper == "NODE_EXTRA_CA_CERTS", strings.HasPrefix(upper, "GIT_"):
 			return refuse(o, "env", RefusedEnvManaged, "environment addition "+key+" is managed by the harness or would change the CLI outside its sandbox")
-		case o.Provider.Engine == harness.Codex && o.Sandbox != nil && o.Browser &&
-			(strings.HasPrefix(upper, "NODE_REPL_") || strings.HasPrefix(upper, "BROWSER_USE_") || strings.HasPrefix(upper, "SKY_")):
-			return refuse(o, "env", RefusedEnvManaged, "environment addition "+key+" would change the sandboxed browser outside its proven configuration")
 		}
-		if o.Provider.Engine == harness.CommandCode && commandCodeManaged(key) {
-			return refuse(o, "env", RefusedEnvManaged, "environment addition "+key+" would change how Command Code runs outside the session's policy")
+		if refuseAddition := engines[o.Provider.Engine].refuseAddition; refuseAddition != nil {
+			if err := refuseAddition(o, key, upper); err != nil {
+				return err
+			}
 		}
-		if o.Provider.Engine == harness.Grok && (strings.HasPrefix(upper, "GROK_") || strings.HasPrefix(upper, "XAI_")) {
-			return refuse(o, "env", RefusedEnvManaged, "environment addition "+key+" is managed by the harness; set Policy.GrokTelemetry for Grok's telemetry controls")
-		}
+	}
+	return nil
+}
+
+func refuseCodexAddition(o Options, key, upper string) error {
+	if o.Sandbox != nil && o.Browser && (strings.HasPrefix(upper, "NODE_REPL_") || strings.HasPrefix(upper, "BROWSER_USE_") || strings.HasPrefix(upper, "SKY_")) {
+		return refuse(o, "env", RefusedEnvManaged, "environment addition "+key+" would change the sandboxed browser outside its proven configuration")
+	}
+	return nil
+}
+
+func refuseCommandCodeAddition(o Options, key, _ string) error {
+	if commandCodeManaged(key) {
+		return refuse(o, "env", RefusedEnvManaged, "environment addition "+key+" would change how Command Code runs outside the session's policy")
+	}
+	return nil
+}
+
+// refuseGrokAddition refuses every GROK_ and XAI_ addition, more than a Grok
+// session withholds on inheritance: the operator's own Grok settings carry
+// over, but a caller sets Grok's controls only through Policy.
+func refuseGrokAddition(o Options, key, upper string) error {
+	if strings.HasPrefix(upper, "GROK_") || strings.HasPrefix(upper, "XAI_") {
+		return refuse(o, "env", RefusedEnvManaged, "environment addition "+key+" is managed by the harness; set Policy.GrokTelemetry for Grok's telemetry controls")
 	}
 	return nil
 }
