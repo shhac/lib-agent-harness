@@ -15,15 +15,9 @@ import (
 type engineEntry struct {
 	// dialect frames the engine's wire under the session's policy.
 	dialect func(Policy) dialect
-	// binary is the CLI a session runs when the caller names none.
-	binary string
-	// homeVariable selects the engine's home in its environment; empty when
-	// the engine has none and finds its home itself.
-	homeVariable string
-	// homeDir is the default home, under the user's home directory, when
-	// homeVariable is unset in this process.
-	homeDir string
-	// resolveHome, when set, replaces that resolution entirely.
+	// The default binary, home variable and home folder are the engine's
+	// harness.Descriptor. resolveHome, when set, replaces resolving the home
+	// from them.
 	resolveHome func(Options) (Options, error)
 	// homeValue is the value given homeVariable, and false to leave it
 	// unset; nil gives the caller's home.
@@ -76,8 +70,7 @@ var engines map[harness.Engine]engineEntry
 func init() {
 	engines = map[harness.Engine]engineEntry{
 		harness.Codex: {
-			dialect: codexDialect, binary: "codex",
-			homeVariable: "CODEX_HOME", homeDir: ".codex", homeValue: codexHomeValue,
+			dialect: codexDialect, homeValue: codexHomeValue,
 			normalizePolicy: normalizeCodexPolicy, refuseAddition: refuseCodexAddition,
 			initialize: (*Session).initializeCodex, event: (*Session).codexEvent,
 			bufferStart: true, startTurn: (*Session).startCodexTurnSynced,
@@ -85,8 +78,7 @@ func init() {
 			account: codexAccountRead, quota: codexQuotaRead,
 		},
 		harness.Claude: {
-			dialect: claudeDialect, binary: "claude",
-			homeVariable: "CLAUDE_CONFIG_DIR", homeDir: ".claude", homeValue: claudeHomeValue,
+			dialect: claudeDialect, homeValue: claudeHomeValue,
 			normalizePolicy: normalizeClaudePolicy, overrides: claudeOverrides,
 			initialize: (*Session).initializeClaude, sessionNotice: (*Session).observeClaudeInit, event: (*Session).claudeEvent,
 			startTurn: (*Session).startClaudeTurn, interrupt: (*Session).interruptClaude,
@@ -94,8 +86,7 @@ func init() {
 			accountFromStart: true, quota: claudeQuotaRead, context: claudeContextRead,
 		},
 		harness.Grok: {
-			dialect: grokDialect, binary: "grok",
-			homeVariable: "GROK_HOME", homeDir: ".grok",
+			dialect:         grokDialect,
 			normalizePolicy: normalizeGrokPolicy, withheld: grokManaged,
 			refuseAddition: refuseGrokAddition, overrides: grokOverrides,
 			initialize: (*Session).initializeGrok, event: (*Session).grokEvent,
@@ -104,7 +95,7 @@ func init() {
 			account:       grokAccountRead,
 		},
 		harness.CommandCode: {
-			dialect: commandCodeDialect, binary: "cmd", resolveHome: commandCodeHome,
+			dialect: commandCodeDialect, resolveHome: commandCodeHome,
 			normalizePolicy: normalizeCommandCodePolicy, withheld: commandCodeManaged,
 			refuseAddition: refuseCommandCodeAddition,
 			initialize:     (*Session).initializeCommandCode, sessionNotice: (*Session).commandCodeModeUpdate, event: (*Session).commandCodeEvent,

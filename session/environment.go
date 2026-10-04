@@ -40,7 +40,10 @@ func grokOverrides(o Options, env []string) []string {
 }
 
 // homeVariable names the environment variable that selects an engine's home.
-func homeVariable(e harness.Engine) string { return engines[e].homeVariable }
+func homeVariable(e harness.Engine) string {
+	described, _ := harness.Describe(e)
+	return described.HomeVariable
+}
 
 // codexHomeValue gives a restricted or sandboxed session its own runtime
 // home: the library wrote that home's configuration and shared the login into
@@ -116,7 +119,8 @@ func baseEnvironment(o Options) []string {
 		env = append(env, entry)
 	}
 	entry := engines[o.Provider.Engine]
-	if entry.homeVariable == "" {
+	key := homeVariable(o.Provider.Engine)
+	if key == "" {
 		return env
 	}
 	selected, set := o.Provider.CLI.Home, true
@@ -126,7 +130,7 @@ func baseEnvironment(o Options) []string {
 	if !set {
 		return env
 	}
-	return append(env, entry.homeVariable+"="+selected)
+	return append(env, key+"="+selected)
 }
 
 // providerManaged is what no session inherits: the homes the harness selects

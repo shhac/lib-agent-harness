@@ -163,8 +163,9 @@ func otherEnginePolicy(o Options) error {
 func normalizePaths(o Options) (Options, error) {
 	cli := &o.Provider.CLI
 	entry := engines[o.Provider.Engine]
+	described, _ := harness.Describe(o.Provider.Engine)
 	if cli.Binary == "" {
-		cli.Binary = entry.binary
+		cli.Binary = described.Binary
 	}
 	var err error
 	if o.WorkDir == "" {
@@ -180,13 +181,13 @@ func normalizePaths(o Options) (Options, error) {
 		return entry.resolveHome(o)
 	}
 	if cli.Home == "" {
-		cli.Home = os.Getenv(entry.homeVariable)
+		cli.Home = os.Getenv(described.HomeVariable)
 		if cli.Home == "" {
 			home, e := os.UserHomeDir()
 			if e != nil {
 				return o, refuse(o, "home", RefusedHome, "home directory unavailable")
 			}
-			cli.Home = filepath.Join(home, entry.homeDir)
+			cli.Home = filepath.Join(home, described.HomeDir)
 		}
 	}
 	cli.Home, err = filepath.Abs(cli.Home)
