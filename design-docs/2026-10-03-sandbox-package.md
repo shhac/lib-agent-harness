@@ -30,6 +30,10 @@ Restoration requires a reviewed storage/admission invariant against concurrent
 links, renames, unlinks and external mutation (LAH-27 design, LAH-28 implementation);
 passing repetitions or independent stat samples cannot establish that invariant.
 Consumer migration is tracked separately in LAH-33/34 under the approved split.
+The [storage/admission design](2026-10-05-workspace-storage-admission.md) is the
+review prerequisite for LAH-28: dedicated local filesystem roots only, ordinary
+directories still refused, implementation deferred until consumer demand.
+This design changes none of the behavior or historical evidence below.
 
 The historical read/admission descriptions below describe the retained
 implementation, not current Linux/macOS authorization.

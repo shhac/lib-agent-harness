@@ -587,10 +587,12 @@ Further rules:
   - **Skills are not affected.** The skill tools read from the caller's own
     skill directories, which no workbench tool or command writes, so
     `internal/skills` keeps its current checks.
-  - **What remains.** A file whose only other name is removed after it is linked
-    in, leaving a link count of 1, has become a workspace file. Anyone who can
-    do that could as well have copied it in. `WorkDir`'s contents are the
-    caller's responsibility, as the data caveat below says.
+  - **Correction after LAH-32.** Link count 1 does not establish workspace
+    provenance: the retained outside-source fixture disproves sampling admission
+    even with matching handle identity. Linux/macOS content tools remain refused.
+    The [storage/admission design](2026-10-05-workspace-storage-admission.md)
+    selects dedicated per-task filesystems and checked handles for restoration;
+    it does not treat the counterexample as caller-authorized import.
   - **Tests.** Include a pre-existing link to a file outside `WorkDir`, and a
     concurrency test. In it, a goroutine repeatedly creates and removes a hard
     link from an outside file holding a marker, and swaps a directory for a

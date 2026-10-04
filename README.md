@@ -396,6 +396,10 @@ is regenerated outside durable transcript content and does not accumulate.
 Restoration requires a reviewed storage/admission invariant against concurrent
 links, renames, unlinks and external mutation (LAH-27 design, LAH-28 implementation);
 passing repetitions or independent stat samples cannot establish that invariant.
+The [storage/admission design](design-docs/2026-10-05-workspace-storage-admission.md)
+selects per-task dedicated local filesystem roots; ordinary directories remain
+refused. It is a design for review, with implementation deferred until a consumer
+needs API-engine file tools. Current behavior is unchanged.
 Consumer migration is tracked separately in LAH-33/34 under the approved split.
 The [investigation and validation record](design-docs/2026-10-03-sandbox-package.md#lah-32-review-repair-after-main-afbaf07)
 separates modeled admission observations, verified content refusals, synthetic
