@@ -597,8 +597,8 @@ ordinary nonzero exit. Stop waits for settlement and is safe to repeat.
 If Start returns an error after process launch, it also returns a non-nil,
 settled handle. Call Result on that handle to recover bounded output and the
 PATH report; its error still means the command's effects are uncertain. An
-error before launch returns a nil handle. Compatibility integration is tracked
-in LAH-30; callers of the shared API must check the handle even when Start fails.
+error before launch returns a nil handle. The deprecated session wrapper preserves
+this contract too; check the handle even when Start fails.
 
 On macOS, opt-in Loopback permits binding and connections only to this
 machine's own addresses. The proof checks outbound, own-listener and inbound
@@ -631,7 +631,9 @@ Pre-launch refusals and failed proofs return `sandbox.RefusalError` and
 `sandbox.ProofError`. `sandbox.StateError` reports unusable or locked recovery state. The deprecated
 `session.OpenCommandSandbox` wrapper and its options, result and handle types
 remain for one release; it translates every error to the v0.22 session vocabulary.
-Existing consumers, including crew-assistant, need no change.
+The wrapper also carries each fixed proof step into
+`session.CapabilityError.ProofStep` and `harness.ErrorFacts`. Unknown steps are
+empty; no-step errors retain their legacy wording.
 
 See [the command sandbox design](design-docs/2026-10-03-command-sandbox.md).
 
@@ -656,7 +658,13 @@ ordinary output truncation still applies. `StartedCommand.Result` exposes the
 same note. Nonzero exits and
 timeouts retain it; settled cancellation/unknown-outcome results retain available
 diagnostics alongside the error. Pre-launch refusals have no command report.
-Hosted failure settlement and compatibility integration are deferred to LAH-30.
+Hosted `run_command` preserves that same single bounded note in success and
+failure results. With captured stderr, failures are error-marked JSON containing
+`stderr`, `truncated`, `error` (at most 128 bytes), `exit_code` and `timed_out`.
+Cancellation, deadlines, closure and unknown outcomes retain the payload without
+changing unknown-effect accounting; generic errors retain capture too. Without
+capture, legacy plain-text failure answers remain unchanged. Admission stays
+serialized, and cancellation waits for actual settlement before another turn.
 Successful process startup is retained after settlement even when priority setup
 fails before notification; Start preserves its handle and diagnostics with an
 uncertain outcome. The priority refusal remains enforced.

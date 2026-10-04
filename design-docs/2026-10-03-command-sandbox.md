@@ -341,12 +341,11 @@ bounded escaped stderr report on nonzero exits, timeouts and settled errors.
 Pre-launch refusals have no command report. Shared Start returns nil before
 launch and a settled non-nil handle on post-launch failures, even when caller
 cancellation or Close races launch. Result is stable and does not imply rollback.
-Hosted settlement, API integration, compatibility translation and their tests
-are assigned to LAH-30, waiting on this core and LAH-32. Their original hunks
-remain in retained draft 4, `0f81bfcd42470ea74b3b6f42c5e5c0ffe6aa6b27`.
-They are extracted here against landed baseline `181960c`, not older local main.
-Session files and the API design document match that baseline; no landed
-ownership, networking or tool-admission behavior was reverted.
+Hosted settlement and deprecated wrappers now preserve the shared diagnostics
+on failures as well as success. The API workbench design describes bounded JSON
+failure payloads, compatibility handles and unchanged unknown-effect accounting.
+Only the retained session-specific hunks were adapted after LAH-25 and LAH-32;
+the shared policy and file-tool containment remain intact.
 
 Scratch admission captures an os.Root descriptor and identity for private Tmp
 before commands start. Empty-PATH fallback creation uses Root.Mkdir with unique
@@ -375,8 +374,7 @@ fixture_preparation, outside_control, sandbox_launch and execution_judgment.
 Open errors name the failing step, without paths, output or credentials. Missing
 positive controls remain unavailable; native startup remains not-enforced;
 interruptions remain probe_timed_out and retain the step. No failed/interrupted
-proof records cache evidence or prepares command state. Compatibility propagation
-is LAH-30. Current identities are seatbelt-workbench-v11, bwrap-workbench-v4 and
+proof records cache evidence or prepares command state. Compatibility propagation preserves the same fixed facts. Current identities are seatbelt-workbench-v11, bwrap-workbench-v4 and
 readable-path-v2; draft-4 v9/v3/v1 keys are rejected, profile/mount pins remain
 unchanged, and Linux still re-proves. Network rules, atomic recovery, uncertain
 ownership, admission/Close semantics and harness.Support claims are unchanged.
@@ -411,12 +409,12 @@ Acceptance audit:
 | 1: platform vet/race | Current checks below; Linux/Windows runtime matrix acceptance remains pending. |
 | 2: docs | README, command/package design and pending notes reflect the core split. |
 | 3: claims | Support unchanged; failed/unrun probes certify nothing. |
-| 4: shared mechanism | Existing System/Read/Work/Home/Tmp policy reused; hosted/compatibility hunks deferred to LAH-30. |
+| 4: shared mechanism | Existing System/Read/Work/Home/Tmp policy reused; hosted/compatibility adapters preserve the shared policy. |
 | 5: PATH | Canonical ordered inherited/override filtering, symlinks, safe anchored fallback and replacement regressions. |
 | 6: diagnostics | One bounded stderr note retained in shared Run/Start results. |
 | 7: macOS | Script controls plus independent native permission-refusal and widened-control checks; real execution results pending. |
 | 8: Linux | Mounts unchanged; separate native/refusal markers; candidate 0.9/0.8.0 results pending. |
-| 9: regressions | PATH, env-shebang, external Read, replacement and shared command entry points retained; hosted tests deferred. |
+| 9: regressions | PATH, env-shebang, external Read, replacement and shared command entry points retained; hosted synthetic and readable-PATH tests cover settlement. |
 | 10: evidence/cache | v11/v4/v2, old-key rejection/stability, no failed-proof caching; Linux fresh proofs. |
 | 11: release/dependencies | Core docs updated; existing downstream policy dependencies retained. |
 | 12: review | Loopback-free execution tests retained; shared Start diagnostics preserved; owner baseline attributed. |

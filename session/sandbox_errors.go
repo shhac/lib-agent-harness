@@ -18,7 +18,7 @@ func fromSandbox(err error, o Options) error {
 	}
 	var proof *sandbox.ProofError
 	if errors.As(err, &proof) {
-		return &CapabilityError{Engine: harness.OpenAICompatible, Code: proof.Code, Phase: BeforeLaunch, Tools: proof.Tools}
+		return &CapabilityError{Engine: harness.OpenAICompatible, Code: proof.Code, Phase: BeforeLaunch, Tools: proof.Tools, ProofStep: proof.HarnessFacts().ProofStep}
 	}
 	var command *sandbox.CommandError
 	if errors.As(err, &command) {

@@ -86,14 +86,16 @@ func (s *CommandSandbox) Run(ctx context.Context, r CommandRequest) (CommandResu
 }
 
 // Start returns after command launch.
+// A failure after launch returns a settled non-nil handle with diagnostics.
+// A pre-launch failure returns nil.
 //
 // Deprecated: use sandbox.Sandbox.Start.
 func (s *CommandSandbox) Start(ctx context.Context, r CommandRequest) (*StartedCommand, error) {
 	h, err := s.inner.Start(ctx, r)
-	if err != nil {
+	if h == nil {
 		return nil, fromSandbox(err, commandSandboxTranslation)
 	}
-	return &StartedCommand{inner: h}, nil
+	return &StartedCommand{inner: h}, fromSandbox(err, commandSandboxTranslation)
 }
 
 // Close settles commands and releases sandbox state.

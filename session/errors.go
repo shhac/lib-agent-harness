@@ -195,10 +195,12 @@ const (
 // come from the caller's own configuration or from a fixed native-name
 // comparison — never from free text.
 type CapabilityError struct {
-	Engine harness.Engine
-	Code   string
-	Phase  string
-	Tools  []string
+	// ProofStep is a fixed sandbox.ProofStep value, or empty when unknown.
+	ProofStep string
+	Engine    harness.Engine
+	Code      string
+	Phase     string
+	Tools     []string
 	// Reason is a fixed Bridge* value when Code is browser_bridge_unavailable.
 	Reason string
 }
@@ -237,6 +239,9 @@ func (e *CapabilityError) Error() string {
 		CapabilitySandboxUnavailable:        "the installed harness could not be run under the requested sandbox",
 		CapabilitySandboxNotEnforced:        "the installed harness's sandbox allowed writes or network access the session must not have",
 	}[e.Code]
+	if e.Code == CapabilitySandboxNotEnforced && capabilityProofStep(e.ProofStep) != "" {
+		message = "the installed harness's sandbox allowed reads, execution, writes or network access the session must not have"
+	}
 	if len(e.Tools) == 1 && e.Tools[0] == "bwrap" {
 		switch e.Code {
 		case CapabilitySandboxToolMissing:
@@ -273,6 +278,9 @@ func (e *CapabilityError) Error() string {
 	out := string(e.Engine) + ": " + message
 	if len(e.Tools) > 0 {
 		out += " (" + strings.Join(e.Tools, ", ") + ")"
+	}
+	if step := capabilityProofStep(e.ProofStep); step != "" {
+		out += "; proof step: " + step
 	}
 	// Say what actually happened rather than one reassuring phrase for both: a
 	// session that started and was closed is a different fact to report than one
@@ -350,3 +358,11 @@ func (e *TurnError) Error() string {
 // Unwrap keeps ErrTurnFailed identity, so callers that classified a failed turn
 // before this existed keep working while gaining the code.
 func (e *TurnError) Unwrap() error { return ErrTurnFailed }
+
+func capabilityProofStep(step string) string {
+	switch step {
+	case sandbox.ProofStepFixture, sandbox.ProofStepOutside, sandbox.ProofStepLaunch, sandbox.ProofStepJudgment:
+		return step
+	}
+	return ""
+}

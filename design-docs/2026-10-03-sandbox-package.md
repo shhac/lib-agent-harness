@@ -441,7 +441,7 @@ the layout's existing System, Read, Work, Home and Tmp coverage. Seatbelt pairs
 data-read and process-exec selectors in one emitter; metadata ancestors do not
 authorize executable descendants. The Linux mount builder is unchanged.
 Run, Start and low-level runners use this mechanism. Diagnostics occupy the
-existing stderr budget; hosted/compatibility settlement is deferred to LAH-30.
+existing stderr budget; hosted/compatibility settlement preserves the same note.
 Current proof identities are Seatbelt v11, bubblewrap v4 and readable-path-v2,
 rejecting draft-4 evidence after fixture and scratch changes. PATH fixtures are
 scripts; Darwin independently excludes the installed native echo tool from a
@@ -456,7 +456,7 @@ Replaced Tmp paths refuse admission and cannot redirect host fallback writes.
 Start failures after launch return a settled handle together with the error.
 Result retains bounded diagnostics and the settled error; callers must inspect
 non-nil handles even on failure. Pre-launch refusals retain nil handles.
-Compatibility propagation is assigned to LAH-30. See the command design for
+Deprecated wrappers preserve post-launch handles and fixed proof-step facts. See the command design for
 actual execution results and unrun checks.
 
 ## LAH-32 merged draft-3 validation

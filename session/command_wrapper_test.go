@@ -5,6 +5,8 @@ import (
 	"errors"
 	"reflect"
 	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -177,5 +179,104 @@ func TestDeprecatedCommandSandboxLinuxStartLoopbackRefusal(t *testing.T) {
 	_, b = wrapper.Start(context.Background(), CommandRequest{Command: "sleep 30"})
 	if !reflect.DeepEqual(fromSandbox(a, commandSandboxTranslation), b) || !errors.Is(b, ErrTurnFailed) {
 		t.Fatalf("closed must precede loopback refusal: %v / %v", a, b)
+	}
+}
+
+func TestDeprecatedStartFailureRetainsDiagnostics(t *testing.T) {
+	for _, cause := range []string{"cancel", "close"} {
+		t.Run(cause, func(t *testing.T) {
+			files, err := sandbox.OpenWorkspace(sandbox.Config{Root: t.TempDir()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			entered := make(chan struct{})
+			want := CommandResult{ExitCode: -1, Stderr: "[harness PATH: dropped unreadable]\n", Truncated: true}
+			r := &sandbox.Runner{}
+			sandboxhook.RunnerAccess(r).SetExecute(func(runCtx context.Context, _, _ string, _ time.Duration, onStart func()) (CommandResult, error) {
+				close(entered)
+				if cause == "cancel" {
+					cancel()
+				} else {
+					<-runCtx.Done()
+				}
+				onStart()
+				return want, &sandbox.CommandError{Code: CommandOutcomeUnknown}
+			})
+			*sandboxhook.RunnerAccess(r).Close = func() error { return nil }
+			s := &CommandSandbox{inner: sandboxhook.NewCommandSandbox(files, r, t.TempDir(), false).(*sandbox.Sandbox)}
+			t.Cleanup(func() {
+				if err := s.Close(); err != nil {
+					t.Error(err)
+				}
+			})
+			closed := make(chan error, 1)
+			if cause == "close" {
+				go func() { <-entered; closed <- s.Close() }()
+			}
+			h, err := s.Start(ctx, CommandRequest{Command: "wait"})
+			if h == nil || err == nil {
+				t.Fatalf("lost handle: %v %v", h, err)
+			}
+			if cause == "cancel" {
+				if !errors.Is(err, context.Canceled) {
+					t.Fatal(err)
+				}
+			} else {
+				var failure *TurnError
+				if !errors.As(err, &failure) || failure.Code != CommandSandboxClosed {
+					t.Fatal(err)
+				}
+				if err := <-closed; err != nil {
+					t.Fatal(err)
+				}
+			}
+			for range 2 {
+				got, resultErr := h.Result()
+				if got != want || !reflect.DeepEqual(resultErr, err) {
+					t.Fatalf("%+v %v / %v", got, resultErr, err)
+				}
+			}
+			h.Stop()
+		})
+	}
+}
+
+func TestDeprecatedCommandRunDiagnosticsBudgets(t *testing.T) {
+	for _, budget := range []int{minWorkbenchResult, maxWorkbenchResult} {
+		for _, cause := range []string{"success", "generic", "unknown", "cancel", "deadline", "closed"} {
+			t.Run(cause+"/"+strconv.Itoa(budget), func(t *testing.T) {
+				files, err := sandbox.OpenWorkspace(sandbox.Config{Root: t.TempDir()})
+				if err != nil {
+					t.Fatal(err)
+				}
+				runner := &sandbox.Runner{}
+				want := CommandResult{Stderr: "[harness PATH: dropped unreadable]\n"}
+				var rawErr error
+				switch cause {
+				case "generic":
+					rawErr = errors.New("generic")
+				case "unknown":
+					rawErr = &sandbox.CommandError{Code: CommandOutcomeUnknown}
+				case "cancel":
+					rawErr = context.Canceled
+				case "deadline":
+					rawErr = context.DeadlineExceeded
+				case "closed":
+					rawErr = &sandbox.CommandError{Code: CommandSandboxClosed}
+				}
+				sandboxhook.RunnerAccess(runner).SetExecute(func(context.Context, string, string, time.Duration, func()) (CommandResult, error) {
+					return want, rawErr
+				})
+				*sandboxhook.RunnerAccess(runner).Close = func() error { return nil }
+				wrapper := &CommandSandbox{inner: sandboxhook.NewCommandSandbox(files, runner, t.TempDir(), false).(*sandbox.Sandbox)}
+				defer wrapper.Close()
+				got, err := wrapper.Run(context.Background(), CommandRequest{Command: "true"})
+				if got != want || len(got.Stderr) > (budget-1024)/12 || strings.Count(got.Stderr, "[harness PATH:") != 1 || !reflect.DeepEqual(err, fromSandbox(rawErr, commandSandboxTranslation)) {
+					t.Fatalf("diagnostics/translation changed: %+v %v", got, err)
+				}
+			})
+		}
 	}
 }

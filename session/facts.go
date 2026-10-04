@@ -10,7 +10,7 @@ import harness "github.com/shhac/lib-agent-harness"
 func (e *CapabilityError) HarnessFacts() harness.Facts {
 	// A capability refusal is definitive: the same binary and configuration will
 	// refuse again. It is fixed by changing the installation, not by waiting.
-	return harness.Facts{Engine: e.Engine, Operation: harness.Session, Family: harness.FailureCapability, Phase: e.Phase, Code: e.Code}
+	return harness.Facts{Engine: e.Engine, Operation: harness.Session, Family: harness.FailureCapability, Phase: e.Phase, Code: e.Code, ProofStep: capabilityProofStep(e.ProofStep)}
 }
 
 func (e *ProcessError) HarnessFacts() harness.Facts {

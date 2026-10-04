@@ -61,20 +61,56 @@ func (w *workbenchHost) run(ctx context.Context, command, rel string, timeout ti
 	var failure *TurnError
 	if errors.As(err, &failure) {
 		if failure.Code == CommandSandboxClosed {
-			return ToolResult{}, context.Canceled
+			return w.commandInterruptedResult(result), context.Canceled
 		}
-		r := workbenchError(workbenchRunCommand, failure.Code, rel)
+		r := w.commandFailureResult(result, workbenchError(workbenchRunCommand, failure.Code, rel))
 		if failure.Code == CommandOutcomeUnknown {
 			return r, errWorkbenchCommandUnknown
 		}
 		return r, nil
 	}
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return w.commandInterruptedResult(result), err
+		}
+		if result.Stderr != "" {
+			return w.commandFailureResult(result, ToolResult{Content: bound(err.Error(), 128), IsError: true}), err
+		}
 		return ToolResult{}, err
 	}
 	payload, _ := json.Marshal(result)
 	return ToolResult{Content: string(payload)}, nil
 }
+
+// Failures without capture retain the existing plain-text contract. With
+// capture, serialize a real payload instead of attempting to parse that text.
+func (w *workbenchHost) commandFailureResult(result sandbox.CommandResult, failure ToolResult) ToolResult {
+	if result.Stderr == "" {
+		return failure
+	}
+	budget := w.budget
+	if budget == 0 {
+		budget = maxWorkbenchResult
+	}
+	// Reserve envelope/error space and worst-case JSON escaping. The actual
+	// runner uses a smaller per-stream bound; this also bounds synthetic runners.
+	stderr := bound(result.Stderr, (budget-1024)/6)
+	payload, _ := json.Marshal(struct {
+		Stderr    string `json:"stderr"`
+		Truncated bool   `json:"truncated"`
+		Error     string `json:"error"`
+		ExitCode  int    `json:"exit_code"`
+		TimedOut  bool   `json:"timed_out"`
+	}{stderr, result.Truncated || stderr != result.Stderr, bound(failure.Content, 128), result.ExitCode, result.TimedOut})
+	return ToolResult{Content: string(payload), IsError: true}
+}
+func (w *workbenchHost) commandInterruptedResult(result sandbox.CommandResult) ToolResult {
+	if result.Stderr == "" {
+		return ToolResult{}
+	}
+	return w.commandFailureResult(result, ToolResult{Content: cancelledToolText, IsError: true})
+}
+
 func workbenchCommandDefinition() ToolDefinition {
 	return ToolDefinition{Name: workbenchRunCommand, Description: "Run a shell command inside the proved workspace sandbox. Output is bounded and a timeout stops the process tree.", Schema: map[string]any{"type": "object", "properties": map[string]any{"command": map[string]any{"type": "string"}, "dir": map[string]any{"type": "string"}, "timeout_seconds": map[string]any{"type": "integer"}}, "required": []any{"command"}, "additionalProperties": false}}
 }

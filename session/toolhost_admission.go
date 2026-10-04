@@ -12,6 +12,8 @@ import (
 	"github.com/shhac/lib-agent-harness/internal/rawjson"
 )
 
+const cancelledToolText = "tool execution was cancelled; its effect is unknown and must be established from evidence"
+
 // admitted is a parsed, registered call waiting to execute.
 type admitted struct {
 	call       *hostedCall
@@ -99,9 +101,17 @@ func (h *toolHost) execute(ready *admitted, turn string, settle func(toolOutcome
 			return toolOutcome{text: unknownOutcomeText, isError: true, ran: true, unknown: true}
 		}
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return toolOutcome{text: "tool execution was cancelled; its effect is unknown and must be established from evidence", isError: true, ran: true, unknown: ready.name == workbenchRunCommand}
+			text := cancelledToolText
+			if ready.name == workbenchRunCommand && result.IsError && result.Content != "" {
+				text = result.Content
+			}
+			return toolOutcome{text: text, isError: true, ran: true, unknown: ready.name == workbenchRunCommand}
 		}
-		return toolOutcome{text: bound(err.Error(), 2048), isError: true, ran: true}
+		text := bound(err.Error(), 2048)
+		if ready.name == workbenchRunCommand && result.IsError && result.Content != "" {
+			text = result.Content
+		}
+		return toolOutcome{text: text, isError: true, ran: true}
 	}
 	if !result.IsError && (ready.definition.Closing || result.Closes) {
 		h.mu.Lock()

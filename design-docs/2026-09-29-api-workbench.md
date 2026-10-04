@@ -1926,3 +1926,42 @@ Session retains the hosted tool contract and translates every sandbox error;
 its native CLI sandbox and verification cache remain separate. Standalone
 command callers use sandbox.Open in v0.23.0; the prior session opener remains
 Deprecated for one release.
+
+
+## Command PATH diagnostics
+
+Hosted commands and deprecated command entry points use the shared sandbox runner
+and its existing read policy. There is no separate PATH allow-list or permission
+grant. One bounded [harness PATH: ...] note begins captured stderr when entries
+are dropped; hosted settlement preserves it on success, timeout, nonzero exit,
+unknown outcome, caller cancellation, deadline, runner/session closure and generic
+errors.
+
+With captured stderr, failures answer error-marked JSON with stderr, truncated,
+error (bounded to 128 bytes), exit_code and timed_out. Stderr uses at most
+(result budget - 1024) / 6 bytes, reserving worst-case JSON escaping and envelope
+space. At the 4096-byte minimum the 512-byte reservation holds the entire shared
+note (at most 256 bytes). The 65536-byte maximum follows the same calculation.
+The host's final result bound still applies; JSON is never cut mid-escape.
+Without capture the previous plain-text or empty handler result is preserved.
+
+Unknown outcomes keep command_outcome_unknown and unknown=true. Cancellation,
+deadline and closure keep unknown=true for admitted commands; generic errors do
+not acquire that flag. A command's own timeout remains a non-error TimedOut result.
+Calls withdrawn before gate acquisition ran nothing and have no PATH note.
+Gate serialization, admission barriers and settlement ordering are unchanged:
+CancelTools cancels admitted work, readyForWork refuses with ErrToolsUnsettled
+until retirement, and AwaitToolsSettled wakes only after the outcome is recorded.
+Crash/restart between execution and settlement adds no durable write; existing
+recovery marks effects unknown. Historical plain-text tool answers remain opaque
+and replayable.
+
+Deprecated CommandSandbox.Start returns nil before launch, but preserves a settled
+non-nil handle and translated error after launch. Repeated Result calls return
+the same diagnostics and error. Compatibility proof translation carries only
+fixed sandbox proof steps into CapabilityError.ProofStep and ErrorFacts, with
+legacy wording for errors without a step.
+
+Content file tools remain refused under the containment contract above. Synthetic
+runner/transport tests cover hosted admission and compatibility without restoring
+them. Real readable-PATH integration uses commands-only sessions.
