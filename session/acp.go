@@ -106,3 +106,8 @@ func parseACPAgent(raw json.RawMessage, version int) (acpAgent, error) {
 
 // acpToolIdentifier is a tool name or title safe to report as an identifier.
 var acpToolIdentifier = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,128}$`)
+
+// acpEnvelope frames a request as JSON-RPC 2.0, as every ACP agent reads it.
+func acpEnvelope(id, method string, params map[string]any) map[string]any {
+	return map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}
+}

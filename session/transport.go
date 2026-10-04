@@ -9,13 +9,11 @@ import (
 	"io"
 	"os/exec"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
-	"github.com/shhac/lib-agent-harness/internal/rawjson"
 	"github.com/shhac/lib-agent-harness/process"
 )
 
@@ -48,11 +46,8 @@ type streamWire struct {
 	stderr    *boundedBuffer
 	exit      *ProcessError
 	diagnose  func(Diagnostic)
-	// grokPermission is how this Grok session answers permission requests.
-	grokPermission string
-	// commandCodePermission is how this Command Code session answers
-	// permission requests.
-	commandCodePermission string
+	// dialect is how this engine frames its wire, resolved when it opened.
+	dialect dialect
 }
 
 // asyncWire sends a request now and delivers its reply later, for a request
@@ -69,6 +64,10 @@ func newProcessWire(ctx context.Context, o Options, nativeID string, resuming bo
 // own environment; a capability probe uses that to run with a disposable home
 // and a dummy credential instead of the caller's login.
 func newProcessWireArgs(ctx context.Context, o Options, args, env []string, onStart func(int), event func(map[string]json.RawMessage), ended func(error)) (*streamWire, error) {
+	d, ok := dialectOf(o)
+	if !ok {
+		return nil, ErrTransport
+	}
 	runCtx, cancel := context.WithCancel(ctx)
 	cmd, p, err := process.Command(runCtx, o.Provider.CLI.Binary, args...)
 	if err != nil {
@@ -100,7 +99,7 @@ func newProcessWireArgs(ctx context.Context, o Options, args, env []string, onSt
 	if onStart != nil {
 		p.Notify(onStart)
 	}
-	w := &streamWire{engine: o.Provider.Engine, stdin: stdin, stdout: reader, pending: map[string]chan response{}, done: make(chan struct{}), reaped: make(chan struct{}), writeGate: make(chan struct{}, 1), event: event, ended: ended, stderr: stderr, diagnose: o.OnDiagnostic, grokPermission: o.Policy.GrokPermission, commandCodePermission: o.Policy.CommandCodePermission}
+	w := &streamWire{engine: o.Provider.Engine, stdin: stdin, stdout: reader, pending: map[string]chan response{}, done: make(chan struct{}), reaped: make(chan struct{}), writeGate: make(chan struct{}, 1), event: event, ended: ended, stderr: stderr, diagnose: o.OnDiagnostic, dialect: d}
 	w.stop = func() { cancel(); p.Stop(); stdin.Close(); reader.Close() }
 	go w.read()
 	go func() {
@@ -265,15 +264,7 @@ func (w *streamWire) call(ctx context.Context, method string, params map[string]
 
 // envelope frames a request in the engine's dialect.
 func (w *streamWire) envelope(id, method string, params map[string]any) map[string]any {
-	switch w.engine {
-	case harness.Claude:
-		params = cloneMap(params)
-		params["subtype"] = method
-		return map[string]any{"type": "control_request", "request_id": id, "request": params}
-	case harness.Grok, harness.CommandCode:
-		return map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}
-	}
-	return map[string]any{"id": id, "method": method, "params": params}
+	return w.dialect.envelope(id, method, params)
 }
 
 func cloneMap(m map[string]any) map[string]any {
@@ -307,16 +298,7 @@ func (w *streamWire) read() {
 	}
 }
 func (w *streamWire) reply(m map[string]json.RawMessage) bool {
-	parse := parseCodexReply
-	switch w.engine {
-	case harness.Claude:
-		parse = parseClaudeReply
-	case harness.Grok:
-		parse = parseGrokReply
-	case harness.CommandCode:
-		parse = parseCommandCodeReply
-	}
-	id, r, isReply, err := parse(m)
+	id, r, isReply, err := w.dialect.parseReply(m)
 	if !isReply {
 		return false
 	}
@@ -336,108 +318,12 @@ func (w *streamWire) reply(m map[string]json.RawMessage) bool {
 	return true
 }
 
-// parseClaudeReply reads a control_response into the request it answers and
-// its outcome. isReply is false for any other frame, and a reply that cannot be
-// read is ErrProtocol.
-func parseClaudeReply(m map[string]json.RawMessage) (id string, r response, isReply bool, err error) {
-	if str(m, "type") != "control_response" {
-		return "", response{}, false, nil
-	}
-	var data map[string]json.RawMessage
-	if json.Unmarshal(m["response"], &data) != nil || data == nil {
-		return "", response{}, true, ErrProtocol
-	}
-	id = str(data, "request_id")
-	if id == "" {
-		return "", response{}, true, ErrProtocol
-	}
-	switch str(data, "subtype") {
-	case "success":
-		body := data["response"]
-		if !rawjson.Absent(body) {
-			var payload map[string]json.RawMessage
-			if json.Unmarshal(body, &payload) != nil {
-				return "", response{}, true, ErrProtocol
-			}
-		}
-		return id, response{body: body}, true, nil
-	case "error":
-		var message string
-		if json.Unmarshal(data["error"], &message) != nil {
-			return "", response{}, true, ErrProtocol
-		}
-		if strings.HasPrefix(message, "Unsupported control request subtype:") {
-			return id, response{err: ErrUnsupported}, true, nil
-		}
-		return id, response{err: ErrRejected}, true, nil
-	default:
-		return "", response{}, true, ErrProtocol
-	}
-}
-
-// parseCodexReply reads a JSON-RPC response into the request it answers and its
-// outcome. isReply is false for a notification or a server request, and a reply
-// that cannot be read is ErrProtocol.
-func parseCodexReply(m map[string]json.RawMessage) (id string, r response, isReply bool, err error) {
-	if len(m["method"]) != 0 || len(m["id"]) == 0 {
-		return "", response{}, false, nil
-	}
-	id = str(m, "id")
-	if id == "" {
-		return "", response{}, true, ErrProtocol
-	}
-	if rawjson.Absent(m["error"]) {
-		if len(m["result"]) == 0 {
-			return "", response{}, true, ErrProtocol
-		}
-		return id, response{body: m["result"]}, true, nil
-	}
-	var e struct{ Code *int }
-	if json.Unmarshal(m["error"], &e) != nil || e.Code == nil || len(m["result"]) != 0 {
-		return "", response{}, true, ErrProtocol
-	}
-	if *e.Code == -32601 {
-		return id, response{err: ErrUnsupported}, true, nil
-	}
-	return id, response{err: ErrRejected}, true, nil
-}
-
 // All unexpected server-originated operations fail closed. We never grant a
 // permission just to unblock a native harness. Payloads are not exposed as errors.
 func (w *streamWire) serverRequest(m map[string]json.RawMessage) bool {
-	var reply map[string]any
-	switch w.engine {
-	case harness.Claude:
-		if str(m, "type") != "control_request" {
-			return false
-		}
-		reply = map[string]any{"type": "control_response", "response": map[string]any{"subtype": "error", "request_id": str(m, "request_id"), "error": "Client does not authorize this operation"}}
-	case harness.Grok:
-		if len(m["id"]) == 0 || len(m["method"]) == 0 {
-			return false
-		}
-		reply = grokServerReply(m, w.grokPermission)
-	case harness.CommandCode:
-		if len(m["id"]) == 0 || len(m["method"]) == 0 {
-			return false
-		}
-		reply = commandCodeServerReply(m, w.commandCodePermission)
-	default:
-		if len(m["id"]) == 0 || len(m["method"]) == 0 {
-			return false
-		}
-		reply = map[string]any{"id": m["id"], "error": map[string]any{"code": -32601, "message": "Client does not authorize this operation"}}
-		switch str(m, "method") {
-		case "item/commandExecution/requestApproval", "item/fileChange/requestApproval":
-			delete(reply, "error")
-			reply["result"] = map[string]any{"decision": "decline"}
-		case "item/permissions/requestApproval":
-			delete(reply, "error")
-			reply["result"] = map[string]any{"permissions": map[string]any{}, "scope": "turn"}
-		case "mcpServer/elicitation/request":
-			delete(reply, "error")
-			reply["result"] = map[string]any{"action": "decline", "content": nil}
-		}
+	reply, isRequest := w.dialect.answer(m)
+	if !isRequest {
+		return false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

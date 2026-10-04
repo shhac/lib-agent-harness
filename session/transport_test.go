@@ -223,7 +223,8 @@ func TestProtocolRejectionIsNotMalformed(t *testing.T) {
 		t.Run(string(e), func(t *testing.T) {
 			ch := make(chan response, 1)
 			failed := false
-			w := &streamWire{engine: e, pending: map[string]chan response{"1": ch}, done: make(chan struct{}), stop: func() {}, ended: func(error) { failed = true }}
+			d, _ := dialectOf(Options{Provider: harness.Provider{Engine: e}})
+			w := &streamWire{engine: e, dialect: d, pending: map[string]chan response{"1": ch}, done: make(chan struct{}), stop: func() {}, ended: func(error) { failed = true }}
 			raw := `{"id":"1","error":{"code":-32000,"message":"secret error"}}`
 			if e == harness.Claude {
 				raw = `{"type":"control_response","response":{"subtype":"error","request_id":"1","error":"secret error"}}`

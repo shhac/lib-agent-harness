@@ -426,6 +426,21 @@ func (s *Session) closeCommandCodeSession(id string) {
 	_, _ = s.transport.request(ctx, "session/close", map[string]any{"sessionId": id})
 }
 
+// commandCodeDialect is Command Code's ACP, answering permission requests by
+// the session's policy.
+func commandCodeDialect(p Policy) dialect {
+	return dialect{
+		envelope:   acpEnvelope,
+		parseReply: parseCommandCodeReply,
+		answer: func(m map[string]json.RawMessage) (map[string]any, bool) {
+			if !jsonRPCRequest(m) {
+				return nil, false
+			}
+			return commandCodeServerReply(m, p.CommandCodePermission), true
+		},
+	}
+}
+
 // commandCodeServerReply answers a request from the agent. Only a permission
 // request is answered, by the session's policy and never with an "always"
 // option, which would grant or refuse the tool for the rest of the session.
@@ -433,7 +448,7 @@ func (s *Session) closeCommandCodeSession(id string) {
 func commandCodeServerReply(m map[string]json.RawMessage, permission string) map[string]any {
 	reply := map[string]any{"jsonrpc": "2.0", "id": m["id"]}
 	if str(m, "method") != "session/request_permission" {
-		reply["error"] = map[string]any{"code": -32601, "message": "Client does not authorize this operation"}
+		reply["error"] = refusedOperation()
 		return reply
 	}
 	reply["result"] = map[string]any{"outcome": commandCodePermissionOutcome(m["params"], permission)}

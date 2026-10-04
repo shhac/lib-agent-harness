@@ -182,6 +182,21 @@ func (s *Session) discardGrokSession(id string) {
 	_, _ = s.transport.request(ctx, "_x.ai/session/delete", map[string]any{"sessionId": id})
 }
 
+// grokDialect is Grok's ACP, answering permission requests by the session's
+// policy.
+func grokDialect(p Policy) dialect {
+	return dialect{
+		envelope:   acpEnvelope,
+		parseReply: parseGrokReply,
+		answer: func(m map[string]json.RawMessage) (map[string]any, bool) {
+			if !jsonRPCRequest(m) {
+				return nil, false
+			}
+			return grokServerReply(m, p.GrokPermission), true
+		},
+	}
+}
+
 // grokServerReply answers a request from the agent. A permission request is
 // answered by the session's policy and never with an "always" option, which
 // would persist a grant or a rule in the operator's configuration. Anything
@@ -189,7 +204,7 @@ func (s *Session) discardGrokSession(id string) {
 func grokServerReply(m map[string]json.RawMessage, permission string) map[string]any {
 	reply := map[string]any{"jsonrpc": "2.0", "id": m["id"]}
 	if str(m, "method") != "session/request_permission" {
-		reply["error"] = map[string]any{"code": -32601, "message": "Client does not authorize this operation"}
+		reply["error"] = refusedOperation()
 		return reply
 	}
 	reply["result"] = map[string]any{"outcome": grokPermissionOutcome(m["params"], permission)}
