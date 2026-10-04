@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -166,8 +165,6 @@ func (s *Session) grokContext(t *Turn, u Usage) {
 	s.observeContext(c, t)
 }
 
-var grokToolIdentifier = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,128}$`)
-
 // grokToolName is the tool's own identifier, never its title, which carries
 // paths and commands.
 func grokToolName(update map[string]json.RawMessage) string {
@@ -178,7 +175,7 @@ func grokToolName(update map[string]json.RawMessage) string {
 	}
 	_ = json.Unmarshal(update["_meta"], &meta)
 	for _, name := range []string{meta.Tool.Name, str(update, "title")} {
-		if grokToolIdentifier.MatchString(name) {
+		if acpToolIdentifier.MatchString(name) {
 			return name
 		}
 	}
@@ -223,7 +220,7 @@ func (s *Session) grokPromptEnded(t *Turn, body json.RawMessage, err error) {
 		return
 	}
 	if err != nil {
-		var refusal *grokRefusal
+		var refusal *acpRefusal
 		if !errors.As(err, &refusal) {
 			s.failTurn(t, err)
 			return

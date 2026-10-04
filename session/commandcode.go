@@ -45,7 +45,6 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
-	"github.com/shhac/lib-agent-harness/internal/rawjson"
 )
 
 // commandCodeProtocolVersion is the only Agent Client Protocol version spoken
@@ -119,25 +118,6 @@ func commandCodeSessionParams(o Options, resume bool, id string) map[string]any 
 		p["sessionId"] = id
 	}
 	return p
-}
-
-// commandCodeAgent is what initialize established about the installed agent.
-type commandCodeAgent struct{ resume, list bool }
-
-func parseCommandCodeAgent(raw json.RawMessage) (commandCodeAgent, error) {
-	var r struct {
-		ProtocolVersion *int `json:"protocolVersion"`
-		Capabilities    struct {
-			Session struct {
-				Resume json.RawMessage `json:"resume"`
-				List   json.RawMessage `json:"list"`
-			} `json:"sessionCapabilities"`
-		} `json:"agentCapabilities"`
-	}
-	if json.Unmarshal(raw, &r) != nil || r.ProtocolVersion == nil || *r.ProtocolVersion != commandCodeProtocolVersion {
-		return commandCodeAgent{}, ErrProtocol
-	}
-	return commandCodeAgent{resume: !rawjson.Absent(r.Capabilities.Session.Resume), list: !rawjson.Absent(r.Capabilities.Session.List)}, nil
 }
 
 // commandCodeConfig is a session's model and effort as its configOptions
@@ -215,7 +195,7 @@ func (s *Session) initializeCommandCode(ctx context.Context, resume bool) error 
 	if err != nil {
 		return err
 	}
-	agent, err := parseCommandCodeAgent(body)
+	agent, err := parseACPAgent(body, commandCodeProtocolVersion)
 	if err != nil {
 		return err
 	}
@@ -429,8 +409,8 @@ func (s *Session) setCommandCodeOption(ctx context.Context, id, option, value, c
 // capability failure it means. Anything else, such as a lost transport, is
 // returned as it is.
 func commandCodeConfigRefused(err error, code string) error {
-	var refusal *commandCodeRefusal
-	if errors.As(err, &refusal) && (refusal.code == commandCodeInvalidParams || refusal.code == commandCodeMethodMissing) {
+	var refusal *acpRefusal
+	if errors.As(err, &refusal) && (refusal.code == commandCodeInvalidParams || refusal.code == acpMethodMissing) {
 		return &CapabilityError{Engine: harness.CommandCode, Code: code, Phase: BeforeFirstPrompt}
 	}
 	return err
@@ -507,53 +487,11 @@ func commandCodePermissionOutcome(raw json.RawMessage, permission string) map[st
 	return map[string]any{"outcome": "selected", "optionId": reject}
 }
 
-// commandCodeRefusal is a JSON-RPC error from Command Code, classified into a
-// fixed code. The agent's own message and data are read only to classify it
-// and are never kept.
-type commandCodeRefusal struct {
-	rpc  int
-	code string
-}
-
-// Command Code refusal codes.
+// Command Code's own refusal codes, beside the ones every ACP agent shares.
 const (
-	commandCodeMethodMissing       = "method_not_found"
-	commandCodeInvalidParams       = "invalid_params"
-	commandCodeBusy                = "prompt_running"
-	commandCodeAuthRequired        = "authentication_required"
-	commandCodeAuthFailed          = "authentication_failed"
-	commandCodeRateLimited         = "rate_limited"
-	commandCodeTimedOut            = "timeout"
-	commandCodeProviderUnavailable = "provider_unavailable"
-	commandCodeProviderRejected    = "provider_rejected"
-	commandCodeRejected            = "rejected"
+	commandCodeInvalidParams = "invalid_params"
+	commandCodeBusy          = "prompt_running"
 )
-
-func (e *commandCodeRefusal) Error() string { return "command code refused the request: " + e.code }
-
-func (e *commandCodeRefusal) Unwrap() error {
-	if e.rpc == -32601 {
-		return ErrUnsupported
-	}
-	return ErrRejected
-}
-
-func (e *commandCodeRefusal) HarnessFacts() harness.Facts {
-	facts := harness.Facts{Engine: harness.CommandCode, Operation: harness.Session, Family: harness.FailureRequest, Cause: harness.CauseUnknown, Code: e.code}
-	switch e.code {
-	case commandCodeMethodMissing:
-		facts.Family, facts.Cause = harness.FailureCapability, ""
-	case commandCodeAuthRequired, commandCodeAuthFailed:
-		facts.Cause = harness.CauseAuthentication
-	case commandCodeRateLimited:
-		facts.Cause = harness.CauseRateLimited
-	case commandCodeTimedOut:
-		facts.Cause = harness.CauseTimeout
-	case commandCodeProviderUnavailable:
-		facts.Cause = harness.CauseUnavailable
-	}
-	return facts
-}
 
 // parseCommandCodeReply reads a JSON-RPC response as Codex's does, then
 // classifies an error reply from what Command Code states in fixed fields.
@@ -569,7 +507,7 @@ func parseCommandCodeReply(m map[string]json.RawMessage) (string, response, bool
 	if json.Unmarshal(m["error"], &e) != nil {
 		return "", response{}, true, ErrProtocol
 	}
-	return id, response{err: &commandCodeRefusal{rpc: e.Code, code: commandCodeRefusalCode(e.Code, e.Data)}}, true, nil
+	return id, response{err: &acpRefusal{engine: harness.CommandCode, rpc: e.Code, code: commandCodeRefusalCode(e.Code, e.Data)}}, true, nil
 }
 
 // commandCodeRefusalCode classifies by the JSON-RPC code and, for a failed
@@ -577,29 +515,20 @@ func parseCommandCodeReply(m map[string]json.RawMessage) (string, response, bool
 func commandCodeRefusalCode(code int, data json.RawMessage) string {
 	switch code {
 	case -32601:
-		return commandCodeMethodMissing
+		return acpMethodMissing
 	case -32602:
 		return commandCodeInvalidParams
 	case -32600:
 		return commandCodeBusy
 	case -32000:
-		return commandCodeAuthRequired
+		return acpAuthRequired
 	}
 	var d struct {
 		Status int `json:"status"`
 	}
 	_ = json.Unmarshal(data, &d)
-	switch {
-	case d.Status == 401 || d.Status == 403:
-		return commandCodeAuthFailed
-	case d.Status == 429:
-		return commandCodeRateLimited
-	case d.Status == 408 || d.Status == 504:
-		return commandCodeTimedOut
-	case d.Status >= 500:
-		return commandCodeProviderUnavailable
-	case d.Status >= 400:
-		return commandCodeProviderRejected
+	if status := acpStatusCode(d.Status); status != "" {
+		return status
 	}
-	return commandCodeRejected
+	return acpRejected
 }

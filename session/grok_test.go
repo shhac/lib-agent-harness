@@ -442,7 +442,7 @@ func TestGrokRefusedPromptFailsOnlyItsTurn(t *testing.T) {
 	drain(t, turn)
 	result, err := turn.Wait(ctx)
 	var failure *TurnError
-	if !errors.As(err, &failure) || failure.Code != grokRateLimited || result.Usage.Known || !result.NativeError {
+	if !errors.As(err, &failure) || failure.Code != acpRateLimited || result.Usage.Known || !result.NativeError {
 		t.Fatalf("%+v %v", result, err)
 	}
 	if strings.Contains(err.Error(), "secret") {
@@ -546,19 +546,19 @@ func TestGrokRefusalsAreClassifiedWithoutProviderText(t *testing.T) {
 		code  string
 		is    error
 	}{
-		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32601,"message":"Method not found"}}`, grokMethodMissing, ErrUnsupported},
-		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32000,"message":"Authentication required","data":"no auth method id provided"}}`, grokAuthRequired, ErrRejected},
+		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32601,"message":"Method not found"}}`, acpMethodMissing, ErrUnsupported},
+		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32000,"message":"Authentication required","data":"no auth method id provided"}}`, acpAuthRequired, ErrRejected},
 		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32603,"message":"Path not found.","data":{"code":"FS_NOT_FOUND"}}}`, grokSessionNotFound, ErrRejected},
-		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32603,"message":"Internal error","data":{"message":"secret","http_status":401}}}`, grokAuthFailed, ErrRejected},
-		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32603,"message":"Internal error","data":{"message":"secret","http_status":503}}}`, grokProviderUnavailable, ErrRejected},
-		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32603,"message":"secret"}}`, grokRejected, ErrRejected},
+		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32603,"message":"Internal error","data":{"message":"secret","http_status":401}}}`, acpAuthFailed, ErrRejected},
+		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32603,"message":"Internal error","data":{"message":"secret","http_status":503}}}`, acpProviderUnavailable, ErrRejected},
+		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32603,"message":"secret"}}`, acpRejected, ErrRejected},
 	} {
 		var m map[string]json.RawMessage
 		if err := json.Unmarshal([]byte(tc.reply), &m); err != nil {
 			t.Fatal(err)
 		}
 		id, r, isReply, err := parseGrokReply(m)
-		var refusal *grokRefusal
+		var refusal *acpRefusal
 		if id != "1" || !isReply || err != nil || !errors.As(r.err, &refusal) || refusal.code != tc.code || !errors.Is(r.err, tc.is) {
 			t.Fatalf("%s: %q %+v %v %v", tc.reply, id, r, isReply, err)
 		}

@@ -33,7 +33,6 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
-	"github.com/shhac/lib-agent-harness/internal/rawjson"
 )
 
 // grokProtocolVersion is the only Agent Client Protocol version spoken here.
@@ -66,25 +65,6 @@ func grokPromptParams(session, text string) map[string]any {
 
 func grokNotification(method string, params map[string]any) map[string]any {
 	return map[string]any{"jsonrpc": "2.0", "method": method, "params": params}
-}
-
-// grokAgent is what initialize established about the installed agent.
-type grokAgent struct{ resume bool }
-
-func parseGrokAgent(raw json.RawMessage) (grokAgent, error) {
-	var r struct {
-		ProtocolVersion *int `json:"protocolVersion"`
-		Capabilities    struct {
-			Session struct {
-				Resume json.RawMessage `json:"resume"`
-			} `json:"sessionCapabilities"`
-		} `json:"agentCapabilities"`
-	}
-	if json.Unmarshal(raw, &r) != nil || r.ProtocolVersion == nil || *r.ProtocolVersion != grokProtocolVersion {
-		return grokAgent{}, ErrProtocol
-	}
-	resume := !rawjson.Absent(r.Capabilities.Session.Resume)
-	return grokAgent{resume: resume}, nil
 }
 
 // grokSessionState is what session/new or session/resume reported about the
@@ -149,7 +129,7 @@ func (s *Session) initializeGrok(ctx context.Context, resume bool) error {
 	if err != nil {
 		return err
 	}
-	agent, err := parseGrokAgent(body)
+	agent, err := parseACPAgent(body, grokProtocolVersion)
 	if err != nil {
 		return err
 	}
@@ -240,52 +220,8 @@ func grokPermissionOutcome(raw json.RawMessage, permission string) map[string]an
 	return map[string]any{"outcome": "cancelled"}
 }
 
-// grokRefusal is a JSON-RPC error from Grok, classified into a fixed code.
-// The agent's own message and data are read only to classify it and are never
-// kept.
-type grokRefusal struct {
-	rpc  int
-	code string
-}
-
-// Grok refusal codes.
-const (
-	grokMethodMissing       = "method_not_found"
-	grokSessionNotFound     = "session_not_found"
-	grokAuthRequired        = "authentication_required"
-	grokAuthFailed          = "authentication_failed"
-	grokRateLimited         = "rate_limited"
-	grokTimedOut            = "timeout"
-	grokProviderUnavailable = "provider_unavailable"
-	grokProviderRejected    = "provider_rejected"
-	grokRejected            = "rejected"
-)
-
-func (e *grokRefusal) Error() string { return "grok refused the request: " + e.code }
-
-func (e *grokRefusal) Unwrap() error {
-	if e.rpc == -32601 {
-		return ErrUnsupported
-	}
-	return ErrRejected
-}
-
-func (e *grokRefusal) HarnessFacts() harness.Facts {
-	facts := harness.Facts{Engine: harness.Grok, Operation: harness.Session, Family: harness.FailureRequest, Cause: harness.CauseUnknown, Code: e.code}
-	switch e.code {
-	case grokMethodMissing:
-		facts.Family, facts.Cause = harness.FailureCapability, ""
-	case grokAuthRequired, grokAuthFailed:
-		facts.Cause = harness.CauseAuthentication
-	case grokRateLimited:
-		facts.Cause = harness.CauseRateLimited
-	case grokTimedOut:
-		facts.Cause = harness.CauseTimeout
-	case grokProviderUnavailable:
-		facts.Cause = harness.CauseUnavailable
-	}
-	return facts
-}
+// grokSessionNotFound is Grok's refusal of a conversation it does not hold.
+const grokSessionNotFound = "session_not_found"
 
 // parseGrokReply reads a JSON-RPC response as Codex's does, then classifies
 // an error reply from what Grok states in fixed fields.
@@ -302,39 +238,32 @@ func parseGrokReply(m map[string]json.RawMessage) (string, response, bool, error
 	if json.Unmarshal(m["error"], &e) != nil {
 		return "", response{}, true, ErrProtocol
 	}
-	return id, response{err: &grokRefusal{rpc: e.Code, code: grokRefusalCode(e.Code, e.Message, e.Data)}}, true, nil
+	return id, response{err: &acpRefusal{engine: harness.Grok, rpc: e.Code, code: grokRefusalCode(e.Code, e.Message, e.Data)}}, true, nil
 }
 
 func grokRefusalCode(code int, message string, data json.RawMessage) string {
 	if code == -32601 {
-		return grokMethodMissing
+		return acpMethodMissing
 	}
 	var d struct {
 		Code   string `json:"code"`
 		Status int    `json:"http_status"`
 	}
 	_ = json.Unmarshal(data, &d)
-	switch {
-	case d.Code == "FS_NOT_FOUND":
+	if d.Code == "FS_NOT_FOUND" {
 		return grokSessionNotFound
-	case code == -32000 && strings.Contains(message, "Authentication required"):
-		return grokAuthRequired
-	case d.Status == 401 || d.Status == 403:
-		return grokAuthFailed
-	case d.Status == 429:
-		return grokRateLimited
-	case d.Status == 408 || d.Status == 504:
-		return grokTimedOut
-	case d.Status >= 500:
-		return grokProviderUnavailable
-	case d.Status >= 400:
-		return grokProviderRejected
 	}
-	return grokRejected
+	if code == -32000 && strings.Contains(message, "Authentication required") {
+		return acpAuthRequired
+	}
+	if status := acpStatusCode(d.Status); status != "" {
+		return status
+	}
+	return acpRejected
 }
 
 func grokSessionGone(err error) bool {
-	var refusal *grokRefusal
+	var refusal *acpRefusal
 	return errors.As(err, &refusal) && refusal.code == grokSessionNotFound
 }
 

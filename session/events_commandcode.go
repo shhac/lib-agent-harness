@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"regexp"
 	"strconv"
 
 	harness "github.com/shhac/lib-agent-harness"
@@ -71,13 +70,11 @@ func (s *Session) commandCodeEvent(t *Turn, ref Ref, m map[string]json.RawMessag
 // commandCodeToolKinds are the Agent Client Protocol's tool kinds.
 var commandCodeToolKinds = map[string]bool{"read": true, "edit": true, "delete": true, "move": true, "search": true, "execute": true, "think": true, "fetch": true, "switch_mode": true, "other": true}
 
-var commandCodeToolIdentifier = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,128}$`)
-
 // commandCodeToolName is the tool's own identifier where its title is one,
 // and otherwise its protocol kind. Command Code titles a known tool with a
 // label and its path or command, which are never used as a name.
 func commandCodeToolName(update map[string]json.RawMessage) string {
-	if title := str(update, "title"); commandCodeToolIdentifier.MatchString(title) {
+	if title := str(update, "title"); acpToolIdentifier.MatchString(title) {
 		return title
 	}
 	if kind := str(update, "kind"); commandCodeToolKinds[kind] {
@@ -150,7 +147,7 @@ func (s *Session) commandCodePromptEnded(t *Turn, body json.RawMessage, err erro
 		return
 	}
 	if err != nil {
-		var refusal *commandCodeRefusal
+		var refusal *acpRefusal
 		if !errors.As(err, &refusal) {
 			s.failTurn(t, err)
 			return

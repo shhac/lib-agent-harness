@@ -595,7 +595,7 @@ func TestCommandCodeModeUpdateBeforeTheWatchIsArmed(t *testing.T) {
 				}
 				switch setMode {
 				case "refuse":
-					return nil, &commandCodeRefusal{rpc: -32602, code: commandCodeInvalidParams}
+					return nil, &acpRefusal{engine: harness.CommandCode, rpc: -32602, code: commandCodeInvalidParams}
 				case "silent":
 				default:
 					notify(s, `{"method":"session/update","params":{"sessionId":"cc-session-1","update":{"sessionUpdate":"current_mode_update","currentModeId":"default"}}}`)
@@ -846,7 +846,7 @@ func TestCommandCodeRefusedPromptFailsOnlyItsTurn(t *testing.T) {
 	drain(t, turn)
 	result, err := turn.Wait(ctx)
 	var failure *TurnError
-	if !errors.As(err, &failure) || failure.Code != commandCodeRateLimited || result.Usage.Known || !result.NativeError {
+	if !errors.As(err, &failure) || failure.Code != acpRateLimited || result.Usage.Known || !result.NativeError {
 		t.Fatalf("%+v %v", result, err)
 	}
 	if facts, ok := harness.ErrorFacts(err); !ok || facts.Cause != harness.CauseRateLimited || facts.Family != harness.FailureTurn {
@@ -984,20 +984,20 @@ func TestCommandCodeRefusalsAreClassifiedWithoutProviderText(t *testing.T) {
 		code  string
 		is    error
 	}{
-		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32601,"message":"secret"}}`, commandCodeMethodMissing, ErrUnsupported},
+		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32601,"message":"secret"}}`, acpMethodMissing, ErrUnsupported},
 		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32602,"message":"Unknown model: secret"}}`, commandCodeInvalidParams, ErrRejected},
 		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32600,"message":"A prompt is already running"}}`, commandCodeBusy, ErrRejected},
-		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32000,"message":"Not authenticated. secret"}}`, commandCodeAuthRequired, ErrRejected},
-		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32603,"message":"secret","data":{"status":401,"code":"secret"}}}`, commandCodeAuthFailed, ErrRejected},
-		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32603,"message":"secret","data":{"status":503}}}`, commandCodeProviderUnavailable, ErrRejected},
-		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32603,"message":"secret"}}`, commandCodeRejected, ErrRejected},
+		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32000,"message":"Not authenticated. secret"}}`, acpAuthRequired, ErrRejected},
+		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32603,"message":"secret","data":{"status":401,"code":"secret"}}}`, acpAuthFailed, ErrRejected},
+		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32603,"message":"secret","data":{"status":503}}}`, acpProviderUnavailable, ErrRejected},
+		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32603,"message":"secret"}}`, acpRejected, ErrRejected},
 	} {
 		var m map[string]json.RawMessage
 		if err := json.Unmarshal([]byte(tc.reply), &m); err != nil {
 			t.Fatal(err)
 		}
 		id, r, isReply, err := parseCommandCodeReply(m)
-		var refusal *commandCodeRefusal
+		var refusal *acpRefusal
 		if id != "1" || !isReply || err != nil || !errors.As(r.err, &refusal) || refusal.code != tc.code || !errors.Is(r.err, tc.is) {
 			t.Fatalf("%s: %q %+v %v %v", tc.reply, id, r, isReply, err)
 		}
