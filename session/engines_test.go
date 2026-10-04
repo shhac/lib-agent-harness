@@ -11,9 +11,12 @@ import (
 func TestEngineRegistryIsComplete(t *testing.T) {
 	for _, e := range harness.Engines() {
 		entry, ok := engines[e]
+		if !ok || entry.startTurn == nil || entry.interrupt == nil || (entry.steer == nil && entry.composedSteer == "") {
+			t.Errorf("%s: incomplete turn lifecycle", e)
+		}
 		if e.Transport() != harness.CLITransport {
-			if ok {
-				t.Errorf("%s: an API engine has a CLI entry", e)
+			if entry.dialect != nil || entry.initialize != nil || entry.normalizePolicy != nil {
+				t.Errorf("%s: an API engine has CLI parts", e)
 			}
 			continue
 		}

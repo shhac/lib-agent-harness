@@ -21,7 +21,7 @@ type dialect struct {
 // session package does not run over a process wire.
 func dialectOf(o Options) (dialect, bool) {
 	entry, ok := engines[o.Provider.Engine]
-	if !ok {
+	if !ok || entry.dialect == nil {
 		return dialect{}, false
 	}
 	return entry.dialect(o.Policy), true

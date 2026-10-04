@@ -65,25 +65,14 @@ func (s *Session) startTurnScoped(lifetime, request context.Context, in Input) (
 	s.tools.reopen()
 	host := s.tools
 	t := &Turn{id: newID(), events: make(chan Event, s.options.EventBuffer), done: make(chan struct{}), closeTools: host.closeAdmission}
-	t.starting = s.options.Provider.Engine == harness.Codex
+	entry := engines[s.options.Provider.Engine]
+	t.starting = entry.bufferStart
 	s.active = t
 	invalidate(&s.telemetry.Context.Observation, "conversation is changing; awaiting a fresh observation")
 	t.result.Context = cloneContext(s.telemetry.Context)
 	ref := s.ref
 	s.mu.Unlock()
-	switch s.options.Provider.Engine {
-	case harness.Codex:
-		s.syncLogin()
-		err = s.startCodexTurn(request, t, ref, in)
-	case harness.Grok:
-		err = s.startGrokTurn(request, lifetime, t, ref, in)
-	case harness.CommandCode:
-		err = s.startCommandCodeTurn(request, lifetime, t, ref, in)
-	case harness.OpenAICompatible:
-		err = s.startAPITurn(t, in)
-	default:
-		err = s.transport.send(request, claudeUserFrame(ref.ID, in.Text))
-	}
+	err = entry.startTurn(s, request, lifetime, t, ref, in)
 	if err != nil {
 		if definitiveRejection(err) {
 			t.finish("rejected", err)
@@ -238,21 +227,45 @@ func (s *Session) interrupt(ctx context.Context, expected string) error {
 
 // requestInterrupt asks the harness to cancel the expected turn.
 func (s *Session) requestInterrupt(ctx context.Context, expected string) error {
-	var err error
-	switch s.options.Provider.Engine {
-	case harness.Codex:
-		_, err = s.transport.request(ctx, "turn/interrupt", map[string]any{"threadId": s.Ref().ID, "turnId": expected})
-	case harness.Grok, harness.CommandCode:
-		err = s.transport.send(ctx, grokNotification("session/cancel", map[string]any{"sessionId": s.Ref().ID}))
-	case harness.OpenAICompatible:
-		// The request and the running handler are both the library's to
-		// cancel. The tool channel pauses with them, as CancelTools does.
-		s.CancelTools()
-		s.api.interrupt()
-	default:
-		_, err = s.transport.request(ctx, "interrupt", map[string]any{})
-	}
+	return engines[s.options.Provider.Engine].interrupt(s, ctx, expected)
+}
+
+func (s *Session) interruptCodex(ctx context.Context, expected string) error {
+	_, err := s.transport.request(ctx, "turn/interrupt", map[string]any{"threadId": s.Ref().ID, "turnId": expected})
 	return err
+}
+
+func (s *Session) interruptClaude(ctx context.Context, _ string) error {
+	_, err := s.transport.request(ctx, "interrupt", map[string]any{})
+	return err
+}
+
+// interruptACP cancels the running prompt, as every ACP agent reads it.
+func (s *Session) interruptACP(ctx context.Context, _ string) error {
+	return s.transport.send(ctx, grokNotification("session/cancel", map[string]any{"sessionId": s.Ref().ID}))
+}
+
+// interruptAPI cancels the request and the running handler, both the
+// library's own. The tool channel pauses with them, as CancelTools does.
+func (s *Session) interruptAPI(context.Context, string) error {
+	s.CancelTools()
+	s.api.interrupt()
+	return nil
+}
+
+func (s *Session) startClaudeTurn(request, _ context.Context, _ *Turn, ref Ref, in Input) error {
+	return s.transport.send(request, claudeUserFrame(ref.ID, in.Text))
+}
+
+// startCodexTurnSynced brings the shared login up to date before the turn, so
+// concurrent workers sharing refresh tokens never start on a stale one.
+func (s *Session) startCodexTurnSynced(request, _ context.Context, t *Turn, ref Ref, in Input) error {
+	s.syncLogin()
+	return s.startCodexTurn(request, t, ref, in)
+}
+
+func (s *Session) startAPITurnEntry(_, _ context.Context, t *Turn, _ Ref, in Input) error {
+	return s.startAPITurn(t, in)
 }
 
 // Steer uses native Codex turn/steer or, on Claude, Grok and Command Code,
@@ -271,39 +284,46 @@ func (s *Session) Steer(ctx context.Context, expected string, in Input, o SteerO
 	if in.Text == "" {
 		return SteerResult{}, errors.New("steering input is empty")
 	}
-	if engine := s.options.Provider.Engine; engine != harness.Codex {
-		if o.RequireNative {
-			return SteerResult{}, &UnsupportedError{Engine: engine, Operation: "steer", Code: RefusedNotNative, Capability: harness.Capability{Availability: harness.Composed, Reason: composedSteerReason(engine)}}
-		}
-		if err = s.interrupt(ctx, expected); err != nil {
-			return SteerResult{}, err
-		}
-		// The interrupted turn is over, but the caller's tools are not: both
-		// installed harnesses were observed reporting a terminal interrupted
-		// result while a hosted call was still running. Cancelling them is a
-		// request, not an outcome, so the replacement turn waits for the handlers
-		// to actually return. If they do not within the caller's context, no
-		// replacement is started — continuing would be describing a workspace that
-		// is still moving as one that has stopped.
-		s.CancelTools()
-		if err = s.AwaitToolsSettled(ctx); err != nil {
-			return SteerResult{}, err
-		}
-		lifetime := s.lifetime
-		if lifetime == nil {
-			lifetime = context.Background()
-		}
-		next, err := s.startTurnScoped(lifetime, ctx, in)
-		if err != nil {
-			return SteerResult{}, err
-		}
-		reason := "interrupt-and-continue succeeded in the installed harness"
-		if s.api != nil {
-			reason = "the library interrupted the turn and started another"
-		}
-		s.setCapability(&s.caps.Steer, harness.Capability{Availability: harness.Composed, Reason: reason})
-		return SteerResult{harness.Composed, next}, nil
+	engine := s.options.Provider.Engine
+	entry := engines[engine]
+	if entry.steer != nil {
+		return entry.steer(s, ctx, t, expected, in)
 	}
+	if o.RequireNative {
+		return SteerResult{}, &UnsupportedError{Engine: engine, Operation: "steer", Code: RefusedNotNative, Capability: harness.Capability{Availability: harness.Composed, Reason: entry.composedSteer}}
+	}
+	if err = s.interrupt(ctx, expected); err != nil {
+		return SteerResult{}, err
+	}
+	// The interrupted turn is over, but the caller's tools are not: both
+	// installed harnesses were observed reporting a terminal interrupted
+	// result while a hosted call was still running. Cancelling them is a
+	// request, not an outcome, so the replacement turn waits for the handlers
+	// to actually return. If they do not within the caller's context, no
+	// replacement is started — continuing would be describing a workspace that
+	// is still moving as one that has stopped.
+	s.CancelTools()
+	if err = s.AwaitToolsSettled(ctx); err != nil {
+		return SteerResult{}, err
+	}
+	lifetime := s.lifetime
+	if lifetime == nil {
+		lifetime = context.Background()
+	}
+	next, err := s.startTurnScoped(lifetime, ctx, in)
+	if err != nil {
+		return SteerResult{}, err
+	}
+	reason := "interrupt-and-continue succeeded in the installed harness"
+	if s.api != nil {
+		reason = "the library interrupted the turn and started another"
+	}
+	s.setCapability(&s.caps.Steer, harness.Capability{Availability: harness.Composed, Reason: reason})
+	return SteerResult{harness.Composed, next}, nil
+}
+
+// steerCodex is Codex's native turn/steer, which keeps the running turn.
+func (s *Session) steerCodex(ctx context.Context, t *Turn, expected string, in Input) (SteerResult, error) {
 	body, err := s.transport.request(ctx, "turn/steer", map[string]any{"threadId": s.Ref().ID, "expectedTurnId": expected, "input": codexInput(in.Text)})
 	if err != nil {
 		return SteerResult{}, s.controlFailed(opSteer, nil, err)
@@ -317,18 +337,6 @@ func (s *Session) Steer(ctx context.Context, expected string, in Input, o SteerO
 	}
 	s.setCapability(&s.caps.Steer, harness.Capability{Availability: harness.Native, Reason: "turn/steer acknowledged by installed harness"})
 	return SteerResult{harness.Native, t}, nil
-}
-
-func composedSteerReason(e harness.Engine) string {
-	switch e {
-	case harness.Grok:
-		return "Grok steering cancels the running prompt and sends another"
-	case harness.CommandCode:
-		return "Command Code steering cancels the running prompt and sends another"
-	case harness.OpenAICompatible:
-		return "the library interrupts the turn and starts another"
-	}
-	return "Claude steering interrupts and starts another turn"
 }
 
 // controlOp names a control request whose native method an installed harness

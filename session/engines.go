@@ -50,32 +50,63 @@ type engineEntry struct {
 	sessionNotice func(s *Session, m map[string]json.RawMessage) bool
 	// event handles a notification for the active turn.
 	event func(s *Session, t *Turn, ref Ref, m map[string]json.RawMessage)
+	// bufferStart holds a turn's notifications until the engine answers the
+	// request that started it, because they name a turn not yet known.
+	bufferStart bool
+	// startTurn sends the turn's input.
+	startTurn func(s *Session, request, lifetime context.Context, t *Turn, ref Ref, in Input) error
+	// interrupt asks the engine to cancel the expected turn.
+	interrupt func(s *Session, ctx context.Context, expected string) error
+	// steer is the engine's native steering; nil steers by interrupting and
+	// starting another turn, for the reason composedSteer gives.
+	steer         func(s *Session, ctx context.Context, t *Turn, expected string, in Input) (SteerResult, error)
+	composedSteer string
 }
 
-var engines = map[harness.Engine]engineEntry{
-	harness.Codex: {
-		dialect: codexDialect, binary: "codex",
-		homeVariable: "CODEX_HOME", homeDir: ".codex", homeValue: codexHomeValue,
-		normalizePolicy: normalizeCodexPolicy, refuseAddition: refuseCodexAddition,
-		initialize: (*Session).initializeCodex, event: (*Session).codexEvent,
-	},
-	harness.Claude: {
-		dialect: claudeDialect, binary: "claude",
-		homeVariable: "CLAUDE_CONFIG_DIR", homeDir: ".claude", homeValue: claudeHomeValue,
-		normalizePolicy: normalizeClaudePolicy, overrides: claudeOverrides,
-		initialize: (*Session).initializeClaude, sessionNotice: (*Session).observeClaudeInit, event: (*Session).claudeEvent,
-	},
-	harness.Grok: {
-		dialect: grokDialect, binary: "grok",
-		homeVariable: "GROK_HOME", homeDir: ".grok",
-		normalizePolicy: normalizeGrokPolicy, withheld: grokManaged,
-		refuseAddition: refuseGrokAddition, overrides: grokOverrides,
-		initialize: (*Session).initializeGrok, event: (*Session).grokEvent,
-	},
-	harness.CommandCode: {
-		dialect: commandCodeDialect, binary: "cmd", resolveHome: commandCodeHome,
-		normalizePolicy: normalizeCommandCodePolicy, withheld: commandCodeManaged,
-		refuseAddition: refuseCommandCodeAddition,
-		initialize:     (*Session).initializeCommandCode, sessionNotice: (*Session).commandCodeModeUpdate, event: (*Session).commandCodeEvent,
-	},
+// engines is filled in init: its entries refer to functions that themselves
+// look an engine up, which Go does not allow in a variable's initializer.
+var engines map[harness.Engine]engineEntry
+
+func init() {
+	engines = map[harness.Engine]engineEntry{
+		harness.Codex: {
+			dialect: codexDialect, binary: "codex",
+			homeVariable: "CODEX_HOME", homeDir: ".codex", homeValue: codexHomeValue,
+			normalizePolicy: normalizeCodexPolicy, refuseAddition: refuseCodexAddition,
+			initialize: (*Session).initializeCodex, event: (*Session).codexEvent,
+			bufferStart: true, startTurn: (*Session).startCodexTurnSynced,
+			interrupt: (*Session).interruptCodex, steer: (*Session).steerCodex,
+		},
+		harness.Claude: {
+			dialect: claudeDialect, binary: "claude",
+			homeVariable: "CLAUDE_CONFIG_DIR", homeDir: ".claude", homeValue: claudeHomeValue,
+			normalizePolicy: normalizeClaudePolicy, overrides: claudeOverrides,
+			initialize: (*Session).initializeClaude, sessionNotice: (*Session).observeClaudeInit, event: (*Session).claudeEvent,
+			startTurn: (*Session).startClaudeTurn, interrupt: (*Session).interruptClaude,
+			composedSteer: "Claude steering interrupts and starts another turn",
+		},
+		harness.Grok: {
+			dialect: grokDialect, binary: "grok",
+			homeVariable: "GROK_HOME", homeDir: ".grok",
+			normalizePolicy: normalizeGrokPolicy, withheld: grokManaged,
+			refuseAddition: refuseGrokAddition, overrides: grokOverrides,
+			initialize: (*Session).initializeGrok, event: (*Session).grokEvent,
+			startTurn: (*Session).startGrokTurn, interrupt: (*Session).interruptACP,
+			composedSteer: "Grok steering cancels the running prompt and sends another",
+		},
+		harness.CommandCode: {
+			dialect: commandCodeDialect, binary: "cmd", resolveHome: commandCodeHome,
+			normalizePolicy: normalizeCommandCodePolicy, withheld: commandCodeManaged,
+			refuseAddition: refuseCommandCodeAddition,
+			initialize:     (*Session).initializeCommandCode, sessionNotice: (*Session).commandCodeModeUpdate, event: (*Session).commandCodeEvent,
+			startTurn: (*Session).startCommandCodeTurn, interrupt: (*Session).interruptACP,
+			composedSteer: "Command Code steering cancels the running prompt and sends another",
+		},
+		// The OpenAI-compatible engine runs the library's own loop, with no
+		// process wire; it shares only the turn lifecycle.
+		harness.OpenAICompatible: {
+			startTurn: (*Session).startAPITurnEntry, interrupt: (*Session).interruptAPI,
+			composedSteer: "the library interrupts the turn and starts another",
+		},
+	}
 }
