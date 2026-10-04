@@ -210,27 +210,11 @@ func (w *Workspace) writeFile(ctx context.Context, tool string, raw json.RawMess
 	if tool == workbenchWriteFile {
 		content = *in.Content
 	} else {
-		count := strings.Count(content, *in.Old)
-		if count == 0 {
-			return fail("match_not_found")
+		edited, code := applyEdit(content, *in.Old, *in.New, in.All)
+		if code != "" {
+			return fail(code)
 		}
-		if count != 1 && !in.All {
-			return fail("match_not_unique")
-		}
-		n := 1
-		if in.All {
-			n = -1
-		}
-		matches := 1
-		if in.All {
-			matches = count
-		}
-		// Bound expansion before allocating it, including on 32-bit callers.
-		length := uint64(len(content)) - uint64(matches)*uint64(len(*in.Old)) + uint64(matches)*uint64(len(*in.New))
-		if length > 1<<20 {
-			return fail(wbTooLarge)
-		}
-		content = strings.Replace(content, *in.Old, *in.New, n)
+		content = edited
 	}
 	if len(content) > 1<<20 {
 		return fail(wbTooLarge)
@@ -362,4 +346,27 @@ func (w *Workspace) replaceFile(ctx context.Context, tool, rel string, dir *os.R
 		delete(handles, r)
 	}
 	return Result{Content: tool + ": wrote " + rel}, nil
+}
+
+// applyEdit replaces old with new in content: its only occurrence, or every
+// one when all is set. It answers a refusal code instead when old is missing,
+// ambiguous, or the result would pass the 1 MiB file limit.
+func applyEdit(content, old, new string, all bool) (string, string) {
+	count := strings.Count(content, old)
+	if count == 0 {
+		return "", "match_not_found"
+	}
+	if count != 1 && !all {
+		return "", "match_not_unique"
+	}
+	n, matches := 1, 1
+	if all {
+		n, matches = -1, count
+	}
+	// Bound expansion before allocating it, including on 32-bit callers.
+	length := uint64(len(content)) - uint64(matches)*uint64(len(old)) + uint64(matches)*uint64(len(new))
+	if length > 1<<20 {
+		return "", wbTooLarge
+	}
+	return strings.Replace(content, old, new, n), ""
 }
