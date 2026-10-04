@@ -92,7 +92,7 @@ func baseEnvironment(o Options) []string {
 		if o.Provider.Engine == harness.CommandCode && commandCodeManaged(key) {
 			continue
 		}
-		if key == "CODEX_HOME" || key == "CLAUDE_CONFIG_DIR" || key == "CLAUDECODE" || key == "OPENAI_API_KEY" || key == "OPENAI_BASE_URL" || key == "ANTHROPIC_API_KEY" || key == "ANTHROPIC_AUTH_TOKEN" || key == "ANTHROPIC_BASE_URL" || key == "CLAUDE_CODE_OAUTH_TOKEN" || strings.HasPrefix(key, "CLAUDE_CODE_USE_") || strings.HasPrefix(key, "ANTHROPIC_DEFAULT_") || key == "ANTHROPIC_MODEL" {
+		if providerManaged(key) {
 			continue
 		}
 		env = append(env, entry)
@@ -115,6 +115,21 @@ func baseEnvironment(o Options) []string {
 		}
 	}
 	return append(env, key+"="+selected)
+}
+
+// providerManaged is what no session inherits: the homes the harness selects
+// and the credentials and provider overrides that would bypass the shared
+// subscription login.
+func providerManaged(key string) bool {
+	switch {
+	case key == "CODEX_HOME", key == "CLAUDE_CONFIG_DIR", key == "CLAUDECODE",
+		key == "OPENAI_API_KEY", key == "OPENAI_BASE_URL",
+		key == "ANTHROPIC_API_KEY", key == "ANTHROPIC_AUTH_TOKEN", key == "ANTHROPIC_BASE_URL", key == "ANTHROPIC_MODEL",
+		key == "CLAUDE_CODE_OAUTH_TOKEN",
+		strings.HasPrefix(key, "CLAUDE_CODE_USE_"), strings.HasPrefix(key, "ANTHROPIC_DEFAULT_"):
+		return true
+	}
+	return false
 }
 
 // validateEnv refuses additions the harness manages itself: credentials and

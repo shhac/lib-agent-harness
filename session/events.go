@@ -7,6 +7,7 @@ package session
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"time"
 
@@ -152,6 +153,7 @@ func (s *Session) observeClaudeInit(m map[string]json.RawMessage) bool {
 		for _, advertised := range frame.Servers {
 			if advertised.Name == server && advertised.Status == "connected" {
 				loaded = true
+				break
 			}
 		}
 		if !loaded {
@@ -164,14 +166,9 @@ func (s *Session) observeClaudeInit(m map[string]json.RawMessage) bool {
 		}
 	}
 	if browser {
-		available := false
-		for _, name := range frame.Tools {
-			for _, tool := range claudeBrowserAdmitted {
-				if name == "mcp__"+claudeBrowserServer+"__"+tool {
-					available = true
-				}
-			}
-		}
+		available := slices.ContainsFunc(claudeBrowserAdmitted, func(tool string) bool {
+			return slices.Contains(frame.Tools, "mcp__"+claudeBrowserServer+"__"+tool)
+		})
 		if !available {
 			s.recordSurface(&CapabilityError{Engine: harness.Claude, Code: CapabilityBrowserToolsMissing, Phase: BeforeFirstPrompt})
 			return true

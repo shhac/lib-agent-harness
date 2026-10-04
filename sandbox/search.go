@@ -193,11 +193,7 @@ func (w *Workspace) searchFiles(ctx context.Context, raw json.RawMessage) (Resul
 			if len(found) == 0 && node.rel == targetRel {
 				return workbenchError(workbenchSearchFiles, rootFailure(e), clean), nil
 			}
-			if errors.Is(e, errOtherMount) {
-				skipped[wbOtherMount]++
-			} else if !errors.Is(e, errHidden) {
-				skipped["directories_incomplete"]++
-			}
+			noteDirSkip(skipped, e)
 			continue
 		}
 		seen := 0
@@ -234,11 +230,7 @@ func (w *Workspace) searchFiles(ctx context.Context, raw json.RawMessage) (Resul
 			if node.rel == targetRel && seen == 0 {
 				return workbenchError(workbenchSearchFiles, rootFailure(e), clean), nil
 			}
-			if errors.Is(e, errOtherMount) {
-				skipped[wbOtherMount]++
-			} else if !errors.Is(e, errHidden) {
-				skipped["directories_incomplete"]++
-			}
+			noteDirSkip(skipped, e)
 		}
 	}
 	sort.Slice(found, func(i, j int) bool {
@@ -272,4 +264,16 @@ func (w *Workspace) searchFiles(ctx context.Context, raw json.RawMessage) (Resul
 		return Result{Content: "[search_files: no matches]"}, nil
 	}
 	return Result{Content: strings.Join(matches, "\n")}, nil
+}
+
+// noteDirSkip counts a directory the search could not enter. Hidden
+// directories are skipped by design and are not counted.
+func noteDirSkip(skipped map[string]int, e error) {
+	if errors.Is(e, errOtherMount) {
+		skipped[wbOtherMount]++
+		return
+	}
+	if !errors.Is(e, errHidden) {
+		skipped["directories_incomplete"]++
+	}
 }
