@@ -9,31 +9,11 @@ import (
 
 	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/jsonschema"
-	"github.com/shhac/lib-agent-harness/internal/sandboxbridge"
-	"github.com/shhac/lib-agent-harness/sandbox"
 )
 
 // normalize resolves a caller's options into the ones a session runs with,
 // refusing any it cannot honour. Its stages run in order.
 func normalize(o Options) (Options, error) {
-	if o.Sandbox != nil && o.Sandbox.LoopbackPorts != nil {
-		if o.Provider.Engine == harness.OpenAICompatible {
-			return o, refuse(o, "sandbox", RefusedNotOffered, "API sessions use Workbench.Commands; native Sandbox has no selected-port support")
-		}
-		return o, &UnsupportedError{Engine: o.Provider.Engine, Operation: "loopback_ports", Code: RefusedNotOffered, Capability: harness.Support(o.Provider.Engine, harness.Session, harness.LoopbackPorts)}
-	}
-	if o.Workbench != nil && o.Workbench.Commands != nil {
-		c := *o.Workbench.Commands
-		v, err := sandboxbridge.NormalizeNetwork(sandbox.Options{Loopback: c.Loopback, LoopbackPorts: c.LoopbackPorts, LoopbackControl: c.LoopbackControl})
-		if err != nil {
-			return o, fromSandbox(err, o)
-		}
-		n := v.(sandbox.Options)
-		c.LoopbackPorts, c.LoopbackControl = n.LoopbackPorts, n.LoopbackControl
-		w := *o.Workbench
-		w.Commands = &c
-		o.Workbench = &w
-	}
 	if err := supported(o); err != nil {
 		return o, err
 	}

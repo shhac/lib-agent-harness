@@ -18,13 +18,8 @@ type CommandSandboxOptions struct {
 	Write                bool
 	Read, Env            []string
 	Loopback             bool
-	// LoopbackPorts is nil for existing loopback behavior; otherwise 1–32 ports.
-	// Selected ports require Loopback and a proved macOS Seatbelt boundary.
-	LoopbackPorts []int
-	// LoopbackControl optionally pins the off-machine DNS control IP literal.
-	LoopbackControl string
-	Timeout         time.Duration
-	Background      bool
+	Timeout              time.Duration
+	Background           bool
 }
 
 // CommandRequest selects a shell command.
@@ -75,7 +70,7 @@ var commandSandboxTranslation = Options{Provider: harness.Provider{Engine: harne
 //
 // Deprecated: use sandbox.Open.
 func OpenCommandSandbox(ctx context.Context, o CommandSandboxOptions) (*CommandSandbox, error) {
-	s, err := sandbox.Open(ctx, sandbox.Options{WorkDir: o.WorkDir, RuntimeHome: o.RuntimeHome, Write: o.Write, Read: o.Read, Env: o.Env, Loopback: o.Loopback, LoopbackPorts: o.LoopbackPorts, LoopbackControl: o.LoopbackControl, Timeout: o.Timeout, Background: o.Background})
+	s, err := sandbox.Open(ctx, sandbox.Options{WorkDir: o.WorkDir, RuntimeHome: o.RuntimeHome, Write: o.Write, Read: o.Read, Env: o.Env, Loopback: o.Loopback, Timeout: o.Timeout, Background: o.Background})
 	if err != nil {
 		return nil, fromSandbox(err, commandSandboxTranslation)
 	}

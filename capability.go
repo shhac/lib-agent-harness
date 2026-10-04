@@ -92,8 +92,6 @@ const (
 	// addresses only, proven before launch, while every other host stays
 	// closed.
 	Loopback Feature = "loopback"
-	// LoopbackPorts limits command loopback to a frozen selected-port list.
-	LoopbackPorts Feature = "loopback_ports"
 	// Browser: the browser integration the harness itself ships, switched on
 	// for this invocation. Off unless asked for.
 	Browser Feature = "browser"
@@ -137,12 +135,6 @@ func Support(e Engine, op Operation, f Feature) Capability {
 // sandboxed hosting of a CLI harness are unavailable on Windows. An API
 // session has no process to contain, so it is unaffected.
 func platform(e Engine, op Operation, f Feature, c Capability) Capability {
-	if f == LoopbackPorts && e == OpenAICompatible && op == Session && runtime.GOOS != "darwin" {
-		if runtime.GOOS == "linux" {
-			return Capability{Unsupported, "private per-command loopback has no per-port filter"}
-		}
-		return Capability{Unsupported, "selected loopback ports require proved macOS Seatbelt rules"}
-	}
 	if e == OpenAICompatible && op == Session && runtime.GOOS == "linux" {
 		switch f {
 		case Sandbox:
@@ -343,17 +335,6 @@ var supportTable = map[supportKey]Capability{
 	{OpenAICompatible, Session, ContextWindow}:       {Unknown, "estimated from each response's input; Chat Completions states no window"},
 	{OpenAICompatible, Session, ToolActivity}:        {Composed, "the library reports the model's call arguments and the handler's result as it ran them"},
 	{OpenAICompatible, Account, Available}:           {Unsupported, "API endpoints expose no account inspection"},
-
-	{OpenAICompatible, Session, LoopbackPorts}: {Unknown, "Seatbelt per-port rules proved before launch"},
-	{OpenAICompatible, Run, LoopbackPorts}:     {Unsupported, "native runs have no proved per-port sandbox"},
-	{Claude, Session, LoopbackPorts}:           {Unsupported, "Claude Code offers only yes/no allowLocalBinding"},
-	{Claude, Run, LoopbackPorts}:               {Unsupported, "native runs have no proved per-port sandbox"},
-	{Codex, Session, LoopbackPorts}:            {Unsupported, "Codex native loopback is unsupported; no per-port enforcement proof"},
-	{Codex, Run, LoopbackPorts}:                {Unsupported, "native runs have no proved per-port sandbox"},
-	{Grok, Session, LoopbackPorts}:             {Unsupported, "Grok sessions have no proven OS sandbox"},
-	{Grok, Run, LoopbackPorts}:                 {Unsupported, "native runs have no proved per-port sandbox"},
-	{CommandCode, Session, LoopbackPorts}:      {Unsupported, "Command Code sessions have no proven OS sandbox"},
-	{CommandCode, Run, LoopbackPorts}:          {Unsupported, "native runs have no proved per-port sandbox"},
 
 	{Claude, Session, Loopback}:         {Unknown, "Claude Code's sandbox allowLocalBinding, which admits this machine's own addresses; proved before each launch by a canary that must reach and bind loopback and be refused an off-machine address"},
 	{Codex, Session, Loopback}:          {Unsupported, "codex-cli 0.160.0 native loopback is unproved: owner-observed macOS tests found closed network refused loopback, while enabled network with localhost domain rules, including a proxy variant and a native session, allowed off-machine TCP 443 and TCP/UDP port 53; other platforms have no native enforcement proof; use a closed-network sandbox or a separately proved command sandbox"},

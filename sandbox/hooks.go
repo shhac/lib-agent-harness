@@ -25,11 +25,6 @@ func init() {
 			r.execute = f.(func(context.Context, string, string, time.Duration, func()) (CommandResult, error))
 		}}
 	}
-	sandboxhook.ResetCommandCache = func() {
-		verified.mu.Lock()
-		defer verified.mu.Unlock()
-		verified.seen = map[string]bool{}
-		verified.controls = nil
-	}
+	sandboxhook.ResetCommandCache = func() { verified.mu.Lock(); defer verified.mu.Unlock(); verified.seen = map[string]bool{} }
 	sandboxhook.CommandCacheSize = func() int { verified.mu.Lock(); defer verified.mu.Unlock(); return len(verified.seen) }
 }

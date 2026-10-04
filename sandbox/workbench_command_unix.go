@@ -109,7 +109,7 @@ func prepareWorkbenchCommands(o Options, proof Proof, dir string) (layout workbe
 		os.RemoveAll(scratch)
 		return layout, nil, token, scratch, stateError(StateUnusable)
 	}
-	layout = workbenchLayout{Work: o.WorkDir, Home: filepath.Join(scratch, "home"), Tmp: filepath.Join(scratch, "tmp"), System: system, Read: o.Read, Write: o.Write, Loopback: o.Loopback, LoopbackPorts: o.LoopbackPorts}
+	layout = workbenchLayout{Work: o.WorkDir, Home: filepath.Join(scratch, "home"), Tmp: filepath.Join(scratch, "tmp"), System: system, Read: o.Read, Write: o.Write, Loopback: o.Loopback}
 	env, err = skills.Environment(os.Environ(), append(append([]string{}, o.Env...), "HOME="+layout.Home, "TMPDIR="+layout.Tmp))
 	if err != nil {
 		os.RemoveAll(scratch)

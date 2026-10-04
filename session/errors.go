@@ -196,12 +196,11 @@ const (
 // comparison — never from free text.
 type CapabilityError struct {
 	// ProofStep is a fixed sandbox.ProofStep value, or empty when unknown.
-	ProofStep                  string
-	ControlAddr, ControlSource string
-	Engine                     harness.Engine
-	Code                       string
-	Phase                      string
-	Tools                      []string
+	ProofStep string
+	Engine    harness.Engine
+	Code      string
+	Phase     string
+	Tools     []string
 	// Reason is a fixed Bridge* value when Code is browser_bridge_unavailable.
 	Reason string
 }
@@ -360,4 +359,10 @@ func (e *TurnError) Error() string {
 // before this existed keep working while gaining the code.
 func (e *TurnError) Unwrap() error { return ErrTurnFailed }
 
-func capabilityProofStep(step string) string { return sandbox.ValidProofStep(step) }
+func capabilityProofStep(step string) string {
+	switch step {
+	case sandbox.ProofStepFixture, sandbox.ProofStepOutside, sandbox.ProofStepLaunch, sandbox.ProofStepJudgment:
+		return step
+	}
+	return ""
+}

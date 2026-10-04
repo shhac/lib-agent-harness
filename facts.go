@@ -10,10 +10,9 @@ import (
 //
 // A caller with its own error vocabulary needs to know what went wrong without
 // reading a message. Parsing Error() would make this library's prose part of
-// its contract, so the facts are published directly, and diagnostic fields are drawn
+// its contract, so the facts are published directly, and every field is drawn
 // from a fixed vocabulary: no harness output, provider prose, path or
-// credential ever appears in one. Network-control metadata may include a validated
-// IP literal and its fixed source label.
+// credential ever appears in one.
 
 // Family says what kind of thing failed.
 type Family string
@@ -72,10 +71,6 @@ type Facts struct {
 	// Phase says how far things had got, where that is the operative
 	// distinction.
 	Phase string `json:"phase,omitempty"`
-	// NetworkControlAddr and NetworkControlSource are sanitized DNS control
-	// destination metadata, never DNS query or reply contents.
-	NetworkControlAddr   string `json:"network_control_addr,omitempty"`
-	NetworkControlSource string `json:"network_control_source,omitempty"`
 	// ProofStep names a fixed pre-launch sandbox verification step, when known.
 	ProofStep string `json:"proof_step,omitempty"`
 	// Code is the specific fixed code: a capability or preflight code, a

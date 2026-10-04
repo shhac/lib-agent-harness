@@ -1,7 +1,6 @@
 package testenv
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -55,7 +54,6 @@ func TestRequireSkipsOnlyARefusal(t *testing.T) {
 		{name: "socket limit", err: &Refusal{Op: "socket path", Err: ErrSocketPathTooLong}, skip: "environment refuses a thing: socket path: "},
 		{name: "einval", err: &Refusal{Op: "listen", Err: syscall.EINVAL}, failure: "probing a thing failed: listen: " + syscall.EINVAL.Error()},
 		{name: "other", err: errors.New("ps reported nothing"), failure: "probing a thing failed: ps reported nothing"},
-		{name: "deadline", err: context.DeadlineExceeded, failure: "probing a thing failed: context deadline exceeded"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := run(tc.err)
@@ -135,7 +133,7 @@ func TestProbesReportAllowedOrRefused(t *testing.T) {
 }
 
 func TestNewCapabilityReasonsAndNoSkip(t *testing.T) {
-	for _, what := range []string{"a nested OS sandbox", "a loopback listener", "an explicit-port loopback bind", "a Unix domain socket under TMPDIR"} {
+	for _, what := range []string{"a nested OS sandbox", "a loopback listener", "a Unix domain socket under TMPDIR"} {
 		for _, noSkip := range []string{"", "1"} {
 			t.Setenv(NoSkipVariable, noSkip)
 			r := &recorder{}

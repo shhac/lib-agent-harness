@@ -7,7 +7,6 @@ import (
 )
 
 func init() {
-	sandboxbridge.NormalizeNetwork = func(v any) (any, error) { return normalizeNetwork(v.(Options)) }
 	sandboxbridge.NormalizeWorkbench = func(v any) (any, error) {
 		return normalize(v.(Options), false)
 	}

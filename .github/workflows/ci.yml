@@ -23,13 +23,6 @@ jobs:
           go-version-file: go.mod
           cache: true
       - run: go vet ./...
-      - name: Pin selected-port control to a responding macOS resolver
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          set -euo pipefail
-          control="$(go run ./internal/cmd/loopbackcontrol)"
-          echo "AGENT_HARNESS_TEST_LOOPBACK_CONTROL=$control" >> "$GITHUB_ENV"
       - name: Install Linux command sandbox
         if: runner.os == 'Linux'
         shell: bash

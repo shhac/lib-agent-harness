@@ -20,14 +20,9 @@ type Options struct {
 	Write                bool
 	Read, Env            []string
 	Loopback             bool
-	// LoopbackPorts is nil for existing loopback behavior; otherwise 1–32 ports.
-	// Selected ports require Loopback and a proved macOS Seatbelt boundary.
-	LoopbackPorts []int
-	// LoopbackControl optionally pins the off-machine DNS control IP literal.
-	LoopbackControl string
-	Timeout         time.Duration
-	Background      bool
-	system          []string
+	Timeout              time.Duration
+	Background           bool
+	system               []string
 }
 
 func platformRefusal() error {
@@ -35,11 +30,6 @@ func platformRefusal() error {
 }
 
 func normalize(o Options, standalone bool) (Options, error) {
-	var policyErr error
-	o, policyErr = normalizeNetwork(o)
-	if policyErr != nil {
-		return o, policyErr
-	}
 	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
 		return o, platformRefusal()
 	}

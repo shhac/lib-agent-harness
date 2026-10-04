@@ -21,7 +21,7 @@ func TestRunnerRequiresMatchingProofBeforeState(t *testing.T) {
 		t.Fatal(err)
 	}
 	proof := Proof{system: workbenchSystemDirs(), binary: "unlaunched-fixture", identity: "fixture", options: o}
-	for _, kind := range []string{"zero", "mismatch", "ports", "control", "budget", "outside"} {
+	for _, kind := range []string{"zero", "mismatch", "budget", "outside"} {
 		t.Run(kind, func(t *testing.T) {
 			p := proof
 			n := o
@@ -32,10 +32,6 @@ func TestRunnerRequiresMatchingProofBeforeState(t *testing.T) {
 				p = Proof{}
 			case "mismatch":
 				n.Write = !n.Write
-			case "ports":
-				n.LoopbackPorts = []int{3000}
-			case "control":
-				n.LoopbackControl = "192.0.2.53"
 			case "budget":
 				budget = 1
 			case "outside":
@@ -75,7 +71,7 @@ func TestRunnerRequiresMatchingProofBeforeState(t *testing.T) {
 func TestRunnerUsesFrozenOptionsWithoutRenormalizing(t *testing.T) {
 	// These synthetic options deliberately cannot be normalized anymore. A
 	// matching proof must reach budget validation without path/system discovery.
-	raw := Options{WorkDir: "/removed-work", RuntimeHome: "/removed-runtime", Read: []string{"/read"}, Env: []string{"LANG=C"}, Loopback: true, LoopbackPorts: []int{3000}}
+	raw := Options{WorkDir: "/removed-work", RuntimeHome: "/removed-runtime", Read: []string{"/read"}, Env: []string{"LANG=C"}}
 	normalized := raw
 	normalized.Timeout = time.Minute
 	normalized.system = []string{"/proved-system"}
@@ -89,7 +85,6 @@ func TestRunnerUsesFrozenOptionsWithoutRenormalizing(t *testing.T) {
 	}
 	raw.Read[0] = "/widened"
 	raw.Env[0] = "LANG=changed"
-	raw.LoopbackPorts[0] = 8080
 	_, err := NewRunner(raw, proof, "/unused", 1)
 	var state *StateError
 	if !errors.As(err, &state) || state.Code != StateUnusable {

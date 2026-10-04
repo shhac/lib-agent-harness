@@ -1,9 +1,6 @@
 package session
 
-import (
-	harness "github.com/shhac/lib-agent-harness"
-	"github.com/shhac/lib-agent-harness/internal/sandboxprobe"
-)
+import harness "github.com/shhac/lib-agent-harness"
 
 // Each typed failure publishes its facts in the shared harness vocabulary, so
 // a caller classifies a session failure exactly as it would any other mode's,
@@ -11,10 +8,9 @@ import (
 // harness output, provider prose, path or credential ever appears in one.
 
 func (e *CapabilityError) HarnessFacts() harness.Facts {
-	control := sandboxprobe.SanitizeControl(sandboxprobe.ControlTarget{Addr: e.ControlAddr, Source: e.ControlSource})
 	// A capability refusal is definitive: the same binary and configuration will
 	// refuse again. It is fixed by changing the installation, not by waiting.
-	return harness.Facts{Engine: e.Engine, Operation: harness.Session, Family: harness.FailureCapability, Phase: e.Phase, Code: e.Code, ProofStep: capabilityProofStep(e.ProofStep), NetworkControlAddr: control.Addr, NetworkControlSource: control.Source}
+	return harness.Facts{Engine: e.Engine, Operation: harness.Session, Family: harness.FailureCapability, Phase: e.Phase, Code: e.Code, ProofStep: capabilityProofStep(e.ProofStep)}
 }
 
 func (e *ProcessError) HarnessFacts() harness.Facts {
