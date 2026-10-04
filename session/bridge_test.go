@@ -46,6 +46,20 @@ func TestMain(m *testing.M) {
 			}
 		}
 		_, _ = os.Stdout.WriteString("ready\n")
+		if mode == "responsive-survivor" {
+			// A round trip proves execution; kill(0) also succeeds for zombies.
+			go func() { time.Sleep(holdFixtureLifetime); os.Exit(2) }()
+			input := bufio.NewScanner(os.Stdin)
+			for input.Scan() {
+				if input.Text() != "ping" {
+					os.Exit(2)
+				}
+				if _, err := os.Stdout.WriteString("alive\n"); err != nil {
+					os.Exit(2)
+				}
+			}
+			os.Exit(0)
+		}
 		if mode == "survivor" {
 			time.Sleep(holdFixtureLifetime)
 			os.Exit(0)
@@ -730,12 +744,37 @@ func TestLateReleaseStartMissingBridgeEnvFailsFast(t *testing.T) {
 }
 
 func TestReclaimKeepsTheLeaseWhileWaiting(t *testing.T) {
+	testenv.RequireProcessGroup(t)
 	dir := privateDir(t)
-	group, err := syscall.Getpgid(0)
+	startup, stopStartup := context.WithTimeout(context.Background(), 10*time.Second)
+	defer stopStartup()
+	cmd := exec.CommandContext(startup, os.Args[0], "-test.run=^$")
+	cmd.Env = append(os.Environ(), settleFixtureEnv+"=responsive-survivor", fakeScenarioEnv+"=", holdLockEnv+"=")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := recordLaunch(dir, launchRecord{PID: os.Getpid(), Group: group, Launch: dir}); err != nil {
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stdin.Close()
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+	ready := bufio.NewScanner(stdout)
+	if !ready.Scan() || ready.Text() != "ready" {
+		t.Fatalf("survivor not ready: %v", ready.Err())
+	}
+	pid := cmd.Process.Pid
+	group, err := syscall.Getpgid(pid)
+	if err != nil || group != pid || group <= 1 {
+		t.Fatalf("invalid survivor group: %d %v", group, err)
+	}
+	requireAlive(t, pid)
+	if err := recordLaunch(dir, launchRecord{PID: pid, Group: group, Launch: dir}); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -760,8 +799,21 @@ func TestReclaimKeepsTheLeaseWhileWaiting(t *testing.T) {
 			return
 		}
 	}()
+	settled := false
+	defer func() {
+		cancel()
+		if !settled {
+			<-done
+		}
+	}()
 	deadline := time.Now().Add(time.Second)
 	for {
+		select {
+		case err := <-done:
+			settled = true
+			t.Fatalf("reclamation ended before lease exclusion: %v", err)
+		default:
+		}
 		lease, err := holdLease(leasePath(dir))
 		if errors.Is(err, ErrLeaseHeld) {
 			break
@@ -776,7 +828,9 @@ func TestReclaimKeepsTheLeaseWhileWaiting(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 	cancel()
-	if err := <-done; !errors.Is(err, ErrUnreclaimed) || !errors.Is(err, context.Canceled) {
+	result := <-done
+	settled = true
+	if err := result; !errors.Is(err, ErrUnreclaimed) || !errors.Is(err, context.Canceled) {
 		t.Fatalf("lost cancellation: %v", err)
 	}
 	lease, err := holdLease(leasePath(dir))
@@ -786,6 +840,12 @@ func TestReclaimKeepsTheLeaseWhileWaiting(t *testing.T) {
 	_ = lease.Close()
 	if _, err := os.Stat(launchPath(dir)); err != nil {
 		t.Fatal("failed wait lost the marker")
+	}
+	if _, err := io.WriteString(stdin, "ping\n"); err != nil {
+		t.Fatalf("survivor stopped after cancellation: %v", err)
+	}
+	if !ready.Scan() || ready.Text() != "alive" {
+		t.Fatalf("survivor not executing after cancellation: %v", ready.Err())
 	}
 }
 

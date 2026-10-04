@@ -1467,7 +1467,9 @@ process group of their own, and that has to work wherever the library runs.
 
 Setting `AGENT_HARNESS_TEST_NO_SKIP=1` turns every such skip into a failure. CI
 sets it, so an unsandboxed run can never pass by skipping. The helpers live in
-`internal/testenv`. A bare bind EINVAL remains a failure.
+`internal/testenv`. A bare bind EINVAL remains a failure. Cancelled or timed-out
+bubblewrap trials fail before refusal conversion, even if the CLI returns a
+recognized prerequisite refusal; interrupted observations are not evidence.
 
 To check the entire suite under the library's own command boundary, run from
 the module root in an **unsandboxed** checkout with dependencies already cached:
@@ -1494,10 +1496,50 @@ through `sandbox.Options.Env`; set it in the sandboxed command string.
 `go run ./internal/cmd/sandboxcheck -no-skip` does this explicitly and is
 expected to fail where the command boundary refuses prerequisites.
 
-After landing, the owner confirms the default runner exits zero on unsandboxed
-macOS and Linux with bubblewrap, then runs
-`AGENT_HARNESS_TEST_NO_SKIP=1 go test -race ./...` unsandboxed for full coverage.
-These test-only changes do not alter `harness.Support` or production sandboxes.
+Linux sandbox-check follow-up: the unsandboxed privilege escape control probes
+/proc/self/status. Zero effective, permitted, inheritable and ambient capabilities
+with NoNewPrivs=1 prove inherited confinement; only the privilege subtest skips
+with a named one-line refusal. Filesystem, network and overlay assertions still
+run. Missing or malformed status fails; permission-denied reads name their own
+diagnostic. Real sandbox canaries still require privilege-ok.
+
+Reclamation lease tests use a ready, live survivor in a dedicated group greater
+than 1 instead of the inherited test group (which can be 1 under bubblewrap).
+Early worker errors fail immediately; cancellation settles the worker, releases
+the lease and preserves the launch marker. The survivor must respond after
+settlement, proving it remains live rather than merely occupying a zombie group.
+No production ownership rules change.
+
+Nested refusal fixtures require the platform-specific capability prefix and a
+nonempty diagnostic suffix. Linux uses bubblewrap 0.8.0+ and unprivileged
+namespaces; abbreviated reports are not complete diagnostics. Joined refusal
+errors are flattened to one line. NO_SKIP still fails refused prerequisites;
+child normal/strict fixtures select their own mode independently of the parent.
+Production sandbox permissions and harness.Support claims remain unchanged.
+
+CI pins Linux distribution coverage to Ubuntu 24.04, verifies bubblewrap 0.9.x,
+and retains the separate 0.8.0 job. Unix jobs run the real fixture under both
+parent strict modes and require actual verified child results; an outer skip
+does not count. They repeat the lease test twenty times under the race detector.
+The Ubuntu job also runs the complete sandboxcheck runner.
+
+Owner-reported validation compares baseline 106c711 with drafts ad4b36b and
+b54ec5d: the baseline Linux sandboxcheck and strict suite failed; both drafts'
+Linux sandboxcheck and strict suites passed. Draft 1 passed both on macOS too.
+Draft 2's macOS sandboxcheck passed, but its strict suite encountered a
+developer-tool first-launch timeout. The owner's separate 71e7d39 correction
+and passing test are now merged here and retained. These are aggregate owner
+results; raw baseline diagnostics, separate focused/both-parent transcripts,
+and Windows/0.8.0 runtime CI results remain unrecorded. See the
+[validation evidence inventory](design-docs/2026-10-03-command-sandbox.md#validation-evidence)
+for snapshot, command and platform boundaries.
+
+There is no team-accessible Linux executor; the owner supplies Linux draft
+results, and further Linux runs are owner steps. After landing, the owner
+confirms the focused regressions, `go run ./internal/cmd/sandboxcheck`, and
+unsandboxed `AGENT_HARNESS_TEST_NO_SKIP=1 go test -race ./...` on Ubuntu 24.04
+with bubblewrap 0.9. These test-only changes do not alter `harness.Support` or
+production sandboxes.
 
 Licensed under [PolyForm Perimeter 1.0.0](LICENSE), matching the sibling
 `lib-agent-*` libraries.

@@ -18,6 +18,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -104,7 +105,7 @@ func require(t testing.TB, what string, err error) {
 		t.Fatalf("probing %s failed: %v", what, err)
 		return
 	}
-	msg := fmt.Sprintf("environment refuses %s: %v", what, err)
+	msg := strings.Join(strings.Fields(fmt.Sprintf("environment refuses %s: %v", what, err)), " ")
 	if os.Getenv(NoSkipVariable) == "1" {
 		t.Fatalf("%s (%s=1 forbids skipping)", msg, NoSkipVariable)
 		return

@@ -78,6 +78,21 @@ func TestNoSkipTurnsARefusalIntoAFailure(t *testing.T) {
 	}
 }
 
+func TestJoinedRefusalIsOneLine(t *testing.T) {
+	err := errors.Join(syscall.EPERM, errors.New("namespace trial\nadditional diagnostic"))
+	for _, strict := range []string{"", "1"} {
+		t.Setenv(NoSkipVariable, strict)
+		r := run(err)
+		message := r.skipped + r.failed
+		if strings.ContainsAny(message, "\r\n\t") || !strings.Contains(message, "environment refuses a thing: operation not permitted namespace trial additional diagnostic") {
+			t.Fatalf("lost one-line diagnostic: %q", message)
+		}
+		if strict == "1" && (r.skipped != "" || !strings.Contains(r.failed, "forbids skipping")) {
+			t.Fatalf("%+v", r)
+		}
+	}
+}
+
 func TestProbeRunsOnceForEveryCaller(t *testing.T) {
 	var calls atomic.Int32
 	p := &probe{check: func() error {

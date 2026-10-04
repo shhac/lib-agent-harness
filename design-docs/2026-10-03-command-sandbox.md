@@ -153,5 +153,120 @@ scratch, with interrupted command state swept on the next Open of that home.
 This is test infrastructure only: no sandbox profile, permissions or
 harness.Support claims change. After landing the owner confirms the runner
 unsandboxed on macOS and Linux with bubblewrap, and confirms an unsandboxed
-NO_SKIP race run retains full coverage. Implementer/QA command sandboxes cannot
-perform that nested owner confirmation.
+NO_SKIP race run retains full coverage. Platform CI remains a separate check;
+an outer prerequisite skip is not evidence that the real child fixtures
+executed. The owner has confirmed there is no team-accessible Linux executor;
+use the reported draft results below, and treat further Linux runs as owner
+steps without reopening that executor question.
+
+Linux sandbox-check follow-up: the unsandboxed privilege escape control probes
+/proc/self/status. Zero effective, permitted, inheritable and ambient capabilities
+with NoNewPrivs=1 prove inherited confinement; only the privilege subtest skips
+with a named one-line refusal. Filesystem, network and overlay assertions still
+run. Missing or malformed status fails; permission-denied reads name their own
+diagnostic. Real sandbox canaries still require privilege-ok.
+
+Reclamation lease tests use a ready, live survivor in a dedicated group greater
+than 1 instead of the inherited test group (which can be 1 under bubblewrap).
+Early worker errors fail immediately; cancellation settles the worker, releases
+the lease and preserves the launch marker. No production ownership rules change.
+
+Nested refusal fixtures require the platform-specific capability prefix and a
+nonempty diagnostic suffix. Linux uses bubblewrap 0.8.0+ and unprivileged
+namespaces; abbreviated reports are not complete diagnostics. Joined refusal
+errors are flattened to one line. NO_SKIP still fails refused prerequisites;
+child normal/strict fixtures select their own mode independently of the parent.
+Production sandbox permissions and harness.Support claims remain unchanged.
+
+### Interruption and regression coverage
+
+Every Linux prerequisite callback checks ctx.Err() before adding a permission
+refusal. RequireBwrap checks the context before admitting a trial and again
+after settlement, so cancellation and deadlines fail even if a callback returns
+a recognized CLI refusal or a joined permission error. The equivalent nested
+Seatbelt probe also gives interruption precedence over refusal classification.
+An interrupted trial proves neither support nor a refused capability.
+
+Synthetic CLI fixtures cancel before launch, during version discovery and
+during the full-flags trial. Normal-mode tests require a loud cancellation
+failure, not a skip. Synthetic status files execute the privilege command
+extracted from the generated production canary: confined status reports
+privilege-ok, while NoNewPrivs=0, each nonzero relevant capability, missing,
+duplicate, malformed or unreadable fields report privilege. Production
+enforcement and mandatory privilege-ok observations remain unchanged.
+
+The lease survivor responds to a ping after reclamation cancellation settles.
+Unlike kill(0) or group occupancy, a response proves the child is executing and
+excludes an unreaped zombie. Startup/readiness and responses are bounded by the
+existing fixture context; cleanup awaits reclamation before killing/reaping it.
+The test retains exclusion, both cancellation error identities, marker
+retention and lease-release assertions.
+
+CI pins the distribution runner to Ubuntu 24.04 and records OS/kernel,
+architecture, Go and the installed bubblewrap version, requiring 0.9.x.
+Strict vet/race coverage remains on macOS, Linux and Windows; bind-mount
+witnesses and the authenticated upstream 0.8.0 job remain intact. Unix CI runs
+the real re-exec fixture with parent NO_SKIP=0 and =1, requiring PASS plus
+verified child results for every normal/strict mode. An outer skip fails this
+CI step. Unix CI repeats the lease test twenty times under the race detector;
+the Ubuntu job also runs the full sandboxcheck runner.
+
+### Validation evidence
+
+Owner task note 6 supplies the paired aggregate outcomes below. Runs were
+outside a sandbox on Ubuntu 24.04 with bubblewrap 0.9 and on macOS.
+Sandboxcheck means `go run ./internal/cmd/sandboxcheck`; the strict suite
+means the reported `AGENT_HARNESS_TEST_NO_SKIP=1 go test -race ./...` run.
+
+| Snapshot | Platform | Owner-reported outcome |
+| --- | --- | --- |
+| Baseline 106c711 (LAH-18) | Linux | Sandboxcheck exited 1: the unsandboxed privilege control failed at workbench_command_linux_test.go:653 with “escape privilege not reported”; the lease test failed at bridge_test.go:774. The strict race suite failed the nested refusal fixture at check_fixture_unix_test.go:86. |
+| Draft 1 ad4b36b | Linux and macOS | Sandboxcheck and the strict race suite exited 0. |
+| Draft 2 b54ec5d | Linux | Sandboxcheck and the strict race suite exited 0. Aggregate draft-2 Linux success is established by this report. |
+| Draft 2 b54ec5d | macOS | Sandboxcheck exited 0. The strict suite failed TestCommandSandboxRunsSelectedDeveloperTools when initial xcrun/xcodebuild startup exceeded its 10-second command limit. |
+| Main correction 71e7d39 | macOS | The owner reports correcting the developer-tool timeout and obtaining a passing test. This is a separate test result, not a reported full strict-suite rerun. |
+
+Correction 71e7d39 is now merged into this task branch.
+`TestCommandSandboxRunsSelectedDeveloperTools` gives its fresh sandbox one
+minute for first-launch developer-tool startup, while retaining the command,
+exit-status and built-output assertions. Preserve that merged correction on
+landing; this task does not recreate it or change lease deadlines.
+
+Failure classifications remain precise. The privilege control is unavailable
+only after the probe observes zero CapEff/CapPrm/CapInh/CapAmb and NoNewPrivs=1;
+that predicate proves inherited confinement. The baseline lease fixture used
+the test process's inherited group, which could supply Group<=1, an identity
+production correctly refuses. The Linux refusal matcher was a source-confirmed
+test defect: it required the word sandbox rather than the complete bubblewrap
+capability prefix and diagnostic suffix. These explanations and the reported
+baseline failures are distinct from raw measurements.
+
+The record does not include actual baseline privilege fields, PID/PGID,
+reclamation worker error, complete child output, or separate focused and
+both-parent Linux transcripts. Aggregate strict-suite success is evidence for
+the suite's assertions, not a captured transcript of those individual checks.
+Sandboxcheck success alone does not establish that an outer re-exec prerequisite
+passed rather than skipped. Owner Go/kernel/architecture details and
+timeout/truncation metadata for these reports were not supplied. The task API
+abbreviates note 6; its complete stored text was recovered during research and
+the evidence inventory was supplied with this reconciliation request.
+
+Prior team checks on the repaired drafts ran on macOS arm64 with Go 1.27.1
+inside managed command boundaries: local vet/race and daemon run_check exited
+zero, including twenty lease race repetitions and the synthetic regressions.
+Windows/Linux amd64 tests cross-compiled CGO-free, cross-target vet and a
+CGO-disabled library build passed; compilation is not runtime evidence.
+Local real re-exec attempts encountered a refused outer loopback prerequisite:
+normal mode skipped (zero), strict mode failed (one). Local sandboxcheck
+refused before launch because managed TMPDIR was beneath the checkout.
+These infrastructure limits are not Linux namespace-refusal findings.
+
+Windows and upstream bubblewrap 0.8.0 runtime CI success, separate both-parent
+execution transcripts, and CI results for the landing revision remain
+unrecorded. CI configuration is not execution evidence. The owner's paired
+baseline/draft outcomes replace the obsolete requirement for a nonexistent
+team Linux executor; any further Linux diagnostics follow the settled owner
+direction. Additional diagnostics, if requested, use disposable copies and
+retain the assertions. The expressly designated after-landing Ubuntu check
+remains separate, and this repair retains priority before the held main push
+and subsequent library landings.

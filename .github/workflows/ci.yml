@@ -10,7 +10,7 @@ jobs:
       # Every platform reports, so one platform's failure cannot hide another's.
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-24.04, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     env:
       # CI runs unsandboxed: a test that would skip because the environment
@@ -30,6 +30,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bubblewrap netcat-openbsd
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Verify Ubuntu 24.04 and bubblewrap 0.9
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          . /etc/os-release
+          test "$ID" = ubuntu
+          test "$VERSION_ID" = 24.04
+          uname -a
+          go version
+          bwrap --version | tee "$RUNNER_TEMP/bwrap-version"
+          grep -Eq '^bubblewrap 0\.9\.[0-9]+$' "$RUNNER_TEMP/bwrap-version"
       - name: Prepare workspace bind-mount witness
         if: runner.os == 'Linux'
         shell: bash
@@ -41,7 +52,30 @@ jobs:
           sudo mount --bind "$witness/source" "$witness/work/parent/mount"
           sudo mount --bind "$witness/source/marker" "$witness/work/parent/filemount"
           echo "AGENT_HARNESS_TEST_BIND_MOUNT=$witness/work" >> "$GITHUB_ENV"
+      - name: Verify real refusal fixtures in both parent modes
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for strict in 0 1; do
+            output="$RUNNER_TEMP/refusal-parent-$strict.log"
+            AGENT_HARNESS_TEST_NO_SKIP="$strict" go test -race -count=1 -v ./sandbox -run '^TestCommandSandboxRunSkipsRefusedCapabilities$' | tee "$output"
+            # A skipped outer prerequisite is not child execution evidence.
+            grep -q '^--- PASS: TestCommandSandboxRunSkipsRefusedCapabilities' "$output"
+            modes="nested socket"
+            if [ "$RUNNER_OS" = macOS ]; then modes="$modes loopback"; fi
+            for mode in $modes; do
+              grep -q "child $mode strict=false exit=0 verified" "$output"
+              grep -Eq "child $mode strict=true exit=[1-9][0-9]* verified" "$output"
+            done
+          done
+      - name: Repeat lease cancellation and survivor liveness
+        if: runner.os != 'Windows'
+        run: go test -race -count=20 -v ./session -run '^TestReclaimKeepsTheLeaseWhileWaiting$'
       - run: go test -race ./...
+      - name: Check the full suite inside bubblewrap
+        if: runner.os == 'Linux'
+        run: go run ./internal/cmd/sandboxcheck
   linux-bwrap-080:
     name: linux (bubblewrap 0.8.0)
     runs-on: ubuntu-latest

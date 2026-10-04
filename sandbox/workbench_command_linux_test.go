@@ -648,11 +648,17 @@ func TestWorkbenchLinuxCanaryWithoutSandboxReportsEscapes(t *testing.T) {
 		t.Fatalf("%v %s", e, out.text())
 	}
 	lines, _ := workbenchCanaryLines(out.text())
-	for _, label := range []string{"inside", "nested", "tmp", "tmpdir", "sibling", "gitdir", "gitmove", "gitlink", "githardlink", "home", "outside", "runtime", "readset-write", "link", "socket", "network", "localhost", "privilege", "overlay"} {
+	for _, label := range []string{"inside", "nested", "tmp", "tmpdir", "sibling", "gitdir", "gitmove", "gitlink", "githardlink", "home", "outside", "runtime", "readset-write", "link", "socket", "network", "localhost", "overlay"} {
 		if !lines[label] {
 			t.Errorf("escape %s not reported: %s", label, out.text())
 		}
 	}
+	t.Run("privilege", func(t *testing.T) {
+		testenv.RequireLinuxPrivilegeControl(t)
+		if !lines["privilege"] {
+			t.Errorf("escape privilege not reported: %s", out.text())
+		}
+	})
 	var cap *ProofError
 	if e = judgeLinuxWorkbench(out.text(), true, false, false, false); !errors.As(e, &cap) || cap.Code != CapabilitySandboxNotEnforced {
 		t.Fatalf("%v", e)

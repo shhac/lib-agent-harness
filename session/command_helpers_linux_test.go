@@ -21,9 +21,12 @@ func requireWorkbenchBwrap(t *testing.T) (string, string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	var binary, version string
-	testenv.RequireBwrap(t, func() error {
+	testenv.RequireBwrap(t, ctx, func() error {
 		var e error
 		binary, version, e = sandboxhook.CommandTrial(ctx, work, home, tmp)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		var cap *sandbox.ProofError
 		if errors.As(e, &cap) && (cap.Code == CapabilitySandboxToolMissing || cap.Code == CapabilitySandboxToolOutdated || cap.Code == CapabilitySandboxNamespacesUnavailable) {
 			return errors.Join(fs.ErrPermission, e)
