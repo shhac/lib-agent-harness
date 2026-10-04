@@ -43,18 +43,38 @@ func redactSecrets(text string) string {
 	fields := strings.Fields(text)
 	for i, field := range fields {
 		trimmed := strings.Trim(field, `"'.,;:()[]{}`)
+		// An authorization scheme on its own puts the credential in the next field.
+		if strings.EqualFold(trimmed, "Bearer") && i+1 < len(fields) {
+			fields[i+1] = "[redacted]"
+			continue
+		}
 		if len(trimmed) >= 20 && opaque(trimmed) {
 			fields[i] = strings.Replace(field, trimmed, "[redacted]", 1)
 			continue
 		}
-		for _, prefix := range []string{"sk-", "sk_", "Bearer", "token=", "key=", "secret="} {
-			if strings.HasPrefix(trimmed, prefix) && len(trimmed) > len(prefix) {
-				fields[i] = "[redacted]"
-				break
-			}
+		if credentialLike(trimmed) {
+			fields[i] = "[redacted]"
 		}
 	}
 	return strings.Join(fields, " ")
+}
+
+// credentialLike reports a field that names a credential: a key prefix, or a
+// token, key or secret assignment, also inside a URL's query string.
+func credentialLike(field string) bool {
+	for _, prefix := range []string{"sk-", "sk_", "Bearer"} {
+		if strings.HasPrefix(field, prefix) && len(field) > len(prefix) {
+			return true
+		}
+	}
+	for _, part := range strings.FieldsFunc(field, func(r rune) bool { return r == '?' || r == '&' || r == ';' }) {
+		for _, prefix := range []string{"token=", "key=", "secret="} {
+			if strings.HasPrefix(part, prefix) && len(part) > len(prefix) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // opaque reports a run with no word structure: mixed classes, no separators and
