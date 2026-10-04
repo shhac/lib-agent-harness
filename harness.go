@@ -22,6 +22,9 @@ const (
 	Codex  Engine = "codex"
 	Claude Engine = "claude"
 	Grok   Engine = "grok"
+	// CommandCode is Command Code, whose CLI is installed as `cmd`. Only its
+	// sessions are offered, over `cmd acp`.
+	CommandCode Engine = "command-code"
 	// OpenAICompatible is any HTTP endpoint speaking an OpenAI dialect, such as
 	// a gateway. It names the harness, not the model family: a Grok model
 	// through a gateway is OpenAICompatible with a model such as "xai/grok-4".
@@ -29,7 +32,7 @@ const (
 )
 
 // Engines lists every engine the library knows, in a stable order for display.
-func Engines() []Engine { return []Engine{Codex, Claude, Grok, OpenAICompatible} }
+func Engines() []Engine { return []Engine{Codex, Claude, Grok, CommandCode, OpenAICompatible} }
 
 // Transport says how an engine is reached.
 type Transport string
@@ -42,7 +45,7 @@ const (
 // Transport is "" for an engine the library does not know.
 func (e Engine) Transport() Transport {
 	switch e {
-	case Codex, Claude, Grok:
+	case Codex, Claude, Grok, CommandCode:
 		return CLITransport
 	case OpenAICompatible:
 		return APITransport

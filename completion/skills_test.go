@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -372,7 +371,7 @@ func TestSkillRequestsThatCannotBeHonouredAreRefused(t *testing.T) {
 
 func TestSkillsSupportIsComposedForCompletion(t *testing.T) {
 	for _, engine := range harness.Engines() {
-		if runtime.GOOS == "windows" && engine == harness.Grok {
+		if !harness.Support(engine, harness.Complete, harness.Available).Usable() {
 			continue
 		}
 		if c := harness.Support(engine, harness.Complete, harness.ProvidedSkills); c.Availability != harness.Composed || c.Reason == "" {

@@ -1,9 +1,6 @@
 package harness
 
-import (
-	"runtime"
-	"testing"
-)
+import "testing"
 
 func TestSkillChoicesAreAClosedVocabulary(t *testing.T) {
 	for _, g := range []GlobalSkills{GlobalSkillsDefault, GlobalSkillsInclude, GlobalSkillsExclude} {
@@ -23,7 +20,7 @@ func TestSkillChoicesAreAClosedVocabulary(t *testing.T) {
 
 func TestCompletionComposesSkillsAndNeverIncludesInstalledOnes(t *testing.T) {
 	for _, e := range Engines() {
-		if runtime.GOOS == "windows" && e == Grok {
+		if !Support(e, Complete, Available).Usable() {
 			continue
 		}
 		if c := Support(e, Complete, ProvidedSkills); c.Availability != Composed || c.Reason == "" {
