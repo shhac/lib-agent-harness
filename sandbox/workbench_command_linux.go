@@ -130,7 +130,11 @@ func newCommandSandbox(config commandConfig) (*commandSandbox, error) {
 		}
 		runErr := <-completed
 		setupFailed := commandSetupFailed(cmd, notified, runErr)
-		started = settledCommandLaunch(cmd, started, onStart)
+		// A launched bwrap is not evidence of a command child. Only a
+		// pre-notification setup refusal makes its outcome uncertain.
+		if setupFailed {
+			started = settledCommandLaunch(cmd, started, onStart)
+		}
 		p.Close()
 		mu.Lock()
 		delete(live, p)

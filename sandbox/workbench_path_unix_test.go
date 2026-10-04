@@ -47,6 +47,7 @@ func TestStartupBeforeNotifyRetainsDiagnostics(t *testing.T) {
 			config := commandConfig{options: o, proof: Proof{system: workbenchSystemDirs(), binary: "/bin/sh", identity: identity}, stateDir: o.RuntimeHome, outputBudget: MinResult}
 			statusRead := make(chan bool, 1)
 			config.statusRead = func(code int, known bool) { statusRead <- known && code == 0 }
+			var fixtureCmd *exec.Cmd
 			config.command = func(ctx context.Context, _ string, _ ...string) (*exec.Cmd, *process.Process, error) {
 				status := ""
 				if fast {
@@ -55,11 +56,18 @@ func TestStartupBeforeNotifyRetainsDiagnostics(t *testing.T) {
 				if fast && runtime.GOOS == "linux" {
 					status = "printf '%s\\n' '{\"child-pid\":123}' '{\"exit-code\":0}' >&3; "
 				}
-				return process.Command(ctx, "/bin/sh", "-c", status+"echo actual-output; i=0; while [ $i -lt 1000 ]; do echo actual-stderr >&2; i=$((i+1)); done")
+				cmd, p, err := process.Command(ctx, "/bin/sh", "-c", status+"echo actual-output; i=0; while [ $i -lt 1000 ]; do echo actual-stderr >&2; i=$((i+1)); done")
+				fixtureCmd = cmd
+				return cmd, p, err
 			}
 			config.run = func(p *process.Process) error {
 				p.Notify(nil) // priority refusal occurs before the normal notification
 				err := p.Run()
+				if runtime.GOOS == "linux" {
+					// Without Notify, the parent still owns the status writer.
+					// Linux parses through EOF, so close it before holding Run.
+					_ = fixtureCmd.ExtraFiles[0].Close()
+				}
 				close(childDone)
 				<-release
 				if err != nil {
@@ -554,8 +562,10 @@ func TestCommandSandboxReadablePathRunAndStart(t *testing.T) {
 	if err != nil || result.ExitCode == 0 || strings.Contains(result.Stdout, "unsafe") {
 		t.Fatal(result, err)
 	}
-	// Inherited PATH takes the identical route after environment merging.
-	t.Setenv("PATH", hidden+":"+read+":/usr/bin:/bin")
+	// Inherited PATH takes the identical route after environment merging. The
+	// host PATH stays after the fixtures, so CI's pinned bubblewrap is still
+	// found when the sandbox reopens.
+	t.Setenv("PATH", hidden+":"+read+":/usr/bin:/bin:"+os.Getenv("PATH"))
 	opts.Env = nil
 	inherited := openTestCommandSandbox(t, opts)
 	result, err = inherited.Run(context.Background(), CommandRequest{Command: workbenchShellQuote(script)})
