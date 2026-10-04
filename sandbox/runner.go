@@ -15,14 +15,25 @@ import (
 // Proof is successful pre-launch evidence for one frozen configuration.
 // Its fields cannot be fabricated by callers; Linux always re-proves.
 type Proof struct {
-	system           []string
-	binary, identity string
-	options          Options
-	request          *Options
+	system              []string
+	binary, identity    string
+	options             Options
+	request             *Options
+	networkObservations []InterfaceObservation
+	networkDetail       string
+	key                 string
 }
 
 func (p Proof) SystemDirs() []string { return append([]string(nil), p.system...) }
 func (p Proof) Binary() string       { return p.binary }
+
+// NetworkObservations returns the settled interface socket attempt results.
+func (p Proof) NetworkObservations() []InterfaceObservation {
+	return slices.Clone(p.networkObservations)
+}
+
+// NetworkDetail describes which interface exposure was actually tested.
+func (p Proof) NetworkDetail() string { return p.networkDetail }
 
 // Identity fingerprints the proved executable. On macOS it is informational;
 // the Seatbelt cache key pins the executable. Linux rechecks it before launch.

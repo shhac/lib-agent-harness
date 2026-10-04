@@ -1,10 +1,41 @@
 package sandbox
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
 )
+
+func TestVerificationCacheEvidenceAndKeyAdmission(t *testing.T) {
+	c := &verificationCache{seen: map[string]bool{}}
+	release, err := c.acquire(context.Background(), "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := c.acquire(context.Background(), "b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err = c.acquire(ctx, "a"); err == nil {
+		t.Fatal("same key admitted before settlement")
+	}
+	evidence := networkEvidence{Detail: "observed", Observations: []InterfaceObservation{{Errno: 13}}}
+	c.recordWithNetwork("a", evidence)
+	evidence.Observations[0].Errno = 0
+	if !c.holds("a") || c.network("a").Observations[0].Errno != 13 {
+		t.Fatal("cache lost or aliased evidence")
+	}
+	release()
+	next, err := c.acquire(context.Background(), "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	next()
+}
 
 func TestCommandVerificationCacheReset(t *testing.T) {
 	c := &verificationCache{seen: map[string]bool{}}

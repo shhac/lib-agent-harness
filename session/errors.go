@@ -106,7 +106,7 @@ const (
 func refusalFamily(code string) harness.Family {
 	switch code {
 	case RefusedEngine, RefusedOtherEnginePolicy, RefusedEnvManaged, RefusedConflict, RefusedModelRequired,
-		RefusedModelWithoutTools, RefusedSandboxTool, RefusedNotNative, RefusedMethodMissing, RefusedNotOffered:
+		RefusedModelWithoutTools, RefusedSandboxTool, RefusedNotNative, RefusedMethodMissing, RefusedNotOffered, RefusedLoopbackNotLocal:
 		return harness.FailureCapability
 	}
 	return harness.FailurePreflight
@@ -166,6 +166,8 @@ const (
 
 // Sandbox capability failures.
 const (
+	// CapabilityLoopbackClaimChanged: Seatbelt binds no longer match the claim.
+	CapabilityLoopbackClaimChanged = sandbox.CapabilityLoopbackClaimChanged
 	// CapabilitySandboxUnavailable: the installed harness could not be put
 	// under the requested sandbox, or the check could not be completed.
 	CapabilitySandboxUnavailable = sandbox.CapabilitySandboxUnavailable
@@ -237,6 +239,7 @@ func (e *CapabilityError) Error() string {
 		CapabilityBrowserSandboxUnproven:    "the node_repl JavaScript confinement proof could not complete; update Codex and the ChatGPT app, or leave Browser unset",
 		CapabilityBrowserSandboxNotEnforced: "node_repl JavaScript escaped the session sandbox; update Codex and the ChatGPT app, or leave Browser unset",
 		CapabilitySandboxUnavailable:        "the installed harness could not be run under the requested sandbox",
+		CapabilityLoopbackClaimChanged:      "Seatbelt interface bind observations no longer match the all-interface Loopback claim; re-audit the installed runtime",
 		CapabilitySandboxNotEnforced:        "the installed harness's sandbox allowed writes or network access the session must not have",
 	}[e.Code]
 	if e.Code == CapabilitySandboxNotEnforced && capabilityProofStep(e.ProofStep) != "" {
@@ -366,3 +369,6 @@ func capabilityProofStep(step string) string {
 	}
 	return ""
 }
+
+// RefusedLoopbackNotLocal identifies unprovable local-only loopback.
+const RefusedLoopbackNotLocal = "loopback_local_only_unenforceable"

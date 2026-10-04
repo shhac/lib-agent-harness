@@ -69,6 +69,9 @@ func legacyworkbenchLinuxProbeKey(o Options, binary, version string, w workbench
 	if len(revision) > 0 {
 		// Draft 4 used one concatenated revision element, not two elements.
 		values[1] = revision[0] + ":readable-path-v1"
+		if revision[0] == "bwrap-workbench-v4" {
+			values[1] = "bwrap-workbench-v4:readable-path-v2"
+		}
 	}
 	payload, _ := json.Marshal(values)
 	hash := sha256.Sum256(payload)
@@ -92,9 +95,19 @@ func TestWorkbenchProofKeyLegacyPayload(t *testing.T) {
 	if got == want {
 		t.Fatal("old proof certifies changed policy")
 	}
+	plain, err := legacyworkbenchLinuxProbeKey(o, binary, "0.8.0", w, "bwrap-workbench-v4")
+	if err != nil || plain != got {
+		t.Fatalf("existing Linux proof payload changed: %s != %s: %v", plain, got, err)
+	}
 	v3, err := legacyworkbenchLinuxProbeKey(o, binary, "0.8.0", w, "bwrap-workbench-v3")
 	if err != nil || got == v3 {
 		t.Fatalf("draft-4 proof reused: %v", err)
+	}
+	strict := o
+	strict.LoopbackLocalOnly = true
+	strictKey, err := workbenchLinuxProbeKey(strict, binary, "0.8.0", w)
+	if err != nil || strictKey == got {
+		t.Fatalf("strict proof key missing request: %v", err)
 	}
 	again, err := workbenchLinuxProbeKey(o, binary, "0.8.0", w)
 	if err != nil || got != again {

@@ -325,6 +325,33 @@ func TestLoopbackClaims(t *testing.T) {
 	}
 }
 
+func TestLoopbackLocalOnlyClaims(t *testing.T) {
+	for _, e := range Engines() {
+		for _, op := range Operations() {
+			c := Support(e, op, LoopbackLocalOnly)
+			if c.Availability != Unsupported || c.Reason == "" {
+				t.Fatalf("%s %s: %+v", e, op, c)
+			}
+		}
+	}
+	if runtime.GOOS == "darwin" {
+		for _, e := range []Engine{OpenAICompatible, Claude} {
+			c := Support(e, Session, Loopback)
+			for _, detail := range []string{"every local interface", "other machines", "outbound off-machine"} {
+				if !strings.Contains(c.Reason, detail) {
+					t.Fatalf("missing %q: %+v", detail, c)
+				}
+			}
+			if !strings.Contains(Support(e, Session, LoopbackLocalOnly).Reason, "loopback_local_only_unenforceable") {
+				t.Fatal("unnamed refusal")
+			}
+		}
+	}
+	if runtime.GOOS == "linux" && !strings.Contains(Support(OpenAICompatible, Session, LoopbackLocalOnly).Reason, "standalone sandbox.Open") {
+		t.Fatal("missing standalone distinction")
+	}
+}
+
 // Browser integration is native to Codex and Claude, with local setup required.
 func TestBrowserClaims(t *testing.T) {
 	for _, op := range []Operation{Session, Run} {

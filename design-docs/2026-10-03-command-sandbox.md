@@ -31,7 +31,13 @@ does not claim session-wide loopback support.
 
 ## Network differences
 
-macOS uses the existing Seatbelt localhost-only policy. When Loopback is set,
+macOS uses Seatbelt localhost filters, which permit binds and inbound on every
+local interface. A server bound to 0.0.0.0 or a LAN address may be reachable
+from other machines; outbound off-machine traffic stays refused.
+LoopbackLocalOnly requires Loopback and refuses on macOS before probing with
+loopback_local_only_unenforceable. Linux standalone Run proves it in a private
+namespace, adding host-interface TCP/UDP binds that must get EADDRNOTAVAIL.
+Existing plain Linux Loopback behavior and keys are unchanged. When Loopback is set,
 proof requires outbound access to the probe's listener, the command's own
 listener and an outside connection into a listener started by the command.
 The outside client must read the disposable listener's random nonce, so a

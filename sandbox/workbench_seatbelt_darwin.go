@@ -16,7 +16,7 @@ import (
 )
 
 // A versioned template is shared by commands and the disposable canary.
-const workbenchSeatbeltVersion = "seatbelt-workbench-v11"
+const workbenchSeatbeltVersion = "seatbelt-workbench-v12"
 
 func seatbeltProfile(l workbenchLayout) string {
 	var b strings.Builder
@@ -79,7 +79,7 @@ func seatbeltProfile(l workbenchLayout) string {
 		fmt.Fprintf(&b, "(deny %s (regex #\"%s\"))\n", op, temporary)
 	}
 	if l.Loopback {
-		b.WriteString("; Local development servers only, never Unix-domain or off-machine sockets.\n(allow network-bind (local ip \"localhost:*\"))\n(allow network-inbound (local ip \"localhost:*\"))\n(allow network-outbound (remote ip \"localhost:*\"))\n")
+		b.WriteString("; Binds and inbound on all local interfaces; outbound on-machine only, never Unix-domain sockets.\n(allow network-bind (local ip \"localhost:*\"))\n(allow network-inbound (local ip \"localhost:*\"))\n(allow network-outbound (remote ip \"localhost:*\"))\n")
 	}
 	return b.String()
 }

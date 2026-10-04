@@ -600,10 +600,13 @@ PATH report; its error still means the command's effects are uncertain. An
 error before launch returns a nil handle. The deprecated session wrapper preserves
 this contract too; check the handle even when Start fails.
 
-On macOS, opt-in Loopback permits binding and connections only to this
-machine's own addresses. The proof checks outbound, own-listener and inbound
-connections, and requires the off-machine witness connection to fail. A started server is reachable
-from the owner's browser. Without Loopback, localhost test suites that bind
+On macOS, opt-in Loopback allows binds and inbound connections on **every
+local interface**. A server bound to 0.0.0.0 or a LAN address may be reachable
+from other machines; outbound traffic off the machine stays refused. This
+applies both to standalone commands and Workbench run_command. The proof
+checks loopback, interface TCP binds, UDP binds and UDP sends, wildcard binds,
+and a host-side interface listener nonce; the off-machine witness must fail.
+A started server is reachable from the owner browser. Without Loopback, localhost test suites that bind
 and connect fail.
 
 On Linux, **a command always has its own private localhost and never the
@@ -735,8 +738,9 @@ workspace and explicit read set.
 
 IP and abstract-socket network access is denied by default. macOS also
 denies Unix sockets; Linux pathname sockets follow the directory rule above. `Commands.Loopback`
-allows localhost dev servers on macOS only, proved against a reachable off-machine
-witness and a local listener, as for Claude. `Commands.Env` sets
+allows on-machine outbound traffic on macOS, with binds and inbound on every
+local interface. Servers may be reachable from other machines. This is proved
+against loopback and interface listeners and a reachable off-machine witness. `Commands.Env` sets
 ordinary variables for every command, such as build caches, `GOFLAGS` or a
 `PORT`. HOME and TMPDIR always name private scratch. Normalization refuses
 `AGENT_HARNESS_*` (the library's own), dynamic-loader variables (`DYLD_*`,
@@ -1108,15 +1112,58 @@ reference digest.
 
 ### Loopback networking
 
+Callers requiring strict local-only networking set both `Loopback: true` and
+`LoopbackLocalOnly: true`. Without Loopback the stricter field is refused with
+`conflicting_options`; no request is silently widened.
+
+| Request | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| Standalone sandbox.Open Loopback | All-interface binds/inbound; outbound on-machine only, proved | Private per-command loopback, proved | Unsupported |
+| Standalone sandbox.Open LoopbackLocalOnly | Refused: `loopback_local_only_unenforceable` | Private namespace with only lo; host-interface binds must be EADDRNOTAVAIL | Unsupported |
+| Workbench.Commands.LoopbackLocalOnly | Same named Seatbelt refusal | Unsupported; standalone Open offers it | Unsupported |
+| Sandbox.LoopbackLocalOnly (native sessions) | Unsupported | Unsupported | Unsupported |
+
+The field is also available on the deprecated session.CommandSandboxOptions.
+`harness.LoopbackLocalOnly` (`"loopback_local_only"`) reports session
+support as Unsupported: Linux standalone command evidence does not imply
+shared-session networking. On macOS the refusal names Seatbelt: localhost
+filters permit binds on every local interface and cannot enforce local-only
+loopback. Refusal occurs before probes, state writes or credential preparation.
+macOS interface proof uses base-system /usr/bin/perl, not the Xcode python3 shim;
+no developer-tools installation is required by this client.
+A changed bind contract refuses proof with `loopback_interface_claim_changed`.
+Linux LocalOnly proof requires /usr/bin/python3 as well as OpenBSD nc;
+missing clients refuse only this stricter request. Existing plain Loopback
+Linux behavior and keys are unchanged.
+
+`sandbox.Proof.NetworkObservations()` returns structured address/operation/errno
+results, and `NetworkDetail()` records the exposure witnessed. No interface
+binds available on an offline host is reported as “no interface binds available”,
+never as proof of interface confinement. Errnos 49 (EADDRNOTAVAIL on macOS)
+and 65 (EHOSTUNREACH) are not authorization denials. macOS proofs now use
+seatbelt-workbench-v12; earlier unchecked evidence is never reused.
+
+The owner's Darwin 27 arm64 rule-form audit found that local
+ip/ip4/ip6/tcp/udp localhost:* filters permit interface binds; they narrow
+only family or protocol. UDP sends to the machine's own interface addresses
+succeeded under every form; wildcard sends returned errno 65. Literal hosts
+were refused with “host must be * or localhost in network address”. The
+[rule-form evidence table](design-docs/2026-10-04-loopback-networking.md)
+records address classes and the tested draft. That historical Python-client
+run does not verify the revised Perl client. Real tests print address classes
+without raw host addresses; loopback interfaces are excluded from escape tests.
+
+
 API workbench sessions use `Workbench.Commands.Loopback`; see the Workbench
 section for their separately proved macOS sandbox.
 
 `Sandbox.Loopback` lets a sandboxed Claude session start a local server and
-request it: its shell may bind and connect to this machine's own addresses and
-nothing else. Claude Code's `allowLocalBinding` admits the machine's interface
-addresses as well as loopback, so a server bound to one of those is reachable
-too; no other host is, and the domain allowlist stays empty. Anything the
-project needs at run time must therefore be local.
+request it. On macOS, Claude Code allowLocalBinding permits binds and inbound connections
+on every local interface: a server bound to 0.0.0.0 or a LAN address may be
+reachable from other machines. Outbound off-machine traffic stays refused,
+and the domain allowlist stays empty. Its interface-address canary extension
+is tracked separately in LAH-41; the current proof checks loopback and an
+off-machine witness. Anything the project needs at run time must therefore be local.
 
 The claim is proved before each launch, without inference. The session's own
 arguments drive Claude Code against a local provider that answers the first
@@ -1140,7 +1187,8 @@ for the four attributed owner experiments, binary identity, team sandbox
 limitations and the owner's decision: no further team experiment is needed
 for this refusal delivery. These macOS results do not prove Linux or Windows
 behavior or every possible configuration unsafe. Command-sandbox loopback
-semantics are unchanged; caller-selected port restrictions remain LAH-24.
+claims now disclose macOS all-interface binds; caller-selected port restrictions
+are tracked by LAH-40.
 
 A process the agent starts in the background, such as that server, is
 stopped when the session closes (see Process containment below).
@@ -1671,7 +1719,7 @@ CI pins Linux distribution coverage to Ubuntu 24.04, verifies bubblewrap 0.9.x,
 and retains the separate 0.8.0 job. Unix jobs run the real fixture under both
 parent strict modes and require actual verified child results; an outer skip
 does not count. They repeat the lease test twenty times under the race detector.
-The Ubuntu job also runs the complete sandboxcheck runner.
+The macOS and Ubuntu jobs also run the complete sandboxcheck runner.
 
 Owner-reported validation compares baseline 106c711 with drafts ad4b36b and
 b54ec5d: the baseline Linux sandboxcheck and strict suite failed; both drafts'

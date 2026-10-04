@@ -340,6 +340,12 @@ func reference(o Options, id string) Ref {
 			Loopback    bool `json:",omitempty"`
 		}{legacy, true, o.Sandbox.Write, o.Sandbox.Read, o.Sandbox.Web, sandboxToolServer(o.Sandbox), o.RuntimeHome, o.Sandbox.Loopback})
 	}
+	if o.Sandbox != nil && o.Sandbox.LoopbackLocalOnly {
+		payload, _ = json.Marshal(struct {
+			Base              json.RawMessage
+			LoopbackLocalOnly bool
+		}{payload, true})
+	}
 	if o.Browser {
 		// The browser widens what the agent can reach, so a resume must carry
 		// it too. Wrapped, so a session without one keeps its digest.

@@ -43,20 +43,12 @@ type Sandbox struct {
 	// names no domain, because a domain rule would also open the shell's
 	// network, and Codex searches through its provider.
 	Web bool
-	// Loopback lets the session's shell bind and connect to this machine's own
-	// addresses and nothing else, so it can start a dev server and request it.
-	// Claude Code's allowLocalBinding admits the machine's interface addresses
-	// as well as 127.0.0.0/8 and ::1, so a server bound to one of those is
-	// reachable too; no other host is. Everything the project needs at run
-	// time must then be local. It is proved before launch — a canary inside
-	// the sandbox must reach a loopback listener, bind one of its own, and be
-	// refused an off-machine address the probe reached itself — or the session
-	// is refused. Claude Code offers it; Codex 0.160.0 is refused: owner
-	// macOS experiments found closed networking also refused loopback, while
-	// enabled variants and a native session allowed off-machine TCP/UDP
-	// port 53. Other platforms have no native enforcement proof (see
-	// harness.Support).
+	// Loopback permits binds and inbound on every local interface on macOS.
+	// A server bound to 0.0.0.0 or a LAN address may be reachable from other
+	// machines. Outbound off-machine traffic stays refused, proved before launch.
 	Loopback bool
+	// LoopbackLocalOnly requires Loopback and refuses unproved local-only binds.
+	LoopbackLocalOnly bool
 	// Tools adds the caller's tools beside the session's own, served through
 	// the same bridge and tool channel a restricted session uses, with the same
 	// lease, launch record and reclamation. Its Dir must lie outside WorkDir.
@@ -98,6 +90,15 @@ func sandboxReadDirs(dirs []string) ([]string, string) { return sandboxbridge.Re
 // sandbox would otherwise have to silently override. o.Policy is the caller's,
 // before defaults are applied.
 func normalizeSandbox(o Options) (Options, error) {
+	if o.Sandbox.LoopbackLocalOnly {
+		if !o.Sandbox.Loopback {
+			return o, refuse(o, "loopback", RefusedConflict, "LoopbackLocalOnly requires Loopback")
+		}
+		c := harness.Support(o.Provider.Engine, harness.Session, harness.LoopbackLocalOnly)
+		if !c.Usable() {
+			return o, &UnsupportedError{Engine: o.Provider.Engine, Operation: "loopback", Code: RefusedLoopbackNotLocal, Capability: c}
+		}
+	}
 	frozen := *o.Sandbox
 	frozen.Read = append([]string(nil), o.Sandbox.Read...)
 	if o.Sandbox.Tools != nil {

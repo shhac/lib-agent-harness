@@ -16,8 +16,9 @@ sandbox-unavailable error; its capability reason also names the networking gap.
 
 Existing closed-network sessions, their filesystem restrictions, native tools,
 login reconciliation and browser confinement are unchanged. Command-sandbox
-loopback is unchanged: macOS host-local access and Linux per-command private
-loopback remain separate contracts. Selected ports belong to LAH-24;
+loopback availability is unchanged: macOS all-interface bind/inbound access and
+Linux per-command private loopback remain separate contracts (see LAH-39 below).
+Selected ports now belong to LAH-40 (re-landing reverted LAH-24);
 read allow-lists and access requests belong to LAH-21/LAH-22. LAH-18 and LAH-23
 are recorded as landed; no ordering decision or additional split is needed.
 
@@ -194,7 +195,7 @@ used as sufficient evidence for future loopback. Cancellation and incomplete
 observations must not publish success. Retain private-login, process-identity,
 recovery and browser safeguards.
 
-LAH-24 can use these address semantics and port-53 proof requirements, but must
+LAH-40 can use these address semantics and port-53 proof requirements, but must
 not assume native loopback is established. Strict native validation on macOS,
 both Linux bubblewrap versions and Windows remains separate from sandboxed
 test skips and cross-compilation.
@@ -238,3 +239,137 @@ ends further team experimentation. No platform is offered without native proof.
 No capability is enabled from configuration, source analysis, missing output or
 synthetic tests alone. Missing app-server evidence and other platform execution
 remain limits of the evidence, not an outstanding team research prerequisite.
+
+## LAH-39: macOS binds are not confined to loopback
+
+Owner Route A keeps Loopback available, with an honest contract: macOS binds
+and inbound connections are allowed on every local interface. A server bound
+to 0.0.0.0 or a LAN address may be reachable from other machines. Outbound
+traffic off the machine stays refused. This is not a breaking release.
+
+The owner ran landed LAH-24 revision `4b7e9d6` on Darwin 27 arm64 outside
+any sandbox with AGENT_HARNESS_TEST_NO_SKIP=1. Both
+TestSelectedPortRealSeatbelt and TestWorkbenchSelectedPortsRealProof failed
+selected_port_network with sandbox_not_enforced. localhost:<port> allowed
+the four loopback positive controls and denied unselected ports 57648 and
+8340, but allowed TCP and UDP binds on available non-loopback interfaces.
+Interface 0/1 UDP sends returned errno 65 (EHOSTUNREACH); interface 2/3
+binds returned errno 49 (EADDRNOTAVAIL). Interface 3/4 UDP sends succeeded,
+and interface 4/5 TCP and UDP binds succeeded. These are attributed owner
+observations, not a team rerun. EHOSTUNREACH is not a sandbox denial;
+EADDRNOTAVAIL is neither denial nor positive exposure evidence.
+
+No tested Seatbelt rule form confines binds to loopback, proved by the owner's
+Darwin 27 arm64 run of draft `6ffd2c6c0b2e0079320a6d0f5fd19887fa1ae01a`
+outside any sandbox (note 7). The localhost host selector is not a bind-address
+restriction. Literal 127.0.0.1 was refused with exit status 65 and
+`host must be * or localhost in network address`. The installed-runtime
+TestSeatbeltLoopbackRuleForms compiles local ip/ip4/ip6/tcp/udp localhost:*
+candidates separately, then prints TCP bind, UDP bind and UDP-send errnos
+for accepted forms. A syntax-refused candidate is never called confinement.
+An accepted form must positively allow an interface or wildcard bind; a change
+in that finding fails the test. The literal candidate must be profile-refused.
+
+Owner observations, by address class only (no host addresses):
+
+| Local selector, localhost:* | TCP bind | UDP bind | UDP send to own interface addresses |
+| --- | --- | --- | --- |
+| ip | All tested classes allowed | All tested classes allowed | Allowed |
+| ip4 | IPv4 allowed; IPv6 EPERM | IPv4 allowed; IPv6 EPERM | Allowed, both families |
+| ip6 | IPv6 allowed; IPv4 EPERM | IPv6 allowed; IPv4 EPERM | Allowed, both families |
+| tcp | All tested classes allowed | EPERM | Allowed |
+| udp | EPERM | All tested classes allowed | Allowed |
+
+Classes tested: IPv4 private/LAN and CGNAT/Tailscale; IPv6 global, ULA
+(including Tailscale), link-local and lo0 link-local; wildcard-v4 and
+wildcard-v6. Wildcard binds followed each form's family/protocol restrictions;
+wildcard UDP sends returned errno 65 under every form. Each form allowed TCP
+and/or UDP interface binds: ip4/ip6/tcp/udp narrow family or protocol, never
+confine binds to loopback. lo0 link-local is historical control evidence, not
+a non-loopback escape: current enumeration excludes net.FlagLoopback interfaces.
+
+The owner's strict race suite failed only the literal-host assertion's old
+wording match; sandboxcheck and the general interface proof passed. That run
+used the draft-1 Python client. The revised base-system Perl client, cache
+admission and witness selection still require an unsandboxed owner/CI run at
+the delivered revision; historical evidence does not verify those paths.
+Real-test output now reports address classes, never raw host addresses or scopes.
+
+Reference corpora, not enforcement evidence:
+[Chromium sandbox profiles](https://chromium.googlesource.com/chromium/src/+/main/sandbox/mac/),
+[WebKit sandbox profiles](https://github.com/WebKit/WebKit/tree/main/Source/WebKit/Resources/SandboxProfiles),
+and [sandbox-runtime issue 188](https://github.com/anthropics/sandbox-runtime/issues/188)
+for Claude allowLocalBinding (*:*). Runtime observations take precedence.
+
+| Rule user | Impact |
+| --- | --- |
+| Standalone commands, LAH-11 | Affected; truthful all-interface contract and interface canary |
+| Workbench run_command | Affected; same profile/proof, corrected Support and docs |
+| Native Codex loopback, LAH-19 | Not affected; already Unsupported, no enabled rule |
+| Claude Sandbox.Loopback | Wording affected: allowLocalBinding uses *:*; interface canary belongs to LAH-41 |
+| Selected ports, LAH-40 | No proved local-only Seatbelt form; retain named macOS refusal |
+
+### Strict requests and proof settlement
+
+LoopbackLocalOnly is a separate field on sandbox.Options,
+session.CommandSandboxOptions, session.Commands and session.Sandbox.
+It requires Loopback; missing Loopback gives conflicting_options.
+harness.LoopbackLocalOnly is Feature "loopback_local_only". macOS refuses
+with loopback_local_only_unenforceable during normalization, before probes,
+workspace/credential preparation or state writes. Native and workbench
+session support is Unsupported. Linux standalone sandbox.Open offers it
+only after proving a private network namespace with just lo, own-loopback
+bind/connect, host/off-machine isolation and host-interface TCP/UDP binds
+returning EADDRNOTAVAIL. Linux Start with Loopback remains refused.
+For scoped link-local addresses, the probe uses the same host address bits
+on the namespace's sole proved interface, lo: the host scope name is absent
+there, and a failed name lookup cannot count as bind evidence.
+Existing Linux requests, canaries and key payload bytes are unchanged.
+The stricter Linux proof additionally requires /usr/bin/python3.
+
+Shared implementation: loopback_interfaces.go enumerates non-loopback
+addresses (including scoped IPv6 link-local, excluding loopback interfaces), builds interfaceAttempt lists,
+and judges structured results. loopback_interfaces_unix.go hosts the
+errno-reporting base-system Perl client on macOS and Python client on Linux. interfaceLoopbackOnly rejects any non-denied,
+available attempt (including errno 65), for LAH-40 reuse;
+interfaceAllLocal records the allowed macOS exposure;
+interfacePrivateNamespace requires EADDRNOTAVAIL for Linux host binds.
+Only EPERM and EACCES count as authorization denials.
+
+LAH-40 handoff: no tested Seatbelt form confines binds to loopback on Darwin
+27; retain the named macOS selected-port refusal. Reuse
+`interfaceAttemptsAtPort`, `judgeInterfaceAttempts` with `interfaceLoopbackOnly`,
+and the Perl `interfaceCanary`. This record is the repository handoff; the
+available task-note API writes only LAH-39, so copying it into LAH-40's own
+notes remains an owner/team action after landing.
+
+The macOS general canary includes wildcard and interface TCP bind+listen,
+UDP bind and UDP-send attempts, plus the prior loopback/off-machine witnesses.
+A separate host client reads a nonce from an interface listener inside the
+sandbox. It proves reachability from an unsandboxed host peer, not from a
+second LAN machine. Unavailable host addresses are retried; failure of every candidate or a port collision refuses proof,
+without fallback. All available macOS bind attempts must be allowed: if
+Seatbelt becomes stricter, loopback_interface_claim_changed refuses proof and
+the stated claim must be reviewed rather than
+silently keeping stale evidence.
+
+Proof.NetworkObservations returns structural address/operation/errno data;
+NetworkDetail states exposure or no interface binds available. Address
+enumeration failure, missing clients and partial/garbled results refuse with
+sandbox_unavailable. An observed forbidden escape wins over incomplete output.
+An interrupted proof returns probe_timed_out, publishes no success and the
+next Open starts over. Addresses vanishing during a bind are recorded as
+not available. Offline hosts never claim interface confinement.
+
+seatbelt-workbench-v12 invalidates all v11 proofs. Public concurrent macOS
+proofs serialize only identical keys and reuse settled cache successes. Success
+and associated observations publish together under the cache mutex. Linux keys add a local-only revision only when
+requested. Resume power digests include LocalOnly only when true; old
+references stay byte-identical and adding/dropping strictness cannot silently
+widen a resumed session. Unit tests pin those properties and the profile hash.
+
+CI retains strict vet/race on macOS, Linux 0.8.0/0.9 and Windows, adds the real
+rule-form/interface checks to the suite and runs sandboxcheck on macOS and
+Linux. Team sandbox results and cross-compilation are not runtime Seatbelt,
+bubblewrap or Windows proof. The final delivery records their actual outcomes
+and requests the owner run at the exact recorded draft revision.

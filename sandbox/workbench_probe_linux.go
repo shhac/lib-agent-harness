@@ -21,9 +21,10 @@ import (
 )
 
 type workbenchLinuxProof struct {
-	Witness workbenchLinuxWitness
-	Output  string
-	key     string
+	Witness      workbenchLinuxWitness
+	Output       string
+	Observations []InterfaceObservation
+	key          string
 }
 
 func proveWorkbench(ctx context.Context, o Options) (Proof, error) {
@@ -73,7 +74,7 @@ func proveWorkbench(ctx context.Context, o Options) (Proof, error) {
 		return Proof{}, workbenchCapability(CapabilityProbeTimeout)
 	}
 	verified.record(proof.key)
-	return Proof{system: workbenchSystemDirs(), binary: binary, identity: identity, options: o}, nil
+	return Proof{system: workbenchSystemDirs(), binary: binary, identity: identity, options: o, networkObservations: proof.Observations, networkDetail: localOnlyDetail(o, proof.Observations)}, nil
 }
 
 func linuxShape(path string) string {
@@ -142,7 +143,11 @@ func workbenchLinuxProbeKey(o Options, binary, version string, w workbenchLinuxW
 	for _, p := range o.Read {
 		shapes = append(shapes, linuxShape(p))
 	}
-	payload, _ := json.Marshal([]any{"workbench-linux", workbenchBwrapVersion + ":" + workbenchPathVersion, binary, info.Size(), info.ModTime(), binaryHash, version, template, system, shapes, o.Write, o.Read, o.Env, o.Loopback, o.Background, w})
+	keyParts := []any{"workbench-linux", workbenchBwrapVersion + ":" + workbenchPathVersion, binary, info.Size(), info.ModTime(), binaryHash, version, template, system, shapes, o.Write, o.Read, o.Env, o.Loopback, o.Background, w}
+	if o.LoopbackLocalOnly {
+		keyParts = append(keyParts, "loopback-local-only-v1")
+	}
+	payload, _ := json.Marshal(keyParts)
 	hash := sha256.Sum256(payload)
 	return hex.EncodeToString(hash[:]), nil
 }
@@ -447,9 +452,35 @@ func probeWorkbenchLinux(ctx context.Context, o Options, binary, version string)
 	if o.Background {
 		script += "[ \"$(ps -o ni= -p $$ | tr -d ' ')\" = 10 ] && echo background\n"
 	}
+	var interfaceTests []interfaceAttempt
+	if o.LoopbackLocalOnly {
+		addresses, e := interfaceAddresses()
+		if e != nil {
+			return result, unavailable
+		}
+		// Check only host interface binds: wildcard binds inside the namespace are
+		// legitimate private loopback sockets, never a host listener.
+		interfaceTests = namespaceInterfaceAttempts(addresses)
+		if _, e := os.Stat("/usr/bin/python3"); e != nil {
+			return result, unavailable
+		}
+		script += interfaceCanary("/usr/bin/python3", interfaceTests)
+		script += "( " + linuxStructuralWitness(namespace, socket) + " ) && echo local-only-namespace\n"
+	}
 	script += "echo canary-ran\n"
 	result.Output, e = runLinuxProbe(ctx, binary, l, script, o.Background)
+	// Even partial client output can prove an escape. It cannot prove success.
+	if o.LoopbackLocalOnly {
+		_, judgeErr := judgeInterfaceAttempts(result.Output, interfaceTests, interfacePrivateNamespace)
+		if p, ok := judgeErr.(*ProofError); ok && p.Code == CapabilitySandboxNotEnforced {
+			return result, p
+		}
+	}
 	if e != nil {
+		lines, _ := workbenchCanaryLines(result.Output)
+		if o.LoopbackLocalOnly && workbenchCanaryEscaped(lines) {
+			return result, workbenchCapability(CapabilitySandboxNotEnforced)
+		}
 		return result, unavailable
 	}
 	data, e := os.ReadFile(git)
@@ -476,6 +507,16 @@ func probeWorkbenchLinux(ctx context.Context, o Options, binary, version string)
 	}
 	if e = judgeLinuxWorkbench(result.Output, l.Write, reached() != baseline, o.Background, l.Loopback); e != nil {
 		return result, e
+	}
+	if o.LoopbackLocalOnly {
+		lines, _ := workbenchCanaryLines(result.Output)
+		if !lines["local-only-namespace"] {
+			return result, unavailable
+		}
+		result.Observations, e = judgeInterfaceAttempts(result.Output, interfaceTests, interfacePrivateNamespace)
+		if e != nil {
+			return result, e
+		}
 	}
 	result.key = key
 	return result, nil

@@ -18,12 +18,18 @@ import (
 )
 
 func proveWorkbench(ctx context.Context, o Options) (Proof, error) {
-	return proveWorkbenchUsing(ctx, o, probeWorkbench)
+	var evidence networkEvidence
+	return proveWorkbenchWithEvidence(ctx, o, func(ctx context.Context, o Options, system []string) error {
+		return probeWorkbenchObserved(ctx, o, system, &evidence)
+	}, &evidence)
 }
 
 // The public path always supplies the real probe. Injection is internal to
 // synthetic tests of cleanup, cache publication and command admission.
 func proveWorkbenchUsing(ctx context.Context, o Options, probe func(context.Context, Options, []string) error) (Proof, error) {
+	return proveWorkbenchWithEvidence(ctx, o, probe, &networkEvidence{})
+}
+func proveWorkbenchWithEvidence(ctx context.Context, o Options, probe func(context.Context, Options, []string) error, evidence *networkEvidence) (Proof, error) {
 	if _, err := os.Stat("/usr/bin/sandbox-exec"); err != nil {
 		e := workbenchCapability(CapabilitySandboxToolMissing)
 		e.Tools = []string{"sandbox-exec"}
@@ -34,7 +40,7 @@ func proveWorkbenchUsing(ctx context.Context, o Options, probe func(context.Cont
 	system, err := workbenchSystem(ctx)
 	if err != nil {
 		if ctx.Err() != nil {
-			return Proof{}, workbenchCapability(CapabilityProbeTimeout)
+			return Proof{}, executionProofError(ctx, "", ctx.Err())
 		}
 		return Proof{}, workbenchCapability(CapabilitySandboxUnavailable)
 	}
@@ -50,8 +56,13 @@ func proveWorkbenchUsing(ctx context.Context, o Options, probe func(context.Cont
 	if ctx.Err() != nil {
 		return Proof{}, executionProofError(ctx, "", ctx.Err())
 	}
-	if verified.holds(key) {
-		return Proof{system: system, binary: "/usr/bin/sandbox-exec", identity: identity, options: o}, nil
+	release, err := verified.acquire(ctx, key)
+	if err != nil {
+		return Proof{}, executionProofError(ctx, "", err)
+	}
+	defer release()
+	if e, ok := verified.settledNetwork(key); ok {
+		return Proof{system: system, binary: "/usr/bin/sandbox-exec", identity: identity, options: o, key: key, networkObservations: e.Observations, networkDetail: e.Detail}, nil
 	}
 	if err = probe(ctx, o, system); err != nil {
 		if ctx.Err() != nil {
@@ -64,11 +75,14 @@ func proveWorkbenchUsing(ctx context.Context, o Options, probe func(context.Cont
 	if ctx.Err() != nil {
 		return Proof{}, executionProofError(ctx, "", ctx.Err())
 	}
-	verified.record(key)
-	return Proof{system: system, binary: "/usr/bin/sandbox-exec", identity: identity, options: o}, nil
+	verified.recordWithNetwork(key, *evidence)
+	return Proof{system: system, binary: "/usr/bin/sandbox-exec", identity: identity, options: o, key: key, networkObservations: evidence.Observations, networkDetail: evidence.Detail}, nil
 }
 
 func probeWorkbench(ctx context.Context, o Options, system []string) error {
+	return probeWorkbenchObserved(ctx, o, system, &networkEvidence{})
+}
+func probeWorkbenchObserved(ctx context.Context, o Options, system []string, evidence *networkEvidence) error {
 	workbenchCanaryRuns.Add(1)
 	unavailable := workbenchCapability(CapabilitySandboxUnavailable)
 	root, err := os.MkdirTemp("", "agent-harness-workbench-")
@@ -296,7 +310,22 @@ func probeWorkbench(ctx context.Context, o Options, system []string) error {
 	script += workbenchReadWitnesses(root, ownerHome)
 	script += "try keychain /bin/sh -c " + workbenchShellQuote(keychainCheck) + "\n"
 	inbound := workbenchInboundProbe{}
+	var attempts []interfaceAttempt
 	if l.Loopback {
+		addresses, e := interfaceAddresses()
+		if e != nil {
+			return unavailable
+		}
+		attempts = interfaceAttempts(addresses, true, true)
+		if _, e := os.Stat("/usr/bin/perl"); e != nil {
+			return &ProofError{Code: CapabilitySandboxToolMissing, Tools: []string{"/usr/bin/perl"}}
+		}
+		script += interfacePerlCanary(attempts)
+		evidence.Detail = "no interface addresses to test; wildcard binds tested"
+		if len(addresses) > 0 {
+			evidence.Detail = "binds on all local interfaces: observed allowed; host inbound witness reached"
+		}
+
 		bind, e := freeLoopbackPort()
 		if e != nil {
 			return unavailable
@@ -310,12 +339,35 @@ func probeWorkbench(ctx context.Context, o Options, system []string) error {
 		inbound.Nonce = process.NewToken()
 		script += fmt.Sprintf("printf '%s\\n' | nc -l 127.0.0.1 %d >/dev/null 2>&1 &\nsleep 3\nkill \"$!\" >/dev/null 2>&1; wait \"$!\" 2>/dev/null\n", inbound.Nonce, inbound.Port)
 	}
+	if l.Loopback && len(attempts) > 6 {
+		host, listener, e := listenInterfaceWitness(attempts, net.Listen)
+		if e != nil {
+			return unavailable
+		}
+		interfacePort := listener.Addr().(*net.TCPAddr).Port
+		if e = listener.Close(); e != nil {
+			return unavailable
+		}
+		witness := workbenchInboundProbe{Host: host, Port: interfacePort, Nonce: process.NewToken()}
+		witnessScript := fmt.Sprintf("printf %s | /usr/bin/nc -l %s %d >/dev/null 2>&1 &\nsleep 3\nkill \"$!\" >/dev/null 2>&1; wait \"$!\" 2>/dev/null\necho canary-ran\n", workbenchShellQuote(witness.Nonce+"\n"), workbenchShellQuote(host), interfacePort)
+		witnessOut, e := runWorkbenchProbe(ctx, l, witnessScript, false, witness)
+		if ctx.Err() != nil {
+			return executionProofError(ctx, "", ctx.Err())
+		}
+		if e != nil || !strings.HasPrefix(witnessOut, "inbound\n") {
+			return unavailable
+		}
+	}
 	script += "echo canary-ran\n"
 	output, err := runWorkbenchProbe(ctx, l, script, false, inbound)
 	if ctx.Err() != nil {
-		return workbenchCapability(CapabilityProbeTimeout)
+		return executionProofError(ctx, "", ctx.Err())
 	}
 	if err != nil {
+		lines, _ := workbenchCanaryLines(output)
+		if workbenchCanaryEscaped(lines, loopbackOutside) {
+			return workbenchCapability(CapabilitySandboxNotEnforced)
+		}
 		return unavailable
 	}
 	// Observations outside the sandbox take precedence over scripted reports.
@@ -336,10 +388,25 @@ func probeWorkbench(ctx context.Context, o Options, system []string) error {
 		return workbenchCapability(CapabilitySandboxNotEnforced)
 	default:
 	}
-	return judgeWorkbench(output, l.Write, l.Loopback, reached())
+	if err := judgeWorkbench(output, l.Write, l.Loopback, reached()); err != nil {
+		return err
+	}
+	if l.Loopback {
+		observations, err := judgeInterfaceAttempts(output, attempts, interfaceAllLocal)
+		if err != nil {
+			return err
+		}
+		if err := requireInterfaceExposure(observations); err != nil {
+			return err
+		}
+		evidence.Observations = observations
+		evidence.Detail = interfaceExposureDetail(observations, strings.Contains(evidence.Detail, "witness reached"))
+	}
+	return nil
 }
 
 type workbenchInboundProbe struct {
+	Host  string
 	Port  int
 	Nonce string
 }
@@ -390,7 +457,7 @@ func runWorkbenchProbe(ctx context.Context, l workbenchLayout, script string, ex
 			ticker := time.NewTicker(20 * time.Millisecond)
 			defer ticker.Stop()
 			for {
-				conn, e := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(inbound.Port)), 100*time.Millisecond)
+				conn, e := net.DialTimeout("tcp", net.JoinHostPort(inbound.host(), strconv.Itoa(inbound.Port)), 100*time.Millisecond)
 				if e == nil {
 					_ = conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
 					line, readErr := bufio.NewReader(io.LimitReader(conn, 64)).ReadString('\n')
@@ -481,6 +548,9 @@ func judgeWorkbench(output string, write, loopback, reached bool) error {
 	if !loopback && reached {
 		return workbenchCapability(CapabilitySandboxNotEnforced)
 	}
+	if loopback && lines[loopbackOutside] {
+		return workbenchCapability(CapabilitySandboxNotEnforced)
+	}
 	if last != canaryRan || !lines[canaryRan] || lines[canaryNoClient] || !lines["tmp"] || !lines["tmpdir"] || !lines["system"] || !lines["readset"] || (write && (!lines["inside"] || !lines["nested"])) {
 		return workbenchCapability(CapabilitySandboxUnavailable)
 	}
@@ -548,4 +618,11 @@ func workbenchNativeCanary(ctx context.Context, l workbenchLayout) (workbenchLay
 	q := workbenchShellQuote
 	s := "export LC_ALL=C\n/bin/sh -c 'echo native-positive'\n/bin/echo outside-native-started 2>" + q(filepath.Join(l.Tmp, "native-error")) + "\nstatus=$?\n[ \"$status\" = 126 ] && /usr/bin/grep -Eq 'Operation not permitted|Permission denied' " + q(filepath.Join(l.Tmp, "native-error")) + " && echo native-execution-refused\necho native-canary-ran\n"
 	return native, s, nil
+}
+
+func (p workbenchInboundProbe) host() string {
+	if p.Host != "" {
+		return p.Host
+	}
+	return "127.0.0.1"
 }

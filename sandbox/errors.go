@@ -18,6 +18,11 @@ var ErrClosed = errors.New("harness session closed")
 var ErrCommandFailed = errors.New("harness turn failed")
 
 const (
+	// CapabilityLoopbackClaimChanged: installed Seatbelt no longer matches the
+	// advertised all-interface bind exposure; re-audit before claiming support.
+	CapabilityLoopbackClaimChanged = "loopback_interface_claim_changed"
+	// RefusedLoopbackNotLocal: Seatbelt cannot confine binds to loopback.
+	RefusedLoopbackNotLocal = "loopback_local_only_unenforceable"
 	// RefusedWorkDir: the workspace directory could not be opened.
 	RefusedWorkDir = "work_dir_unavailable"
 	// RefusedWorkbenchMountCheck: workspace mount identity could not be checked.
@@ -48,7 +53,7 @@ func (e *RefusalError) Error() string { return e.Operation + ": " + e.Capability
 func (e *RefusalError) Unwrap() error { return ErrUnsupported }
 func (e *RefusalError) HarnessFacts() harness.Facts {
 	family := harness.FailurePreflight
-	if e.Code == RefusedNotOffered || e.Code == RefusedConflict {
+	if e.Code == RefusedNotOffered || e.Code == RefusedConflict || e.Code == RefusedLoopbackNotLocal {
 		family = harness.FailureCapability
 	}
 	return harness.Facts{Engine: harness.OpenAICompatible, Operation: harness.Session, Family: family, Code: e.Code}
@@ -84,10 +89,11 @@ func (e *ProofError) HarnessFacts() harness.Facts {
 }
 func (e *ProofError) Error() string {
 	message := map[string]string{
-		CapabilitySandboxToolMissing: "the required OS sandbox tool is missing; install a supported runtime",
-		CapabilityProbeTimeout:       "the capability check did not finish in time",
-		CapabilitySandboxUnavailable: "the installed harness could not be run under the requested sandbox",
-		CapabilitySandboxNotEnforced: "the installed harness's sandbox allowed writes or network access the session must not have",
+		CapabilityLoopbackClaimChanged: "Seatbelt interface bind observations no longer match the all-interface Loopback claim; re-audit the installed runtime",
+		CapabilitySandboxToolMissing:   "the required OS sandbox tool is missing; install a supported runtime",
+		CapabilityProbeTimeout:         "the capability check did not finish in time",
+		CapabilitySandboxUnavailable:   "the installed harness could not be run under the requested sandbox",
+		CapabilitySandboxNotEnforced:   "the installed harness's sandbox allowed writes or network access the session must not have",
 	}[e.Code]
 	// Keep the legacy no-step wording for existing compatibility translations;
 	// new execution proofs carry their specific step and expanded explanation.

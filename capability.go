@@ -88,10 +88,14 @@ const (
 	// ToolActivity: session tool events carry the tool's arguments and its
 	// result text, bounded, as the harness reported them.
 	ToolActivity Feature = "tool_activity"
-	// Loopback: a sandboxed session may bind and connect to this machine's own
-	// addresses only, proven before launch, while every other host stays
-	// closed.
+	// Loopback permits on-machine outbound networking, proved before launch.
+	// On macOS binds and inbound are allowed on every local interface: a server
+	// bound to 0.0.0.0 or a LAN address may be reachable from other machines.
 	Loopback Feature = "loopback"
+	// LoopbackLocalOnly requires binds, inbound and outbound confined to loopback.
+	// Standalone Linux sandbox.Open proves private namespace loopback; native
+	// and workbench sessions do not offer this stricter request.
+	LoopbackLocalOnly Feature = "loopback_local_only"
 	// Browser: the browser integration the harness itself ships, switched on
 	// for this invocation. Off unless asked for.
 	Browser Feature = "browser"
@@ -119,6 +123,21 @@ type supportKey struct {
 func Support(e Engine, op Operation, f Feature) Capability {
 	if e.Transport() == "" {
 		return Capability{Unsupported, "unrecognized engine"}
+	}
+	if f == LoopbackLocalOnly {
+		if e == Claude && op == Session {
+			if runtime.GOOS == "darwin" {
+				return Capability{Unsupported, LoopbackLocalOnlySeatbeltReason + "; Claude allowLocalBinding uses *:* and local-only binds are unproved"}
+			}
+			return Capability{Unsupported, "Claude allowLocalBinding permits binds on any interface; local-only binds are unproved on this platform"}
+		}
+		if runtime.GOOS == "darwin" && op == Session && e == OpenAICompatible {
+			return Capability{Unsupported, LoopbackLocalOnlySeatbeltReason}
+		}
+		if runtime.GOOS == "linux" && e == OpenAICompatible && op == Session {
+			return Capability{Unsupported, "workbench sessions have no shared private loopback; standalone sandbox.Open offers LoopbackLocalOnly after proving private-namespace loopback"}
+		}
+		return Capability{Unsupported, "local-only loopback is not proved for this engine, operation and platform"}
 	}
 	if f != Available {
 		if operation := Support(e, op, Available); !operation.Usable() {
@@ -328,7 +347,7 @@ var supportTable = map[supportKey]Capability{
 	{OpenAICompatible, Session, ProvidedSkills}:      {Composed, "the library indexes provided skills and answers its read-only skill tool; a permitted skill's scripts run as SkillRun says"},
 	{OpenAICompatible, Session, IncludeGlobalSkills}: {Unsupported, "an API endpoint has no installed skills; only Default or Exclude is accepted"},
 	{OpenAICompatible, Session, Sandbox}:             {Unknown, "Workbench.Commands proves its pinned Seatbelt profile before launch or refuses the session"},
-	{OpenAICompatible, Session, Loopback}:            {Unknown, "Workbench.Commands.Loopback requires a positive localhost and negative off-machine canary before launch"},
+	{OpenAICompatible, Session, Loopback}:            {Unknown, "Workbench.Commands.Loopback on macOS allows binds and inbound connections on every local interface; a server bound to 0.0.0.0 or a LAN address may be reachable from other machines; outbound off-machine traffic stays refused, proved before launch"},
 	{OpenAICompatible, Session, Background}:          {Composed, "Workbench.Commands runs each contained process group at nice 10"},
 	{OpenAICompatible, Session, Compact}:             {Unsupported, "the library does not compact a composed session's history"},
 	{OpenAICompatible, Session, CacheSplit}:          cacheVaries,
@@ -336,7 +355,7 @@ var supportTable = map[supportKey]Capability{
 	{OpenAICompatible, Session, ToolActivity}:        {Composed, "the library reports the model's call arguments and the handler's result as it ran them"},
 	{OpenAICompatible, Account, Available}:           {Unsupported, "API endpoints expose no account inspection"},
 
-	{Claude, Session, Loopback}:         {Unknown, "Claude Code's sandbox allowLocalBinding, which admits this machine's own addresses; proved before each launch by a canary that must reach and bind loopback and be refused an off-machine address"},
+	{Claude, Session, Loopback}:         {Unknown, "Claude Code's sandbox allowLocalBinding, which on macOS allows binds and inbound connections on every local interface; a server bound to 0.0.0.0 or a LAN address may be reachable from other machines; outbound off-machine traffic stays refused; proved before each launch by a canary that must reach and bind loopback and be refused an off-machine address"},
 	{Codex, Session, Loopback}:          {Unsupported, "codex-cli 0.160.0 native loopback is unproved: owner-observed macOS tests found closed network refused loopback, while enabled network with localhost domain rules, including a proxy variant and a native session, allowed off-machine TCP 443 and TCP/UDP port 53; other platforms have no native enforcement proof; use a closed-network sandbox or a separately proved command sandbox"},
 	{Grok, Session, Loopback}:           {Unsupported, "Grok sessions have no proven OS sandbox"},
 	{Codex, Run, Loopback}:              {Unsupported, "a native run has no library-proven sandbox to scope networking in"},
@@ -400,3 +419,6 @@ var supportTable = map[supportKey]Capability{
 	{Grok, Account, Quota}:       {Unsupported, "Grok exposes no quota windows"},
 	{Grok, Account, Credits}:     {Unsupported, "Grok exposes no credit balance"},
 }
+
+// LoopbackLocalOnlySeatbeltReason names the macOS local-bind limitation.
+const LoopbackLocalOnlySeatbeltReason = "loopback_local_only_unenforceable: Seatbelt network filters accept only * or localhost hosts, and localhost admits binds and inbound connections on every local interface (owner-run evidence); local-only loopback cannot be enforced on macOS"

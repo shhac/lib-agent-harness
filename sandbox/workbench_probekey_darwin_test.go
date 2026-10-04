@@ -60,6 +60,10 @@ func TestWorkbenchProofKeyLegacyPayload(t *testing.T) {
 	if err != nil || got == v10 {
 		t.Fatalf("draft-5 proof reused: %v", err)
 	}
+	v11, err := legacyworkbenchProbeKey(o, []string{"/System", "/usr"}, "seatbelt-workbench-v11:readable-path-v2:965de8a96277296731642e137ae818d5de2b28c970467bb52e2fe7784d0fe23b")
+	if err != nil || got == v11 {
+		t.Fatalf("pre-interface proof reused: %v", err)
+	}
 	again, err := workbenchProbeKey(o, []string{"/System", "/usr"})
 	if err != nil || got != again {
 		t.Fatalf("unstable proof: %s %s %v", got, again, err)
@@ -76,7 +80,7 @@ func TestWorkbenchSeatbeltTemplatePinned(t *testing.T) {
 		t.Fatal("proof system list changed")
 	}
 	hash := sha256.Sum256([]byte(seatbeltProfile(workbenchLayout{Work: "/workspace", Home: "/home", Tmp: "/tmp", Read: []string{"/read"}, System: system, Write: true, Loopback: true})))
-	if hex.EncodeToString(hash[:]) != "965de8a96277296731642e137ae818d5de2b28c970467bb52e2fe7784d0fe23b" {
+	if workbenchSeatbeltVersion != "seatbelt-workbench-v12" || hex.EncodeToString(hash[:]) != "dd80990aaea90a6739c896e39e9a115d65a26c63c6db1c515bf247eccd0068d2" {
 		t.Fatalf("profile template changed: %x", hash)
 	}
 }

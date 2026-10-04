@@ -24,7 +24,7 @@ func TestSandboxErrorTranslation(t *testing.T) {
 	} {
 		pairs = append(pairs, [2]error{&sandbox.RefusalError{Operation: tc.operation, Code: tc.code, Capability: harness.Capability{Availability: harness.Unsupported, Reason: tc.reason}}, refuse(o, tc.operation, tc.code, tc.reason)})
 	}
-	for _, code := range []string{sandbox.CapabilitySandboxToolMissing, sandbox.CapabilitySandboxToolOutdated, sandbox.CapabilitySandboxNamespacesUnavailable, sandbox.CapabilitySandboxUnavailable, sandbox.CapabilitySandboxNotEnforced, sandbox.CapabilityProbeTimeout} {
+	for _, code := range []string{sandbox.CapabilityLoopbackClaimChanged, sandbox.CapabilitySandboxToolMissing, sandbox.CapabilitySandboxToolOutdated, sandbox.CapabilitySandboxNamespacesUnavailable, sandbox.CapabilitySandboxUnavailable, sandbox.CapabilitySandboxNotEnforced, sandbox.CapabilityProbeTimeout} {
 		for _, tools := range [][]string{nil, {"bwrap"}} {
 			pairs = append(pairs, [2]error{&sandbox.ProofError{Code: code, Tools: tools}, &CapabilityError{Engine: harness.OpenAICompatible, Code: code, Phase: BeforeLaunch, Tools: tools}})
 		}

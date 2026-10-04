@@ -20,7 +20,7 @@ var newWorkbenchRunner = sandbox.NewRunner
 
 func commandOptions(o Options) sandbox.Options {
 	c := o.Workbench.Commands
-	return sandbox.Options{WorkDir: o.WorkDir, RuntimeHome: o.RuntimeHome, Write: o.Workbench.Write, Read: c.Read, Env: c.Env, Loopback: c.Loopback, Timeout: c.Timeout, Background: o.Background}
+	return sandbox.Options{WorkDir: o.WorkDir, RuntimeHome: o.RuntimeHome, Write: o.Workbench.Write, Read: c.Read, Env: c.Env, Loopback: c.Loopback, LoopbackLocalOnly: c.LoopbackLocalOnly, Timeout: c.Timeout, Background: o.Background}
 }
 func normalizeWorkbenchCommands(o Options) (Options, error) {
 	if o.Workbench.Commands == nil {
@@ -32,7 +32,7 @@ func normalizeWorkbenchCommands(o Options) (Options, error) {
 	}
 	n := v.(sandbox.Options)
 	o.WorkDir, o.RuntimeHome = n.WorkDir, n.RuntimeHome
-	o.Workbench.Commands = &Commands{Read: n.Read, Env: n.Env, Loopback: n.Loopback, Timeout: n.Timeout}
+	o.Workbench.Commands = &Commands{Read: n.Read, Env: n.Env, Loopback: n.Loopback, LoopbackLocalOnly: n.LoopbackLocalOnly, Timeout: n.Timeout}
 	return o, nil
 }
 func proveWorkbench(ctx context.Context, o Options) error {

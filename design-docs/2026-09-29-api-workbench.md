@@ -1262,8 +1262,10 @@ allow in a comment:
   hard link in a comment.
 - **Network:** with `Loopback` off, all `network*` operations are denied. That
   also covers `AF_UNIX` connects, so the ssh and gpg agents cannot be reached.
-  With `Loopback` on, only binding, inbound and outbound connections for
-  `localhost` IP addresses are allowed.
+  With `Loopback` on, Seatbelt permits binds and inbound on every local
+  interface; a server bound to 0.0.0.0 or a LAN address may be reachable from
+  other machines. Outbound off-machine traffic stays refused. Local-only
+  requests are separately refused with loopback_local_only_unenforceable.
 - **Mach services:** only the lookups that ordinary command-line tools need,
   such as name resolution. They are enumerated, and `com.apple.SecurityServer`
   and the other keychain services are never among them.
@@ -1499,7 +1501,7 @@ directory. It reuses the existing outcome vocabulary and adds a few outcomes:
 | `nested` (write a file in the workspace, nested at the session's covering location and depth, when `Write`) | allowed, and the probe sees it on the real disk afterwards |
 | `socket` (connect to a Unix socket the probe listens on in a hidden directory) | refused |
 | `network` (reach `offMachineWitness`) | refused; the listener the probe owns must count no connection |
-| macOS loopback (`loopbackCanary`, only with `Loopback`) | reaches the probe's loopback listener, binds its own, and serves a nonce to the outside probe (`inbound`) |
+| macOS loopback (`loopbackCanary`, only with `Loopback`) | reaches the probe loopback listener, binds its own, serves host-side loopback/interface nonces, and records interface TCP/UDP binds and UDP sends |
 | Linux standalone Run with `Loopback`: `own-loopback` | binds and connects to its own private localhost; the host's listener stays unreachable |
 | `canary-ran` | printed last; without it the check failed |
 | macOS: keychain (`security show-keychain-info` for a path positively queried outside) | refused |
@@ -1544,8 +1546,9 @@ other than the keychain. LAH-3 picks the witness and records it.
 The standalone command API is described in [Command sandbox](2026-10-03-command-sandbox.md). It adds a macOS inbound proof and accepts Linux Run with a proved private localhost, while refusing Linux Start with Loopback. A Linux command always has its own private localhost and never the host's, even without Loopback. Workbench session support remains as below.
 
 
-- **macOS:** the profile allows `localhost` only, and the canary proves it as
-  Claude's does: the command reaches the probe's listener, binds its own, and
+- **macOS:** localhost filters allow binds and inbound on every local interface,
+  while outbound stays on-machine. The command canary checks interface TCP/UDP
+  binds, UDP sends and a host-side interface nonce as well as loopback: the command reaches the probe's listener, binds its own, and
   is refused the off-machine witness. Servers outlive a command, so a server
   started by one command can be reached by the next. `Support` is `unknown`,
   proved before each launch.

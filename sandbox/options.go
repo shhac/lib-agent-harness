@@ -19,10 +19,13 @@ type Options struct {
 	WorkDir, RuntimeHome string
 	Write                bool
 	Read, Env            []string
-	Loopback             bool
-	Timeout              time.Duration
-	Background           bool
-	system               []string
+	// Loopback permits all-interface binds on macOS; outbound stays on-machine.
+	Loopback bool
+	// LoopbackLocalOnly requires Loopback and proves private loopback networking.
+	LoopbackLocalOnly bool
+	Timeout           time.Duration
+	Background        bool
+	system            []string
 }
 
 func platformRefusal() error {
@@ -30,6 +33,17 @@ func platformRefusal() error {
 }
 
 func normalize(o Options, standalone bool) (Options, error) {
+	if o.LoopbackLocalOnly {
+		if !o.Loopback {
+			return o, refusal("loopback", RefusedConflict, "LoopbackLocalOnly requires Loopback")
+		}
+		if runtime.GOOS == "darwin" {
+			return o, refusal("loopback", RefusedLoopbackNotLocal, harness.LoopbackLocalOnlySeatbeltReason)
+		}
+		if !standalone {
+			return o, refusal("loopback", RefusedNotOffered, harness.Support(harness.OpenAICompatible, harness.Session, harness.LoopbackLocalOnly).Reason)
+		}
+	}
 	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
 		return o, platformRefusal()
 	}

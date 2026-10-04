@@ -38,10 +38,13 @@ type Workbench struct {
 
 // Commands configures sandboxed shell execution.
 type Commands struct {
+	// Loopback on macOS permits binds and inbound on every local interface.
 	Loopback bool
-	Read     []string
-	Env      []string
-	Timeout  time.Duration
+	// LoopbackLocalOnly requires Loopback; unsupported for workbench sessions.
+	LoopbackLocalOnly bool
+	Read              []string
+	Env               []string
+	Timeout           time.Duration
 }
 
 // The workbench's tool names. All six are reserved whenever a workbench is
@@ -155,8 +158,15 @@ func workbenchDigest(o Options) any {
 		base.Loopback = c.Loopback
 		base.Read = c.Read
 	}
+	var powers any = base
+	if c := o.Workbench.Commands; c != nil && c.LoopbackLocalOnly {
+		powers = struct {
+			Base              any
+			LoopbackLocalOnly bool
+		}{base, true}
+	}
 	if !o.Workbench.Write {
-		return base
+		return powers
 	}
 	mode := o.Workbench.NewFileMode
 	if mode == 0 {
@@ -165,7 +175,7 @@ func workbenchDigest(o Options) any {
 	return struct {
 		Base        any
 		NewFileMode uint32
-	}{base, uint32(mode.Perm())}
+	}{powers, uint32(mode.Perm())}
 }
 
 // workbenchDefinitions are the workbench tools the options switch on. Both
