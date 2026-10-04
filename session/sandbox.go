@@ -53,8 +53,11 @@ type Sandbox struct {
 	// time must then be local. It is proved before launch — a canary inside
 	// the sandbox must reach a loopback listener, bind one of its own, and be
 	// refused an off-machine address the probe reached itself — or the session
-	// is refused. Claude Code offers it; Codex is refused, because its sandbox
-	// network is all or nothing (see harness.Support).
+	// is refused. Claude Code offers it; Codex 0.160.0 is refused: owner
+	// macOS experiments found closed networking also refused loopback, while
+	// enabled variants and a native session allowed off-machine TCP/UDP
+	// port 53. Other platforms have no native enforcement proof (see
+	// harness.Support).
 	Loopback bool
 	// Tools adds the caller's tools beside the session's own, served through
 	// the same bridge and tool channel a restricted session uses, with the same

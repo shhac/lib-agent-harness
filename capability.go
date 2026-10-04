@@ -155,6 +155,9 @@ func platform(e Engine, op Operation, f Feature, c Capability) Capability {
 		return Capability{Unsupported, "workspace mount checks are unavailable on this platform"}
 	}
 	if runtime.GOOS == "windows" && op == Session && e.Transport() == CLITransport && (f == RestrictTools || f == Sandbox || f == Tools || f == Loopback) {
+		if e == Codex && f == Loopback {
+			return Capability{Unsupported, "restricted and sandboxed hosting are unavailable on Windows; " + c.Reason}
+		}
 		return Capability{Unsupported, "restricted and sandboxed hosting are unavailable on Windows"}
 	}
 	if runtime.GOOS == "windows" && f == Background {
@@ -328,7 +331,7 @@ var supportTable = map[supportKey]Capability{
 	{OpenAICompatible, Account, Available}:           {Unsupported, "API endpoints expose no account inspection"},
 
 	{Claude, Session, Loopback}:         {Unknown, "Claude Code's sandbox allowLocalBinding, which admits this machine's own addresses; proved before each launch by a canary that must reach and bind loopback and be refused an off-machine address"},
-	{Codex, Session, Loopback}:          {Unsupported, "codex-cli 0.156.1's sandbox network is all or nothing: allow_local_binding has no effect while the network is off, and turning it on opens every address"},
+	{Codex, Session, Loopback}:          {Unsupported, "codex-cli 0.160.0 native loopback is unproved: owner-observed macOS tests found closed network refused loopback, while enabled network with localhost domain rules, including a proxy variant and a native session, allowed off-machine TCP 443 and TCP/UDP port 53; other platforms have no native enforcement proof; use a closed-network sandbox or a separately proved command sandbox"},
 	{Grok, Session, Loopback}:           {Unsupported, "Grok sessions have no proven OS sandbox"},
 	{Codex, Run, Loopback}:              {Unsupported, "a native run has no library-proven sandbox to scope networking in"},
 	{Claude, Run, Loopback}:             {Unsupported, "a native run has no library-proven sandbox to scope networking in"},

@@ -989,8 +989,23 @@ turn with one scripted shell call, the canary, and reads its result back. The
 canary must reach the probe's loopback listener, bind and reach one of its
 own, and be refused `api.anthropic.com` on 443, which the probe has just
 reached itself; if that address cannot be reached from outside the sandbox,
-nothing is proved and the session is refused. Codex is refused: its sandbox
-network is all or nothing.
+nothing is proved and the session is refused.
+
+Codex 0.160.0 remains explicitly unsupported for `Sandbox.Loopback` on every
+platform. Owner experiments on macOS with the installed 0.160.0 binary found
+that the closed-network profile refused loopback too. Enabled-network variants
+with localhost destination rules, including a proxy variant and a real native
+session, permitted off-machine TCP 443 and TCP/UDP port 53. No tested variant
+provided loopback-only enforcement; Linux and Windows have no native enforcement
+proof. Start, Resume and VerifySandbox refuse before preparing a credentialed
+runtime. Use the existing closed-network session sandbox or the separately
+proved command sandbox.
+See the [research record](design-docs/2026-10-04-loopback-networking.md)
+for the four attributed owner experiments, binary identity, team sandbox
+limitations and the owner's decision: no further team experiment is needed
+for this refusal delivery. These macOS results do not prove Linux or Windows
+behavior or every possible configuration unsafe. Command-sandbox loopback
+semantics are unchanged; caller-selected port restrictions remain LAH-24.
 
 A process the agent starts in the background, such as that server, is
 stopped when the session closes (see Process containment below).

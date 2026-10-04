@@ -258,8 +258,22 @@ func TestProvidedSkillsAreOfferedWhereverThereIsAnAgent(t *testing.T) {
 }
 
 // Loopback networking is offered only where a proof exists: a sandboxed
-// Claude session. Codex's sandbox network is all or nothing.
+// Claude session. Owner macOS tests rejected Codex's closed and enabled
+// network variants; no native loopback enforcement is proved elsewhere.
 func TestLoopbackClaims(t *testing.T) {
+	codex := Support(Codex, Session, Loopback)
+	if codex.Availability != Unsupported {
+		t.Fatalf("unproved Codex loopback: %+v", codex)
+	}
+	for _, detail := range []string{
+		"0.160.0", "unproved", "owner-observed macOS", "closed network refused loopback",
+		"localhost domain rules", "proxy variant", "native session", "off-machine TCP 443",
+		"TCP/UDP port 53", "other platforms have no native enforcement proof",
+	} {
+		if !strings.Contains(codex.Reason, detail) {
+			t.Errorf("Codex refusal omits %q: %s", detail, codex.Reason)
+		}
+	}
 	claude := Support(Claude, Session, Loopback)
 	if (runtime.GOOS == "windows") == (claude.Availability == Unknown) || claude.Reason == "" {
 		t.Fatalf("Claude session loopback on %s: %+v", runtime.GOOS, claude)

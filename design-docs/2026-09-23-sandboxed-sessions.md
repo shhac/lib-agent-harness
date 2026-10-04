@@ -3,6 +3,13 @@
 Dated 2026-09-23. Pinned against codex-cli 0.154.0 and Claude Code 2.1.280 on
 macOS (Darwin 25.6).
 
+Codex 0.160.0 native loopback remains refused: owner macOS experiments found
+closed networking refused loopback, while enabled variants and a real native
+session permitted off-machine TCP 443 and TCP/UDP port 53. See the
+[2026-10-04 research record](2026-10-04-loopback-networking.md) for the four
+attributed experiments, binary identity and unavailable platform validation.
+This does not change the closed-network profile documented here.
+
 ## Why
 
 A caller (crew-assistant) needed ordinary native coding sessions with their own
