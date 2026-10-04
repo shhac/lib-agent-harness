@@ -254,7 +254,7 @@ func checkCatalogModel(o Options) error {
 }
 
 func policySet(p Policy) bool {
-	return p.CodexSandbox != "" || p.CodexApproval != "" || p.ClaudePermission != "" || p.ClaudeTools != nil || p.GrokPermission != "" || p.GrokTelemetry != ""
+	return p.CodexSandbox != "" || p.CodexApproval != "" || p.ClaudePermission != "" || p.ClaudeTools != nil || p.GrokPermission != "" || p.GrokTelemetry != "" || p.CommandCodePermission != ""
 }
 
 func checkInstructions(o Options) error {

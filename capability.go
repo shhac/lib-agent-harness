@@ -166,6 +166,9 @@ func platform(e Engine, op Operation, f Feature, c Capability) Capability {
 	if runtime.GOOS == "windows" && f == Background {
 		return Capability{Unsupported, "background priority is not implemented on Windows"}
 	}
+	if runtime.GOOS == "windows" && e == CommandCode && op == Session {
+		return Capability{Unsupported, "Command Code sessions are not verified on Windows, where cmd names the system command interpreter"}
+	}
 	if runtime.GOOS == "windows" && e == Grok && op == Complete {
 		return Capability{Unsupported, "Grok's restricted runtime home is unavailable on Windows"}
 	}
@@ -356,6 +359,33 @@ var supportTable = map[supportKey]Capability{
 	{Claude, Session, SandboxedBrowser}: {Native, "a sandboxed Claude session admits the browser's tools beside its own, except those that would read local files or start another agent; the browser itself runs outside the sandbox"},
 	{Codex, Session, SandboxedBrowser}:  {Native, "the ChatGPT app node_repl bridge runs JavaScript confined by the session sandbox, proven before launch; drives the owner's real Chrome with its logins; Chrome backend only, no computer use"},
 	{Grok, Run, Browser}:                {Unsupported, "Grok 1.0.41 ships no browser integration"},
+
+	// Command Code is offered only as a session over its agent protocol,
+	// `cmd acp`, checked against Command Code 1.74.1.
+	{CommandCode, Complete, Available}:          {Unsupported, "no tool-free Command Code mode has been proven; use Session"},
+	{CommandCode, Run, Available}:               {Unsupported, "Command Code is offered only as a session"},
+	{CommandCode, Models, Available}:            {Unsupported, "Command Code lists its models only inside a session's configuration"},
+	{CommandCode, Account, Available}:           {Unsupported, "Command Code's agent protocol exposes no account inspection"},
+	{CommandCode, Session, Available}:           unverified,
+	{CommandCode, Session, Resume}:              {Unknown, "session/resume, once session/list shows Command Code holds the conversation for WorkDir: it resumes an unknown id as an empty conversation"},
+	{CommandCode, Session, Interrupt}:           unverified,
+	{CommandCode, Session, Steer}:               {Composed, "Command Code steering cancels the running prompt and sends another"},
+	{CommandCode, Session, Effort}:              {Native, "set through session/set_config_option and checked against the configuration the session reports before the first turn"},
+	{CommandCode, Session, CacheSplit}:          native,
+	{CommandCode, Session, ContextWindow}:       {Unknown, "Command Code's own used and size figures from the usage_update each prompt ends with"},
+	{CommandCode, Session, ToolActivity}:        {Native, "the agent protocol's rawInput, and rawOutput or content on a tool call's final update"},
+	{CommandCode, Session, ToolImages}:          {Unknown, "image content blocks in an ACP tool call update, as the protocol declares them; not seen from a real tool"},
+	{CommandCode, Session, Background}:          background,
+	{CommandCode, Session, IncludeGlobalSkills}: {Native, "Command Code loads its installed skills itself"},
+	{CommandCode, Session, ProvidedSkills}:      {Unsupported, "cmd acp takes no skill paths and Command Code sessions have no instructions to carry a skill index"},
+	{CommandCode, Session, AppendInstructions}:  {Unsupported, "cmd acp's session/new takes no instructions"},
+	{CommandCode, Session, ReplaceInstructions}: {Unsupported, "cmd acp's session/new takes no instructions"},
+	{CommandCode, Session, Compact}:             {Unsupported, "Command Code exposes no verified manual compaction control; its /compact command is not used"},
+	{CommandCode, Session, RestrictTools}:       {Unsupported, "Command Code sessions have no proven removal of native tools"},
+	{CommandCode, Session, Sandbox}:             {Unsupported, "Command Code sessions have no proven OS sandbox"},
+	{CommandCode, Session, Loopback}:            {Unsupported, "Command Code sessions have no proven OS sandbox"},
+	{CommandCode, Session, Tools}:               {Unsupported, "Command Code sessions do not host caller tools"},
+	{CommandCode, Session, Browser}:             {Unsupported, "the library switches on no Command Code browser integration"},
 
 	{Codex, Account, Available}:  unverified,
 	{Codex, Account, Login}:      unverified,

@@ -110,6 +110,9 @@ func commandArgs(o Options, nativeID string, resuming bool, l *launch) []string 
 	if o.Provider.Engine == harness.Grok {
 		return grokArgs(o)
 	}
+	if o.Provider.Engine == harness.CommandCode {
+		return commandCodeArgs()
+	}
 	args := []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--permission-mode", o.Policy.ClaudePermission}
 	if l != nil {
 		args = append(args, l.extra...)

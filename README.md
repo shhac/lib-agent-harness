@@ -1,8 +1,8 @@
 # lib-agent-harness
 
 One Go interface for running AI agents and models through any supported
-harness: the Codex, Claude and Grok CLIs with their own logins, or any
-OpenAI-compatible HTTP endpoint or gateway. An application written against it
+harness: the Codex, Claude, Grok and Command Code CLIs with their own logins,
+or any OpenAI-compatible HTTP endpoint or gateway. An application written against it
 can let its users choose the AI service behind each kind of invocation.
 Choosing a service changes configuration, not code.
 
@@ -23,8 +23,9 @@ deployed CLI versions, and handle unsupported capabilities at runtime.
 
 The root package `harness` defines what every execution mode shares:
 
-- `Engine`: `harness.Codex`, `harness.Claude`, `harness.Grok` or
-  `harness.OpenAICompatible`. Its spelling is stable and safe to persist.
+- `Engine`: `harness.Codex`, `harness.Claude`, `harness.Grok`,
+  `harness.CommandCode` (sessions only) or `harness.OpenAICompatible`. Its
+  spelling is stable and safe to persist.
 - `Provider`: where inference comes from. A CLI engine reads `Provider.CLI`
   (binary and login home); an API engine reads `Provider.API` (base URL,
   dialect, credential source). Setting the other half is refused.
@@ -270,6 +271,37 @@ is a read-only mode. A model or effort Grok would substitute is refused before
 the first prompt. Steering is composed (cancel, then prompt). Restricted,
 sandboxed and compacted Grok sessions, and Grok quota, are unsupported.
 
+Command Code sessions run `cmd acp` over the Agent Client Protocol and reuse
+the login that `cmd login` stored. Command Code keeps it in `~/.commandcode`,
+which nothing relocates, so `Provider.CLI.Home` may only be empty or name that
+directory.
+`harness.CommandCode` is offered only as a session. Every session is put in
+Command Code's Standard permission mode, which asks before each tool that
+changes anything, and `Policy.CommandCodePermission` answers those requests:
+`session.CommandCodeDenyWhenAsked` (the default) rejects each one and
+`session.CommandCodeAllowWhenAsked` approves each one once. Deny-when-asked is
+not read-only: reads run without asking, and Command Code permission rules in
+the operator's configuration or a project's checked-in configuration can allow
+tools without asking. A tool that would switch mode is rejected under either
+policy, and a session that reports leaving Standard mode is stopped with
+`CapabilityChangedPermissionMode` (phase `DuringSession`). Questions Command
+Code asks the user through the same request are answered cancelled, never
+guessed. `CMD_ZDR` (zero data retention enforcement, failing requests rather
+than falling back to non-ZDR providers) and `CMD_LOCAL_ONLY` (no contact with
+Command Code's backend) are preserved when inherited and accepted as caller
+environment additions. Other `CMD_*`, `COMMANDCODE_*` and `COMMAND_CODE_*`
+variables are not passed on, and adding them is refused. The model and effort
+are set with `session/set_config_option` and checked against the configuration
+the session reports; a value it refuses or does not apply is refused before the
+first prompt. Command Code resumes an id it does not have as a new, empty
+conversation, so a resume checks before and after `session/resume` that
+`session/list` holds the conversation for `WorkDir`, and `Open` starts fresh
+when it does not. Steering is composed. `cmd acp` takes no instructions or skill
+paths, so `Instructions`, provided skills and `GlobalSkillsExclude` are refused, as are
+restricted, sandboxed, browser and compacted sessions, account and quota reads,
+and Windows, where `cmd` names the system command interpreter. A turn reports
+its own usage, and the context is Command Code's own figure.
+
 Consume turn events while the turn runs. `Wait` does not drain the stream;
 backpressure fails explicitly instead of silently dropping tool activity.
 Cancellation of a wait only stops waiting. Interruption and session closure are
@@ -279,7 +311,9 @@ separate operations. Tool events say what an agent did (`harness.ToolActivity`):
 whether it failed and `ExitCode` where a command reports one. Codex reports
 command, cwd, output and exit code, file changes, MCP and dynamic tool
 arguments and results, and web search queries; Claude its `tool_use` input and
-`tool_result` content; Grok `rawInput` and `rawOutput` or content; an API
+`tool_result` content; Grok and Command Code `rawInput` and `rawOutput` or
+content (a Command Code tool is named by its protocol kind, such as `read` or
+`execute`, since its title carries paths and commands); an API
 session the model's arguments and the handler's result. A hosted call is
 reported once, by the engine's own events. Each of `Input` and `Output` is
 bounded to `session.MaxToolPayloadBytes` (64 KiB) with `InputTruncated` or

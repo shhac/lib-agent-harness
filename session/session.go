@@ -45,6 +45,18 @@ type Session struct {
 	// with and the context window its model state states for it, 0 if none.
 	grokModel    string
 	grokCapacity int64
+	// commandCodeModel is the model a Command Code session reported running.
+	commandCodeModel string
+	// commandCodeWatch is the Command Code session whose permission mode is
+	// being watched, commandCodeMode the mode it last reported, and
+	// commandCodeConfigured whether it was put in the asking mode.
+	// commandCodeEarly holds the last mode reported for a session before its
+	// watch was armed, which the reader can deliver ahead of the reply that
+	// names the session.
+	commandCodeWatch      string
+	commandCodeMode       string
+	commandCodeConfigured bool
+	commandCodeEarly      struct{ session, mode string }
 	// removeSkillFiles removes the private plugin this launch wrote, once
 	// the session is over.
 	removeSkillFiles func()
@@ -394,6 +406,10 @@ func (s *Session) initialize(ctx context.Context, resume bool) error {
 		s.mu.Unlock()
 	} else if s.options.Provider.Engine == harness.Grok {
 		if err := s.initializeGrok(ctx, resume); err != nil {
+			return err
+		}
+	} else if s.options.Provider.Engine == harness.CommandCode {
+		if err := s.initializeCommandCode(ctx, resume); err != nil {
 			return err
 		}
 	} else {

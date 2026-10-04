@@ -34,6 +34,9 @@ func homeVariable(e harness.Engine) string {
 		return "CLAUDE_CONFIG_DIR"
 	case harness.Grok:
 		return "GROK_HOME"
+	case harness.CommandCode:
+		// Command Code derives its home from the user's home directory.
+		return ""
 	}
 	return "CODEX_HOME"
 }
@@ -50,6 +53,18 @@ func grokManaged(key string) bool {
 		return false
 	}
 	return upper == "GROK_HOME" || upper == "GROK_DEPLOYMENT_KEY" || upper == "GROK_AGENT_SECRET" || strings.HasSuffix(upper, "_API_KEY") || strings.HasSuffix(upper, "_URL")
+}
+
+// commandCodeManaged is what a Command Code session neither inherits nor
+// accepts as an addition: Command Code's own variables, which change where it
+// connects, which providers it uses and how it runs, except its protective
+// switches.
+func commandCodeManaged(key string) bool {
+	upper := strings.ToUpper(key)
+	if upper == "CMD_ZDR" || upper == "CMD_LOCAL_ONLY" {
+		return false
+	}
+	return strings.HasPrefix(upper, "CMD_") || strings.HasPrefix(upper, "COMMANDCODE_") || strings.HasPrefix(upper, "COMMAND_CODE_")
 }
 
 // sandboxInherited is all a sandboxed session inherits from this process:
@@ -74,6 +89,9 @@ func baseEnvironment(o Options) []string {
 		if o.Provider.Engine == harness.Grok && grokManaged(key) {
 			continue
 		}
+		if o.Provider.Engine == harness.CommandCode && commandCodeManaged(key) {
+			continue
+		}
 		if key == "CODEX_HOME" || key == "CLAUDE_CONFIG_DIR" || key == "CLAUDECODE" || key == "OPENAI_API_KEY" || key == "OPENAI_BASE_URL" || key == "ANTHROPIC_API_KEY" || key == "ANTHROPIC_AUTH_TOKEN" || key == "ANTHROPIC_BASE_URL" || key == "CLAUDE_CODE_OAUTH_TOKEN" || strings.HasPrefix(key, "CLAUDE_CODE_USE_") || strings.HasPrefix(key, "ANTHROPIC_DEFAULT_") || key == "ANTHROPIC_MODEL" {
 			continue
 		}
@@ -87,6 +105,9 @@ func baseEnvironment(o Options) []string {
 		selected = o.RuntimeHome
 	}
 	key := homeVariable(o.Provider.Engine)
+	if key == "" {
+		return env
+	}
 	if o.Provider.Engine == harness.Claude {
 		home, err := os.UserHomeDir()
 		if err == nil && filepath.Clean(selected) == filepath.Join(home, ".claude") {
@@ -117,6 +138,9 @@ func validateEnv(o Options) error {
 		case o.Provider.Engine == harness.Codex && o.Sandbox != nil && o.Browser &&
 			(strings.HasPrefix(upper, "NODE_REPL_") || strings.HasPrefix(upper, "BROWSER_USE_") || strings.HasPrefix(upper, "SKY_")):
 			return refuse(o, "env", RefusedEnvManaged, "environment addition "+key+" would change the sandboxed browser outside its proven configuration")
+		}
+		if o.Provider.Engine == harness.CommandCode && commandCodeManaged(key) {
+			return refuse(o, "env", RefusedEnvManaged, "environment addition "+key+" would change how Command Code runs outside the session's policy")
 		}
 		if o.Provider.Engine == harness.Grok && (strings.HasPrefix(upper, "GROK_") || strings.HasPrefix(upper, "XAI_")) {
 			return refuse(o, "env", RefusedEnvManaged, "environment addition "+key+" is managed by the harness; set Policy.GrokTelemetry for Grok's telemetry controls")

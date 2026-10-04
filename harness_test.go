@@ -10,7 +10,7 @@ import (
 )
 
 func TestEngineSpellingsArePersistedAndStable(t *testing.T) {
-	want := map[Engine]Transport{"codex": CLITransport, "claude": CLITransport, "grok": CLITransport, "openai-compatible": APITransport}
+	want := map[Engine]Transport{"codex": CLITransport, "claude": CLITransport, "grok": CLITransport, "command-code": CLITransport, "openai-compatible": APITransport}
 	if len(Engines()) != len(want) {
 		t.Fatalf("engines %v", Engines())
 	}
@@ -118,6 +118,9 @@ func TestSupportIsTheOnlyEngineQuestion(t *testing.T) {
 		t.Fatal("Codex constrains every message to the schema")
 	}
 	for _, e := range Engines() {
+		if e == CommandCode {
+			continue
+		}
 		if !Support(e, Models, Available).Usable() {
 			t.Errorf("%s lists no models", e)
 		}
@@ -165,6 +168,38 @@ func TestGrokSessionClaims(t *testing.T) {
 	}
 	if Support(Grok, Session, CostReport).Usable() {
 		t.Fatal("a Grok session claims a cost report")
+	}
+}
+
+func TestCommandCodeIsOfferedOnlyAsASession(t *testing.T) {
+	for _, op := range []Operation{Complete, Run, Models, Account} {
+		if c := Support(CommandCode, op, Available); c.Usable() || c.Reason == "" {
+			t.Errorf("Command Code %s: %+v", op, c)
+		}
+	}
+	session := Unknown
+	if runtime.GOOS == "windows" {
+		session = Unsupported
+	}
+	for _, f := range []Feature{Available, Resume, Interrupt} {
+		if c := Support(CommandCode, Session, f); c.Availability != session || c.Reason == "" {
+			t.Errorf("Command Code session %s: %+v", f, c)
+		}
+	}
+	if runtime.GOOS == "windows" {
+		return
+	}
+	if c := Support(CommandCode, Session, Steer); c.Availability != Composed || c.Reason == "" {
+		t.Fatalf("Command Code steering: %+v", c)
+	}
+	if Support(CommandCode, Session, Effort).Availability != Native || Support(CommandCode, Session, CacheSplit).Availability != Native {
+		t.Fatal("Command Code effort or accounting claims changed")
+	}
+	// What Command Code's agent protocol cannot carry is refused, never ignored.
+	for _, f := range []Feature{AppendInstructions, ReplaceInstructions, ProvidedSkills, Compact, RestrictTools, Sandbox, Loopback, Tools, Browser, CostReport} {
+		if c := Support(CommandCode, Session, f); c.Usable() || c.Reason == "" {
+			t.Errorf("Command Code session %s: %+v", f, c)
+		}
 	}
 }
 
