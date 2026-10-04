@@ -167,8 +167,7 @@ func (p *Process) reapGroup() {
 		return
 	}
 	pid := p.cmd.Process.Pid
-	identity := processIdentity(pid)
-	if identity != "" && identity != p.leaderIdentity {
+	if p.leaderReused(pid) {
 		return
 	}
 	for range 5 {
@@ -183,8 +182,7 @@ func (p *Process) reapGroup() {
 			// signalling its group. A live member anchors the pgid, so it
 			// cannot be recycled between validation and the group signal.
 			signalOwned(member.pid, member.identity, processIdentity, func(child int) {
-				leader := processIdentity(pid)
-				if leader != "" && leader != p.leaderIdentity {
+				if p.leaderReused(pid) {
 					return
 				}
 				if group, err := syscall.Getpgid(child); err == nil && group == pid {
@@ -192,8 +190,7 @@ func (p *Process) reapGroup() {
 					snapshot := tree(p.token, p.launched, pid, nil)
 					// Enumeration can take time: re-establish the group anchor again.
 					signalOwned(child, member.identity, processIdentity, func(child int) {
-						leader := processIdentity(pid)
-						if leader != "" && leader != p.leaderIdentity {
+						if p.leaderReused(pid) {
 							return
 						}
 						if pgid, err := syscall.Getpgid(child); err == nil && pgid == pid {
@@ -212,4 +209,11 @@ func (p *Process) reapGroup() {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+// leaderReused reports whether pid now names a process other than the leader
+// this Process started. An unknown identity is not proof of reuse.
+func (p *Process) leaderReused(pid int) bool {
+	identity := processIdentity(pid)
+	return identity != "" && identity != p.leaderIdentity
 }
