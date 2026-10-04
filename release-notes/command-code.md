@@ -12,11 +12,16 @@ are unsupported with reasons, as is a session on Windows.
 - Model and effort are set with `session/set_config_option` and refused before
   the first prompt unless the session reports them.
 - Every session runs in Command Code's Standard mode, which asks before each
-  change. New `Policy.CommandCodePermission` answers: `CommandCodeDenyWhenAsked`
-  (the default) or `CommandCodeAllowWhenAsked`, never an "always" option.
+  change, and is stopped if it reports leaving it. New
+  `Policy.CommandCodePermission` answers: `CommandCodeDenyWhenAsked` (the
+  default) or `CommandCodeAllowWhenAsked`, never an "always" option and never
+  a mode switch.
 - Command Code resumes an unknown id as an empty conversation, so a resume
   checks `session/list` first. `Open` starts fresh with `FreshUnavailable`.
-- New capability code `CapabilityChangedPermissionMode`.
+- New capability code `CapabilityChangedPermissionMode` and phase
+  `DuringSession`.
+- Command Code's own `CMD_*`, `COMMANDCODE_*` and `COMMAND_CODE_*` variables
+  are neither inherited nor accepted as additions.
 
 Instructions, provided skills, `GlobalSkillsExclude`, restricted, sandboxed,
 browser and compacted sessions are refused. Existing engines, references and

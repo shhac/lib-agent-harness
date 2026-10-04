@@ -281,8 +281,12 @@ changes anything, and `Policy.CommandCodePermission` answers those requests:
 `session.CommandCodeDenyWhenAsked` (the default) rejects each one and
 `session.CommandCodeAllowWhenAsked` approves each one once. Reads run without
 asking, and a permission rule in the operator's own Command Code configuration
-can still allow a tool. Questions Command Code asks the user through the same
-request are answered cancelled, never guessed. The model and effort are set
+can still allow a tool. A tool that would switch mode is rejected under either
+policy, and a session that reports leaving Standard mode is stopped with
+`CapabilityChangedPermissionMode` (phase `DuringSession`). Questions Command
+Code asks the user through the same request are answered cancelled, never
+guessed. Inherited `CMD_*`, `COMMANDCODE_*` and `COMMAND_CODE_*` variables are
+not passed on, and adding them is refused. The model and effort are set
 with `session/set_config_option` and checked against the configuration the
 session reports; a value it refuses or does not apply is refused before the
 first prompt. Command Code resumes an id it does not have as a new, empty
