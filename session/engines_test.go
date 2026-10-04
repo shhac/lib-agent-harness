@@ -20,7 +20,7 @@ func TestEngineRegistryIsComplete(t *testing.T) {
 		switch {
 		case !ok:
 			t.Errorf("%s: no entry", e)
-		case entry.dialect == nil || entry.normalizePolicy == nil || entry.binary == "":
+		case entry.dialect == nil || entry.normalizePolicy == nil || entry.binary == "" || entry.initialize == nil || entry.event == nil:
 			t.Errorf("%s: incomplete entry", e)
 		case entry.resolveHome == nil && (entry.homeVariable == "" || entry.homeDir == ""):
 			t.Errorf("%s: no way to find its home", e)

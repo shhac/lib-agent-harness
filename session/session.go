@@ -363,61 +363,8 @@ func newID() string {
 func (s *Session) initialize(ctx context.Context, resume bool) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if s.options.Provider.Engine == harness.Codex {
-		if err := codexHandshake(ctx, s.transport, s.options.Sandbox != nil); err != nil {
-			return err
-		}
-		method := "thread/start"
-		if resume {
-			method = "thread/resume"
-		}
-		body, err := s.transport.request(ctx, method, codexThreadParams(s.options, s.options.WorkDir, resume, s.ref.ID))
-		if err != nil {
-			if resume && errors.Is(err, ErrRejected) {
-				// Checked against codex 0.156.1: a thread it has no rollout for
-				// is refused with an invalid-request error.
-				return fmt.Errorf("%w: %w", errConversationGone, err)
-			}
-			return err
-		}
-		var response struct {
-			Thread struct {
-				ID string `json:"id"`
-			} `json:"thread"`
-		}
-		if json.Unmarshal(body, &response) != nil || response.Thread.ID == "" {
-			return ErrProtocol
-		}
-		if resume && response.Thread.ID != s.ref.ID {
-			return ErrProtocol
-		}
-		if s.options.Sandbox != nil {
-			if err = checkCodexSandbox(s.options, body); err != nil {
-				return err
-			}
-		}
-		if s.options.Browser {
-			if err = checkCodexBrowser(ctx, s.transport, response.Thread.ID); err != nil {
-				return err
-			}
-		}
-		s.mu.Lock()
-		s.ref.ID = response.Thread.ID
-		s.mu.Unlock()
-	} else if s.options.Provider.Engine == harness.Grok {
-		if err := s.initializeGrok(ctx, resume); err != nil {
-			return err
-		}
-	} else if s.options.Provider.Engine == harness.CommandCode {
-		if err := s.initializeCommandCode(ctx, resume); err != nil {
-			return err
-		}
-	} else {
-		body, err := s.transport.request(ctx, "initialize", map[string]any{})
-		if err != nil {
-			return err
-		}
-		s.observeClaudeAccount(body)
+	if err := engines[s.options.Provider.Engine].initialize(s, ctx, resume); err != nil {
+		return err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -576,4 +523,60 @@ func (s *Session) failTurn(expected *Turn, err error) {
 	if s.removeSkillFiles != nil {
 		s.removeSkillFiles()
 	}
+}
+
+// initializeCodex starts or resumes the thread, and reads back the sandbox and
+// browser the thread actually runs with before any turn.
+func (s *Session) initializeCodex(ctx context.Context, resume bool) error {
+	if err := codexHandshake(ctx, s.transport, s.options.Sandbox != nil); err != nil {
+		return err
+	}
+	method := "thread/start"
+	if resume {
+		method = "thread/resume"
+	}
+	body, err := s.transport.request(ctx, method, codexThreadParams(s.options, s.options.WorkDir, resume, s.ref.ID))
+	if err != nil {
+		if resume && errors.Is(err, ErrRejected) {
+			// Checked against codex 0.156.1: a thread it has no rollout for
+			// is refused with an invalid-request error.
+			return fmt.Errorf("%w: %w", errConversationGone, err)
+		}
+		return err
+	}
+	var response struct {
+		Thread struct {
+			ID string `json:"id"`
+		} `json:"thread"`
+	}
+	if json.Unmarshal(body, &response) != nil || response.Thread.ID == "" {
+		return ErrProtocol
+	}
+	if resume && response.Thread.ID != s.ref.ID {
+		return ErrProtocol
+	}
+	if s.options.Sandbox != nil {
+		if err = checkCodexSandbox(s.options, body); err != nil {
+			return err
+		}
+	}
+	if s.options.Browser {
+		if err = checkCodexBrowser(ctx, s.transport, response.Thread.ID); err != nil {
+			return err
+		}
+	}
+	s.mu.Lock()
+	s.ref.ID = response.Thread.ID
+	s.mu.Unlock()
+	return nil
+}
+
+// initializeClaude asks the CLI to initialize, which also reports the account.
+func (s *Session) initializeClaude(ctx context.Context, _ bool) error {
+	body, err := s.transport.request(ctx, "initialize", map[string]any{})
+	if err != nil {
+		return err
+	}
+	s.observeClaudeAccount(body)
+	return nil
 }
