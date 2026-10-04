@@ -14,8 +14,9 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/shhac/lib-agent-harness"
+	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/nativecli"
+	"github.com/shhac/lib-agent-harness/internal/rawjson"
 	"github.com/shhac/lib-agent-harness/internal/restrict"
 )
 
@@ -199,12 +200,13 @@ func actionSchema(tools []Tool) ([]byte, error) {
 	for _, tool := range tools {
 		names = append(names, tool.Function.Name)
 	}
-	item := map[string]any{"type": "object", "additionalProperties": false, "required": []string{"name", "arguments"}, "properties": map[string]any{"name": map[string]any{"type": "string", "enum": names}, "arguments": map[string]any{"type": "string"}}}
-	calls := map[string]any{"type": "array", "items": item, "maxItems": 16}
+	// With no tools there is no name to enumerate, and no call is allowed.
+	name, maxItems := map[string]any{"type": "string", "enum": names}, 16
 	if len(names) == 0 {
-		item["properties"].(map[string]any)["name"] = map[string]any{"type": "string"}
-		calls["maxItems"] = 0
+		name, maxItems = map[string]any{"type": "string"}, 0
 	}
+	item := map[string]any{"type": "object", "additionalProperties": false, "required": []string{"name", "arguments"}, "properties": map[string]any{"name": name, "arguments": map[string]any{"type": "string"}}}
+	calls := map[string]any{"type": "array", "items": item, "maxItems": maxItems}
 	return json.Marshal(map[string]any{"type": "object", "additionalProperties": false, "required": []string{"content", "tool_calls"}, "properties": map[string]any{"content": map[string]any{"type": "string"}, "tool_calls": calls}})
 }
 
@@ -323,7 +325,7 @@ func parseActionEnvelope(data []byte, tools []Tool) (Message, error) {
 		} `json:"tool_calls"`
 	}
 	var required map[string]json.RawMessage
-	if json.Unmarshal(data, &required) != nil || required["content"] == nil || required["tool_calls"] == nil || string(required["content"]) == "null" || string(required["tool_calls"]) == "null" {
+	if json.Unmarshal(data, &required) != nil || rawjson.Absent(required["content"]) || rawjson.Absent(required["tool_calls"]) {
 		return Message{}, errors.New("Model action envelope omitted required fields")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))

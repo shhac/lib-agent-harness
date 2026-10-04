@@ -77,7 +77,7 @@ func parseClaudeQuota(raw json.RawMessage) (harness.QuotaSnapshot, error) {
 	sort.Strings(ids)
 	for _, id := range ids {
 		raw := r.Limits[id]
-		if string(raw) == "null" {
+		if rawjson.Absent(raw) {
 			continue
 		}
 		// Only allowance windows have these fields. Ignore unrelated billing,

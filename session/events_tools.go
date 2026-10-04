@@ -67,13 +67,13 @@ func boundToolInput(raw []byte, limit int) (json.RawMessage, bool) {
 		return append(json.RawMessage(nil), raw...), false
 	}
 	truncated := len(raw) > limit
-	head := cutRunes(string(raw), limit)
+	head := textbound.Cut(string(raw), limit)
 	for {
 		encoded, _ := json.Marshal(head)
 		if len(encoded) <= limit {
 			return encoded, truncated
 		}
-		head = cutRunes(head, len(head)-(len(encoded)-limit))
+		head = textbound.Cut(head, len(head)-(len(encoded)-limit))
 		truncated = true
 	}
 }
@@ -82,10 +82,8 @@ func boundToolOutput(text string, limit int) (string, bool) {
 	if len(text) <= limit {
 		return text, false
 	}
-	return cutRunes(text, limit), true
+	return textbound.Cut(text, limit), true
 }
-
-func cutRunes(text string, limit int) string { return textbound.Cut(text, limit) }
 
 // Tool images: at most MaxToolImages on one tool_completed event, each at
 // most MaxToolImageBytes decoded, and only these types. A screenshot is tens

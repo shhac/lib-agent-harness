@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/shhac/lib-agent-harness/internal/textbound"
 )
 
 // sanitize prepares captured harness output for a caller's private diagnostic
@@ -88,14 +90,14 @@ func bound(text string, limit int) string {
 	marker := func(omitted int) string { return "\n[truncated: " + strconv.Itoa(omitted) + " further bytes omitted]" }
 	// The marker's length depends on how much it omits, so settle the two.
 	for end, note := limit, marker(len(text)-limit); limit-len(note) >= 1; {
-		next := len(cutRunes(text, limit-len(note)))
+		next := len(textbound.Cut(text, limit-len(note)))
 		if next == end {
 			return text[:end] + note
 		}
 		end, note = next, marker(len(text)-next)
 	}
 	if limit >= len(short) {
-		return cutRunes(text, limit-len(short)) + short
+		return textbound.Cut(text, limit-len(short)) + short
 	}
-	return cutRunes(text, limit)
+	return textbound.Cut(text, limit)
 }
