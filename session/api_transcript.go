@@ -327,5 +327,3 @@ func conversationBegun(records []record) bool {
 	}
 	return false
 }
-
-func sessionLockPath(dir string) string { return filepath.Join(dir, "session.lock") }
