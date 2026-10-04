@@ -37,36 +37,26 @@ func Inspect(ctx context.Context, o Options) (Inspection, error) {
 	if err != nil {
 		return out, err
 	}
-	if o.Provider.Engine == harness.Grok {
-		return out, &UnsupportedError{Engine: harness.Grok, Operation: "inspect", Code: RefusedNotOffered, Capability: harness.Capability{Availability: harness.Unsupported, Reason: "inspect a Grok login with account.Inspect"}}
-	}
-	if o.Provider.Engine == harness.CommandCode {
-		return out, &UnsupportedError{Engine: harness.CommandCode, Operation: "inspect", Code: RefusedNotOffered, Capability: harness.Support(harness.CommandCode, harness.Account, harness.Available)}
+	entry := engines[o.Provider.Engine]
+	if entry.inspect == nil {
+		capability := harness.Support(o.Provider.Engine, harness.Account, harness.Available)
+		if entry.inspectElsewhere != "" {
+			capability = harness.Capability{Availability: harness.Unsupported, Reason: entry.inspectElsewhere}
+		}
+		return out, &UnsupportedError{Engine: o.Provider.Engine, Operation: "inspect", Code: RefusedNotOffered, Capability: capability}
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	s := &Session{options: o, caps: CapabilitiesFor(o.Provider.Engine), done: make(chan struct{}), opGate: make(chan struct{}, 1)}
-	args := []string{"app-server", "--listen", "stdio://"}
-	if o.Provider.Engine == harness.Claude {
-		args = []string{"--safe-mode", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"}
-	}
 	s.mu.Lock()
-	w, err := newProcessWireArgs(ctx, o, args, nil, nil, s.notification, s.fail)
+	w, err := newProcessWireArgs(ctx, o, entry.inspect.args, nil, nil, s.notification, s.fail)
 	s.transport = w
 	s.mu.Unlock()
 	if err != nil {
 		return out, err
 	}
 	defer func() { s.Close(); <-w.reaped }()
-	if o.Provider.Engine == harness.Codex {
-		err = codexHandshake(ctx, w, false)
-	} else {
-		var body json.RawMessage
-		if body, err = w.request(ctx, "initialize", map[string]any{}); err == nil {
-			s.observeClaudeAccount(body)
-		}
-	}
-	if err != nil {
+	if err = entry.inspect.handshake(s, ctx, w); err != nil {
 		return out, err
 	}
 	out.Account, err = s.ReadAccount(ctx)
@@ -331,4 +321,28 @@ var (
 	// Claude's get_usage skips its local transcript and behaviour scan.
 	claudeQuotaRead   = &quotaRead{"get_usage", func() map[string]any { return map[string]any{"skip_behaviors": true} }, parseClaudeQuota, parseClaudeCredits}
 	claudeContextRead = &contextRead{"get_context_usage", func() map[string]any { return map[string]any{"detail": "summary"} }, parseClaudeContext}
+)
+
+// inspectLaunch starts an engine's CLI with nothing but its login, to read the
+// account and allowance without a conversation.
+type inspectLaunch struct {
+	args      []string
+	handshake func(s *Session, ctx context.Context, w *streamWire) error
+}
+
+var (
+	codexInspect = &inspectLaunch{
+		args:      []string{"app-server", "--listen", "stdio://"},
+		handshake: func(_ *Session, ctx context.Context, w *streamWire) error { return codexHandshake(ctx, w, false) },
+	}
+	claudeInspect = &inspectLaunch{
+		args: []string{"--safe-mode", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"},
+		handshake: func(s *Session, ctx context.Context, w *streamWire) error {
+			body, err := w.request(ctx, "initialize", map[string]any{})
+			if err == nil {
+				s.observeClaudeAccount(body)
+			}
+			return err
+		},
+	}
 )

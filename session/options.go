@@ -126,34 +126,49 @@ func unsupportedMode(o Options) error {
 // in place it would be ignored, and a caller reading an empty ClaudeTools as
 // "no tools" on Codex would be running with every native tool.
 func otherEnginePolicy(o Options) error {
-	p := o.Policy
-	grok := p.GrokPermission != "" || p.GrokTelemetry != ""
-	if p.CommandCodePermission != "" && o.Provider.Engine != harness.CommandCode {
+	if o.Policy.CommandCodePermission != "" && o.Provider.Engine != harness.CommandCode {
 		return refuse(o, "policy", RefusedOtherEnginePolicy, "only Command Code reads Policy.CommandCodePermission; leave it unset")
 	}
-	switch o.Provider.Engine {
-	case harness.Codex:
-		if p.ClaudePermission != "" || p.ClaudeTools != nil {
-			return refuse(o, "policy", RefusedOtherEnginePolicy, "Codex does not read Policy.ClaudePermission or Policy.ClaudeTools; leave them unset")
-		}
-		if grok {
-			return refuse(o, "policy", RefusedOtherEnginePolicy, "Codex does not read Policy.GrokPermission or Policy.GrokTelemetry; leave them unset")
-		}
-	case harness.Claude:
-		if p.CodexSandbox != "" || p.CodexApproval != "" {
-			return refuse(o, "policy", RefusedOtherEnginePolicy, "Claude does not read Policy.CodexSandbox or Policy.CodexApproval; leave them unset")
-		}
-		if grok {
-			return refuse(o, "policy", RefusedOtherEnginePolicy, "Claude does not read Policy.GrokPermission or Policy.GrokTelemetry; leave them unset")
-		}
-	case harness.Grok:
-		if p.CodexSandbox != "" || p.CodexApproval != "" || p.ClaudePermission != "" || p.ClaudeTools != nil {
-			return refuse(o, "policy", RefusedOtherEnginePolicy, "Grok does not read the Codex or Claude policy fields; leave them unset")
-		}
-	case harness.CommandCode:
-		if p.CodexSandbox != "" || p.CodexApproval != "" || p.ClaudePermission != "" || p.ClaudeTools != nil || grok {
-			return refuse(o, "policy", RefusedOtherEnginePolicy, "Command Code does not read the Codex, Claude or Grok policy fields; leave them unset")
-		}
+	if foreign := engines[o.Provider.Engine].foreignPolicy; foreign != nil {
+		return foreign(o)
+	}
+	return nil
+}
+
+func grokPolicySet(p Policy) bool { return p.GrokPermission != "" || p.GrokTelemetry != "" }
+
+func codexForeignPolicy(o Options) error {
+	if o.Policy.ClaudePermission != "" || o.Policy.ClaudeTools != nil {
+		return refuse(o, "policy", RefusedOtherEnginePolicy, "Codex does not read Policy.ClaudePermission or Policy.ClaudeTools; leave them unset")
+	}
+	if grokPolicySet(o.Policy) {
+		return refuse(o, "policy", RefusedOtherEnginePolicy, "Codex does not read Policy.GrokPermission or Policy.GrokTelemetry; leave them unset")
+	}
+	return nil
+}
+
+func claudeForeignPolicy(o Options) error {
+	if o.Policy.CodexSandbox != "" || o.Policy.CodexApproval != "" {
+		return refuse(o, "policy", RefusedOtherEnginePolicy, "Claude does not read Policy.CodexSandbox or Policy.CodexApproval; leave them unset")
+	}
+	if grokPolicySet(o.Policy) {
+		return refuse(o, "policy", RefusedOtherEnginePolicy, "Claude does not read Policy.GrokPermission or Policy.GrokTelemetry; leave them unset")
+	}
+	return nil
+}
+
+func grokForeignPolicy(o Options) error {
+	p := o.Policy
+	if p.CodexSandbox != "" || p.CodexApproval != "" || p.ClaudePermission != "" || p.ClaudeTools != nil {
+		return refuse(o, "policy", RefusedOtherEnginePolicy, "Grok does not read the Codex or Claude policy fields; leave them unset")
+	}
+	return nil
+}
+
+func commandCodeForeignPolicy(o Options) error {
+	p := o.Policy
+	if p.CodexSandbox != "" || p.CodexApproval != "" || p.ClaudePermission != "" || p.ClaudeTools != nil || grokPolicySet(p) {
+		return refuse(o, "policy", RefusedOtherEnginePolicy, "Command Code does not read the Codex, Claude or Grok policy fields; leave them unset")
 	}
 	return nil
 }
