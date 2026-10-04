@@ -159,6 +159,9 @@ const (
 	CapabilityBrowserBridgeUnavailable  = "browser_bridge_unavailable"
 	CapabilityBrowserSandboxUnproven    = "browser_sandbox_unproven"
 	CapabilityBrowserSandboxNotEnforced = "browser_sandbox_not_enforced"
+	// CapabilityChangedPermissionMode: the session could not be put in the
+	// permission mode its policy relies on.
+	CapabilityChangedPermissionMode = "changed_permission_mode"
 )
 
 // Sandbox capability failures.
@@ -214,6 +217,7 @@ func (e *CapabilityError) Error() string {
 		CapabilityInstructionsMerged:        "the installed harness merged inherited instructions into its request",
 		CapabilityChangedModel:              "the installed harness requested a different model",
 		CapabilityChangedEffort:             "the installed harness requested a different reasoning effort",
+		CapabilityChangedPermissionMode:     "the installed harness did not accept the permission mode this session requires",
 		CapabilityProbeNoRequest:            "the installed harness made no request during the capability check",
 		CapabilityProbeUnreadable:           "the capability check could not read the harness's request",
 		CapabilityProbeTimeout:              "the capability check did not finish in time",

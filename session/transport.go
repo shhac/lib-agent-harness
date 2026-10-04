@@ -50,6 +50,9 @@ type streamWire struct {
 	diagnose  func(Diagnostic)
 	// grokPermission is how this Grok session answers permission requests.
 	grokPermission string
+	// commandCodePermission is how this Command Code session answers
+	// permission requests.
+	commandCodePermission string
 }
 
 // asyncWire sends a request now and delivers its reply later, for a request
@@ -97,7 +100,7 @@ func newProcessWireArgs(ctx context.Context, o Options, args, env []string, onSt
 	if onStart != nil {
 		p.Notify(onStart)
 	}
-	w := &streamWire{engine: o.Provider.Engine, stdin: stdin, stdout: reader, pending: map[string]chan response{}, done: make(chan struct{}), reaped: make(chan struct{}), writeGate: make(chan struct{}, 1), event: event, ended: ended, stderr: stderr, diagnose: o.OnDiagnostic, grokPermission: o.Policy.GrokPermission}
+	w := &streamWire{engine: o.Provider.Engine, stdin: stdin, stdout: reader, pending: map[string]chan response{}, done: make(chan struct{}), reaped: make(chan struct{}), writeGate: make(chan struct{}, 1), event: event, ended: ended, stderr: stderr, diagnose: o.OnDiagnostic, grokPermission: o.Policy.GrokPermission, commandCodePermission: o.Policy.CommandCodePermission}
 	w.stop = func() { cancel(); p.Stop(); stdin.Close(); reader.Close() }
 	go w.read()
 	go func() {
@@ -267,7 +270,7 @@ func (w *streamWire) envelope(id, method string, params map[string]any) map[stri
 		params = cloneMap(params)
 		params["subtype"] = method
 		return map[string]any{"type": "control_request", "request_id": id, "request": params}
-	case harness.Grok:
+	case harness.Grok, harness.CommandCode:
 		return map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}
 	}
 	return map[string]any{"id": id, "method": method, "params": params}
@@ -310,6 +313,8 @@ func (w *streamWire) reply(m map[string]json.RawMessage) bool {
 		parse = parseClaudeReply
 	case harness.Grok:
 		parse = parseGrokReply
+	case harness.CommandCode:
+		parse = parseCommandCodeReply
 	}
 	id, r, isReply, err := parse(m)
 	if !isReply {
@@ -412,6 +417,11 @@ func (w *streamWire) serverRequest(m map[string]json.RawMessage) bool {
 			return false
 		}
 		reply = grokServerReply(m, w.grokPermission)
+	case harness.CommandCode:
+		if len(m["id"]) == 0 || len(m["method"]) == 0 {
+			return false
+		}
+		reply = commandCodeServerReply(m, w.commandCodePermission)
 	default:
 		if len(m["id"]) == 0 || len(m["method"]) == 0 {
 			return false

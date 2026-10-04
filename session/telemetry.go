@@ -40,6 +40,9 @@ func Inspect(ctx context.Context, o Options) (Inspection, error) {
 	if o.Provider.Engine == harness.Grok {
 		return out, &UnsupportedError{Engine: harness.Grok, Operation: "inspect", Code: RefusedNotOffered, Capability: harness.Capability{Availability: harness.Unsupported, Reason: "inspect a Grok login with account.Inspect"}}
 	}
+	if o.Provider.Engine == harness.CommandCode {
+		return out, &UnsupportedError{Engine: harness.CommandCode, Operation: "inspect", Code: RefusedNotOffered, Capability: harness.Support(harness.CommandCode, harness.Account, harness.Available)}
+	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	s := &Session{options: o, caps: CapabilitiesFor(o.Provider.Engine), done: make(chan struct{}), opGate: make(chan struct{}, 1)}
@@ -96,7 +99,7 @@ func (s *Session) ReadAccount(ctx context.Context) (harness.AccountSnapshot, err
 	if err := s.telemetryOpen(); err != nil {
 		return s.Telemetry().Account, err
 	}
-	if s.api != nil {
+	if s.api != nil || s.options.Provider.Engine == harness.CommandCode {
 		return s.Telemetry().Account, s.notOffered("account", func(c Capabilities) harness.Capability { return c.Account })
 	}
 	if s.options.Provider.Engine == harness.Claude {
@@ -141,7 +144,7 @@ func (s *Session) ReadQuota(ctx context.Context) (harness.QuotaSnapshot, error) 
 	if err := s.telemetryOpen(); err != nil {
 		return s.Telemetry().Quota, err
 	}
-	if s.api != nil {
+	if s.api != nil || s.options.Provider.Engine == harness.CommandCode {
 		return s.Telemetry().Quota, s.notOffered("quota", func(c Capabilities) harness.Capability { return c.Quota })
 	}
 	if s.options.Provider.Engine == harness.Grok {

@@ -369,6 +369,7 @@ var supportTable = map[supportKey]Capability{
 	{CommandCode, Session, Steer}:               {Composed, "Command Code steering cancels the running prompt and sends another"},
 	{CommandCode, Session, Effort}:              {Native, "set through session/set_config_option and checked against the configuration the session reports before the first turn"},
 	{CommandCode, Session, CacheSplit}:          native,
+	{CommandCode, Session, ContextWindow}:       {Unknown, "Command Code's own used and size figures from the usage_update each prompt ends with"},
 	{CommandCode, Session, ToolActivity}:        {Native, "the agent protocol's rawInput, and rawOutput or content on a tool call's final update"},
 	{CommandCode, Session, ToolImages}:          {Unknown, "image content blocks in an ACP tool call update, as the protocol declares them; not seen from a real tool"},
 	{CommandCode, Session, Background}:          background,

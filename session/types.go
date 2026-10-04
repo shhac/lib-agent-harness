@@ -78,7 +78,8 @@ type Instructions struct {
 }
 
 // Policy uses explicit native provider settings. Empty values resolve to
-// read-only/never for Codex, dontAsk for Claude and deny for Grok. Setting a
+// read-only/never for Codex, dontAsk for Claude, deny for Grok and
+// deny-when-asked for Command Code. Setting a
 // field only another engine reads is refused rather than ignored. Unhandled
 // requests from the CLI are denied. These are execution settings, not a
 // tools-disabled guarantee.
@@ -105,6 +106,15 @@ type Policy struct {
 	// of other harnesses' skills, rules, agents, MCP servers, hooks and
 	// sessions, for this session's process. It is not a no-egress guarantee.
 	GrokTelemetry string `json:"grok_telemetry,omitempty"`
+	// CommandCodePermission answers the permission requests Command Code
+	// sends. Every Command Code session runs in its Standard mode, which asks
+	// before each tool that changes anything: CommandCodeDenyWhenAsked, the
+	// default, rejects each request, and CommandCodeAllowWhenAsked approves
+	// each one once. Neither grants an "always" option. It governs only the
+	// requests Command Code actually makes: reads run without asking, and a
+	// permission rule in the operator's own Command Code configuration can
+	// allow a tool without asking.
+	CommandCodePermission string `json:"command_code_permission,omitempty"`
 }
 
 // Grok permission answers and telemetry policy.
@@ -112,6 +122,12 @@ const (
 	GrokDenyWhenAsked    = "deny-when-asked"
 	GrokAllowWhenAsked   = "allow-when-asked"
 	GrokTelemetryReduced = "reduced"
+)
+
+// Command Code permission answers.
+const (
+	CommandCodeDenyWhenAsked  = "deny-when-asked"
+	CommandCodeAllowWhenAsked = "allow-when-asked"
 )
 
 type Options struct {
@@ -403,6 +419,9 @@ type Turn struct {
 	// grokResponse counts Grok's completed model responses in this turn; it
 	// names the response the next streamed text belongs to.
 	grokResponse int
+	// commandCodeMessage counts the tool calls Command Code started in this
+	// turn; it names the message the next streamed text belongs to.
+	commandCodeMessage int
 	// closeTools shuts the caller's tool channel when this turn ends.
 	closeTools func()
 	// claudeRefusal is why Claude refused this turn's latest request, kept for

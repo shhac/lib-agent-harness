@@ -196,7 +196,7 @@ func TestCommandCodeIsOfferedOnlyAsASession(t *testing.T) {
 		t.Fatal("Command Code effort or accounting claims changed")
 	}
 	// What Command Code's agent protocol cannot carry is refused, never ignored.
-	for _, f := range []Feature{AppendInstructions, ReplaceInstructions, ProvidedSkills, Compact, RestrictTools, Sandbox, Loopback, Tools, Browser, CostReport, ContextWindow} {
+	for _, f := range []Feature{AppendInstructions, ReplaceInstructions, ProvidedSkills, Compact, RestrictTools, Sandbox, Loopback, Tools, Browser, CostReport} {
 		if c := Support(CommandCode, Session, f); c.Usable() || c.Reason == "" {
 			t.Errorf("Command Code session %s: %+v", f, c)
 		}

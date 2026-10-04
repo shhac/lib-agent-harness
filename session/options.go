@@ -95,13 +95,19 @@ func supported(o Options) error {
 	return unsupportedMode(o)
 }
 
-// unsupportedMode refuses a restricted or sandboxed Grok session, with the
+// unsupportedMode refuses a restricted or sandboxed Grok or Command Code
+// session, and Command Code instructions and provided skills, with the
 // capability's own reason. Codex and Claude refuse these on their own terms,
 // including on a platform without containment.
 func unsupportedMode(o Options) error {
 	engine := o.Provider.Engine
-	if engine != harness.Grok {
+	if engine != harness.Grok && engine != harness.CommandCode {
 		return nil
+	}
+	if engine == harness.CommandCode {
+		if err := unsupportedCommandCode(o); err != nil {
+			return err
+		}
 	}
 	if o.Restriction != nil {
 		if c := harness.Support(engine, harness.Session, harness.RestrictTools); c.Availability == harness.Unsupported {
@@ -122,6 +128,9 @@ func unsupportedMode(o Options) error {
 func otherEnginePolicy(o Options) error {
 	p := o.Policy
 	grok := p.GrokPermission != "" || p.GrokTelemetry != ""
+	if p.CommandCodePermission != "" && o.Provider.Engine != harness.CommandCode {
+		return refuse(o, "policy", RefusedOtherEnginePolicy, "only Command Code reads Policy.CommandCodePermission; leave it unset")
+	}
 	switch o.Provider.Engine {
 	case harness.Codex:
 		if p.ClaudePermission != "" || p.ClaudeTools != nil {
@@ -141,6 +150,10 @@ func otherEnginePolicy(o Options) error {
 		if p.CodexSandbox != "" || p.CodexApproval != "" || p.ClaudePermission != "" || p.ClaudeTools != nil {
 			return refuse(o, "policy", RefusedOtherEnginePolicy, "Grok does not read the Codex or Claude policy fields; leave them unset")
 		}
+	case harness.CommandCode:
+		if p.CodexSandbox != "" || p.CodexApproval != "" || p.ClaudePermission != "" || p.ClaudeTools != nil || grok {
+			return refuse(o, "policy", RefusedOtherEnginePolicy, "Command Code does not read the Codex, Claude or Grok policy fields; leave them unset")
+		}
 	}
 	return nil
 }
@@ -151,6 +164,9 @@ func normalizePaths(o Options) (Options, error) {
 	cli := &o.Provider.CLI
 	if cli.Binary == "" {
 		cli.Binary = string(o.Provider.Engine)
+		if o.Provider.Engine == harness.CommandCode {
+			cli.Binary = "cmd"
+		}
 	}
 	var err error
 	if o.WorkDir == "" {
@@ -161,6 +177,9 @@ func normalizePaths(o Options) (Options, error) {
 	o.WorkDir, err = filepath.Abs(o.WorkDir)
 	if err != nil {
 		return o, refuse(o, "work_dir", RefusedWorkDir, "invalid working directory")
+	}
+	if o.Provider.Engine == harness.CommandCode {
+		return commandCodeHome(o)
 	}
 	if cli.Home == "" {
 		key, suffix := homeVariable(o.Provider.Engine), ".codex"
@@ -210,6 +229,9 @@ func normalizeLimits(o Options) (Options, error) {
 func normalizePolicy(o Options) (Options, error) {
 	if o.Provider.Engine == harness.Grok {
 		return normalizeGrokPolicy(o)
+	}
+	if o.Provider.Engine == harness.CommandCode {
+		return normalizeCommandCodePolicy(o)
 	}
 	if o.Policy.CodexSandbox == "" {
 		o.Policy.CodexSandbox = "read-only"

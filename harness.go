@@ -64,7 +64,8 @@ type Provider struct {
 
 // CLI locates an installed command-line harness.
 type CLI struct {
-	// Binary is the command to run; empty means the engine's name on PATH.
+	// Binary is the command to run; empty means the engine's name on PATH, or
+	// cmd for Command Code.
 	Binary string
 	// Home is the harness's configuration and login directory. Empty keeps
 	// each mode's established default, which stored session references depend on.

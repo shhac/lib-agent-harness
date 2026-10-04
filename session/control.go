@@ -77,6 +77,8 @@ func (s *Session) startTurnScoped(lifetime, request context.Context, in Input) (
 		err = s.startCodexTurn(request, t, ref, in)
 	case harness.Grok:
 		err = s.startGrokTurn(request, lifetime, t, ref, in)
+	case harness.CommandCode:
+		err = s.startCommandCodeTurn(request, lifetime, t, ref, in)
 	case harness.OpenAICompatible:
 		err = s.startAPITurn(t, in)
 	default:
@@ -187,7 +189,7 @@ func (s *Session) activeTurn(expected string) (*Turn, error) {
 // Continue draining Turn.Events concurrently while Interrupt or Steer waits.
 // Claude has no unique cancelled result code: a requested interrupt correlated
 // with error_during_execution normalizes to interrupted, while NativeError stays
-// true. Other error subtypes remain failures. Grok's cancellation is a
+// true. Other error subtypes remain failures. Grok's and Command Code's cancellation is a
 // notification with no acknowledgement; the prompt's cancelled response is the
 // terminal event. This does not establish that the interruption was the sole
 // cause, or that external tool effects stopped.
@@ -240,7 +242,7 @@ func (s *Session) requestInterrupt(ctx context.Context, expected string) error {
 	switch s.options.Provider.Engine {
 	case harness.Codex:
 		_, err = s.transport.request(ctx, "turn/interrupt", map[string]any{"threadId": s.Ref().ID, "turnId": expected})
-	case harness.Grok:
+	case harness.Grok, harness.CommandCode:
 		err = s.transport.send(ctx, grokNotification("session/cancel", map[string]any{"sessionId": s.Ref().ID}))
 	case harness.OpenAICompatible:
 		// The request and the running handler are both the library's to
@@ -253,7 +255,7 @@ func (s *Session) requestInterrupt(ctx context.Context, expected string) error {
 	return err
 }
 
-// Steer uses native Codex turn/steer or, on Claude and Grok,
+// Steer uses native Codex turn/steer or, on Claude, Grok and Command Code,
 // interrupt-and-continue. The composed path returns a NEW Turn after the old
 // turn's terminal result. There is no silent retry/restart; transport loss
 // returns an error for caller policy.
@@ -321,6 +323,8 @@ func composedSteerReason(e harness.Engine) string {
 	switch e {
 	case harness.Grok:
 		return "Grok steering cancels the running prompt and sends another"
+	case harness.CommandCode:
+		return "Command Code steering cancels the running prompt and sends another"
 	case harness.OpenAICompatible:
 		return "the library interrupts the turn and starts another"
 	}
