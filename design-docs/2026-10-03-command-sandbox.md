@@ -229,6 +229,15 @@ minute for first-launch developer-tool startup, while retaining the command,
 exit-status and built-output assertions. Preserve that merged correction on
 landing; this task does not recreate it or change lease deadlines.
 
+Test correction: `TestCommandSandboxGitMetadataOutsideScratchIsProtected`
+warms `/usr/bin/git`'s developer-tool shim in the same sandbox outside the
+measured runs, with a one-minute ceiling. Its protection commands retain an
+explicit ten-second budget. Warm-up errors, timeouts and nonzero exits fail
+without retries or skips; a measured timeout also fails rather than counting
+as a refused write. The private-repository control and host-side absence
+check remain unchanged. This correction adds no capability claim or
+owner-reported validation result.
+
 Failure classifications remain precise. The privilege control is unavailable
 only after the probe observes zero CapEff/CapPrm/CapInh/CapAmb and NoNewPrivs=1;
 that predicate proves inherited confinement. The baseline lease fixture used

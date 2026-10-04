@@ -68,12 +68,22 @@ func TestCommandSandboxRunsSelectedDeveloperTools(t *testing.T) {
 
 func TestCommandSandboxGitMetadataOutsideScratchIsProtected(t *testing.T) {
 	opts := commandSandboxOptions(t, false)
+	opts.Timeout = time.Minute
 	s := openTestCommandSandbox(t, opts)
+	// A fresh sandbox's first developer-tool shim waits on xcodebuild's
+	// first-launch check, longer under -race load. Warm it outside the measured runs.
+	r, err := s.Run(context.Background(), CommandRequest{Command: "/usr/bin/git --version", Timeout: time.Minute})
+	if err != nil || r.TimedOut || r.ExitCode != 0 {
+		t.Fatalf("git warm-up failed: err=%v result=%+v", err, r)
+	}
 	run := func(command string) CommandResult {
 		t.Helper()
-		r, err := s.Run(context.Background(), CommandRequest{Command: command})
+		r, err := s.Run(context.Background(), CommandRequest{Command: command, Timeout: 10 * time.Second})
 		if err != nil {
 			t.Fatal(err)
+		}
+		if r.TimedOut {
+			t.Fatalf("measured command %q timed out: %+v", command, r)
 		}
 		return r
 	}
