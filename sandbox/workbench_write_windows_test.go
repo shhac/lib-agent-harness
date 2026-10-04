@@ -8,8 +8,9 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/shhac/lib-agent-harness/internal/testenv"
 	"golang.org/x/sys/windows"
+
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
 func TestWorkbenchWindowsNewFileModeDoesNotSetReadOnly(t *testing.T) {

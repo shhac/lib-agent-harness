@@ -10,11 +10,13 @@ import (
 	"testing"
 
 	"github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
 // Cancellation can arrive during any preparatory subprocess. It must retain its
 // identity and never consume a reservation until the actual inference boundary.
 func TestCompletionCancellationAcrossSubprocessBoundaries(t *testing.T) {
+	testenv.RequireLoopback(t) // Constrained CLI preflight starts a local refusal provider.
 	t.Setenv("USER", "synthetic-native-login-owner")
 	binary, err := os.Executable()
 	if err != nil {

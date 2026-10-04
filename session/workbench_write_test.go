@@ -15,6 +15,7 @@ import (
 	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/completion"
 	"github.com/shhac/lib-agent-harness/internal/sandboxhook"
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
 func TestWorkbenchBackgroundWithoutCommandsRefused(t *testing.T) {
@@ -67,6 +68,7 @@ func TestWorkbenchWriteCrashHelper(t *testing.T) {
 }
 
 func TestWorkbenchWriteCrashResumeNeverReruns(t *testing.T) {
+	testenv.RequireAtomicWrite(t) // The outer command boundary refuses reserved atomic temporaries.
 	for _, stage := range []string{"chmod", "sync_directory"} {
 		t.Run(stage, func(t *testing.T) {
 			o := workbenchOptions(t, nopHandler())
@@ -196,6 +198,7 @@ func TestWorkbenchWriteDigestAndResume(t *testing.T) {
 }
 
 func TestWorkbenchCleanupOnlyOwnTemporary(t *testing.T) {
+	testenv.RequireAtomicWrite(t) // The outer command boundary refuses reserved atomic temporaries.
 	o := workbenchOptions(t, nopHandler())
 	w, err := openWorkspace(o, newID())
 	if err != nil {
@@ -269,6 +272,7 @@ func TestWorkbenchCommandDefinitions(t *testing.T) {
 }
 
 func TestWorkbenchWriteUnknownIsRecorded(t *testing.T) {
+	testenv.RequireAtomicWrite(t) // The outer command boundary refuses reserved atomic temporaries.
 	o := workbenchOptions(t, nopHandler())
 	o.Workbench.Write = true
 	model := &scriptedModel{steps: [][]scriptedCall{{{"write", "write_file", `{"path":"file","content":"new"}`}}, {{"finish", "finish", `{}`}}}}
@@ -312,6 +316,7 @@ func TestWorkbenchWriteUnknownIsRecorded(t *testing.T) {
 }
 
 func TestWorkbenchWriteLoop(t *testing.T) {
+	testenv.RequireAtomicWrite(t) // The outer command boundary refuses reserved atomic temporaries.
 	o := workbenchOptions(t, nopHandler())
 	o.Workbench.Write = true
 	model := &scriptedModel{steps: [][]scriptedCall{

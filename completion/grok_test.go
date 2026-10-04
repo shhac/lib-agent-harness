@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
 // grokFake stands in for the installed CLI. Its probe sends the request a
@@ -158,7 +159,14 @@ func newGrokSetup(t *testing.T) *grokSetup {
 	grokProofs.Unlock()
 	t.Setenv("OPENAI_API_KEY", "secret-ambient-key")
 	t.Setenv("XAI_API_KEY", "secret-ambient-key")
-	root, err := filepath.EvalSymlinks(t.TempDir())
+	// Grok encodes the whole work path into one filename (255-byte limit).
+	// Avoid t.TempDir's long test-name component, while staying under TMPDIR.
+	shortRoot, err := os.MkdirTemp("", "g-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(shortRoot) })
+	root, err := filepath.EvalSymlinks(shortRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,6 +185,7 @@ func newGrokSetup(t *testing.T) *grokSetup {
 }
 
 func TestGrokCompleteProvesThenLaunchesInAPrivateRuntimeHome(t *testing.T) {
+	testenv.RequireLoopback(t) // Constrained CLI preflight starts a local refusal provider.
 	s := newGrokSetup(t)
 	s.fake.refresh = `{"token":"synthetic-refreshed"}`
 	result, err := Complete(context.Background(), s.cfg, userMessage, Tools())
@@ -267,6 +276,7 @@ func TestGrokCompleteProvesThenLaunchesInAPrivateRuntimeHome(t *testing.T) {
 }
 
 func TestGrokUnprovenProbeRefusesBeforeAnyCredentialedWork(t *testing.T) {
+	testenv.RequireLoopback(t) // Constrained CLI preflight starts a local refusal provider.
 	for _, tc := range []struct {
 		name   string
 		tamper func(map[string]any)
@@ -304,6 +314,7 @@ func TestGrokUnprovenProbeRefusesBeforeAnyCredentialedWork(t *testing.T) {
 }
 
 func TestGrokRunIsJudgedByItsStreamAndTranscript(t *testing.T) {
+	testenv.RequireLoopback(t) // Constrained CLI preflight starts a local refusal provider.
 	for _, tc := range []struct {
 		name       string
 		stream     []string
@@ -375,6 +386,7 @@ func TestGrokPreflightRefusals(t *testing.T) {
 }
 
 func TestGrokRequestHookErrorStopsTheLaunch(t *testing.T) {
+	testenv.RequireLoopback(t) // Constrained CLI preflight starts a local refusal provider.
 	s := newGrokSetup(t)
 	stop := errors.New("budget exhausted")
 	s.cfg.BeforeRequest = func(context.Context) error { return stop }

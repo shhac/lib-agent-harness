@@ -16,6 +16,7 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 	"github.com/shhac/lib-agent-harness/process"
 )
 
@@ -142,6 +143,7 @@ func waitCommandGone(t *testing.T, pid int) {
 }
 
 func TestWorkbenchMacOSEditAndRunSession(t *testing.T) {
+	testenv.RequireLoopback(t) // Provider fixtures and canaries need a real loopback bind.
 	requireWorkbenchSeatbelt(t)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
 // testSkill writes a synthetic skill directory: SKILL.md, a reference file
@@ -428,6 +429,7 @@ type cliPayload struct {
 }
 
 func TestSkillCallsRoundTripOverCLIEngines(t *testing.T) {
+	testenv.RequireLoopback(t) // Constrained CLI preflight starts a local refusal provider.
 	for _, engine := range cliEngines {
 		t.Run(string(engine), func(t *testing.T) {
 			set := skillSet(t)

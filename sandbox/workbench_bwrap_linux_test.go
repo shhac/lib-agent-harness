@@ -15,6 +15,7 @@ import (
 
 func requireWorkbenchBwrap(t *testing.T) (string, string) {
 	t.Helper()
+	testenv.RequireLoopback(t) // Real command proofs need network witnesses.
 	testenv.RequireProcessGroup(t)
 	l := linuxTestLayout(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

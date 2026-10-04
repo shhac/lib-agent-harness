@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
 func requireCommandPlatform(t *testing.T) { t.Helper(); requireWorkbenchSeatbelt(t) }
@@ -24,6 +26,7 @@ func TestCommandSandboxInboundEvidence(t *testing.T) {
 }
 
 func TestCommandSandboxStartedServerWithoutLoopback(t *testing.T) {
+	testenv.RequireLoopback(t) // Provider fixtures and canaries need a real loopback bind.
 	s := openTestCommandSandbox(t, commandSandboxOptions(t, false))
 	port, err := freeLoopbackPort()
 	if err != nil {

@@ -7,9 +7,12 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
 func TestClaudeProbeAllowsOnlyBoundedSafeCompatibilityRequests(t *testing.T) {
+	testenv.RequireLoopback(t) // Constrained CLI preflight starts a local refusal provider.
 	for _, tc := range []struct {
 		name       string
 		count      int

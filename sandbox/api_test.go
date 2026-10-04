@@ -10,9 +10,12 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
 func TestWorkspacePublicTools(t *testing.T) {
+	testenv.RequireAtomicWrite(t) // The outer command boundary refuses reserved atomic temporaries.
 	root := t.TempDir()
 	w, err := OpenWorkspace(Config{Root: root, SessionID: "12345678-1234-1234-1234-123456789abc", NewFileMode: 0600})
 	if err != nil {
@@ -162,6 +165,7 @@ func TestWorkspacePublicStuckError(t *testing.T) {
 }
 
 func TestWorkspaceReservedRemovalFailure(t *testing.T) {
+	testenv.RequireAtomicWrite(t) // The outer command boundary refuses reserved atomic temporaries.
 	w, root, _ := testWorkspace(t)
 	w.id = "12345678-1234-1234-1234-123456789abc"
 	own := ".harness-workbench-12345678123412341234123456789abc-0123456789abcdef.tmp"

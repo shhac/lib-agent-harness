@@ -309,6 +309,7 @@ func TestCodexSandboxReadback(t *testing.T) {
 }
 
 func TestCodexSandboxCanary(t *testing.T) {
+	testenv.RequireLoopback(t) // Native canary proof uses a local provider and network witnesses.
 	cases := []struct {
 		scenario string
 		write    bool
@@ -377,6 +378,7 @@ func TestClaudeSandboxStatus(t *testing.T) {
 }
 
 func TestSandboxEvidenceIsCachedPerBinaryAndMode(t *testing.T) {
+	testenv.RequireLoopback(t) // Native canary proof uses a local provider and network witnesses.
 	binary, log := fakeHarness(t, fakeSandboxOK)
 	o := sandboxOptions(t, harness.Codex, binary, true)
 	for range 2 {
@@ -397,6 +399,7 @@ func TestSandboxEvidenceIsCachedPerBinaryAndMode(t *testing.T) {
 }
 
 func TestSandboxedCodexSessionChecksItsThread(t *testing.T) {
+	testenv.RequireLoopback(t) // Native canary proof uses a local provider and network witnesses.
 	t.Setenv("LIB_HARNESS_SESSION_FIXTURE", "1")
 	binary, log := fakeHarness(t, fakeSandboxOK)
 	s, err := Start(context.Background(), sandboxOptions(t, harness.Codex, binary, true))
@@ -426,6 +429,7 @@ func TestSandboxedCodexSessionChecksItsThread(t *testing.T) {
 }
 
 func TestSandboxedCodexFailingCanaryStartsNothing(t *testing.T) {
+	testenv.RequireLoopback(t) // Native canary proof uses a local provider and network witnesses.
 	binary, log := fakeHarness(t, fakeCanaryNetwork)
 	s, err := Start(context.Background(), sandboxOptions(t, harness.Codex, binary, true))
 	if s != nil {
@@ -439,6 +443,7 @@ func TestSandboxedCodexFailingCanaryStartsNothing(t *testing.T) {
 
 // The open canary must be caught on each check independently, not just once.
 func TestOpenCanaryEscapesAreEachDetected(t *testing.T) {
+	testenv.RequireLoopback(t) // Provider fixtures and canaries need a real loopback bind.
 	root := t.TempDir()
 	workspace := filepath.Join(root, "workspace")
 	if err := os.MkdirAll(filepath.Join(workspace, ".git"), 0700); err != nil {
@@ -490,6 +495,7 @@ func TestOpenCanaryEscapesAreEachDetected(t *testing.T) {
 }
 
 func TestSandboxedCodexResumeChecksItsThread(t *testing.T) {
+	testenv.RequireLoopback(t) // Native canary proof uses a local provider and network witnesses.
 	t.Setenv("LIB_HARNESS_SESSION_FIXTURE", "1")
 	binary, _ := fakeHarness(t, fakeResumeLegacy)
 	o := sandboxOptions(t, harness.Codex, binary, true)
@@ -516,6 +522,7 @@ func TestSandboxedCodexResumeChecksItsThread(t *testing.T) {
 }
 
 func TestSandboxedCodexReleaseReturnsARefreshedLogin(t *testing.T) {
+	testenv.RequireLoopback(t) // Native canary proof uses a local provider and network witnesses.
 	t.Setenv("LIB_HARNESS_SESSION_FIXTURE", "1")
 	binary, _ := fakeHarness(t, fakeSandboxOK, fakeRefreshEnv+`={"refreshed":true}`)
 	o := sandboxOptions(t, harness.Codex, binary, true)
@@ -781,6 +788,7 @@ func TestSandboxWebIsPartOfTheReference(t *testing.T) {
 }
 
 func TestSandboxWebEvidenceIsSeparate(t *testing.T) {
+	testenv.RequireLoopback(t) // Native canary proof uses a local provider and network witnesses.
 	binary, log := fakeHarness(t, fakeSandboxOK)
 	o := sandboxOptions(t, harness.Codex, binary, true)
 	for _, web := range []bool{false, true} {

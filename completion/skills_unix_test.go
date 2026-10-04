@@ -7,9 +7,12 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
 func TestGrokCarriesSkillsInItsProvenPayload(t *testing.T) {
+	testenv.RequireLoopback(t) // Constrained CLI preflight starts a local refusal provider.
 	s := newGrokSetup(t)
 	s.cfg.Skills = skillSet(t)
 	s.fake.stream = []string{grokCatalog, `{"type":"end","stopReason":"end_turn","usage":{"input_tokens":1,"output_tokens":1},"structuredOutput":{"content":"","tool_calls":[{"name":"load_skill","arguments":"{\"skill\":\"guide\"}"},{"name":"read_state","arguments":"{}"}]}}`}

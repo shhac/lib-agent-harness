@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
 // An engine with no proven mechanism refuses a cap before any process,
@@ -127,6 +128,7 @@ func envEntry(env []string, key string) (string, bool) {
 }
 
 func TestClaudeMaxOutputTokens(t *testing.T) {
+	testenv.RequireLoopback(t) // Constrained CLI preflight starts a local refusal provider.
 	sent := func(n int) *int { return &n }
 	for _, tc := range []struct {
 		name       string

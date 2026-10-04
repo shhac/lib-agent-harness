@@ -3,8 +3,8 @@
 // refuse — a Unix domain socket under TMPDIR, a process group of its own —
 // calls the matching Require helper first. The helper probes the capability
 // once per test binary and skips the test with the probe's refusal when the
-// environment denies it with a permission error. Any other probe failure fails
-// the test: a real fault is not hidden behind a skip.
+// environment denies it with a permission error or a limit the library itself
+// refuses. Any other probe failure fails the test: a real fault is not hidden behind a skip.
 //
 // Where nothing is refused the tests run as before. CI sets
 // AGENT_HARNESS_TEST_NO_SKIP=1, which turns every would-be skip into a
@@ -15,7 +15,9 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"os"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"testing"
@@ -47,6 +49,9 @@ func (r *Refusal) Error() string { return r.Op + ": " + r.Err.Error() }
 func (r *Refusal) Unwrap() error { return r.Err }
 
 var (
+	atomicWrite   = &probe{check: probeAtomicWrite}
+	nestedSandbox = &probe{check: probeNestedSandbox}
+	loopback      = &probe{check: probeLoopback}
 	unixSocket    = &probe{check: probeUnixSocket}
 	processGroup  = &probe{check: probeProcessGroup}
 	processStatus = &probe{check: probeProcessStatus}
@@ -107,8 +112,76 @@ func require(t testing.TB, what string, err error) {
 	t.Skip(msg)
 }
 
-// Refused reports whether err is a permission refusal: the environment, not
-// the code under test, denied the operation.
+// Refused reports a permission refusal or the explicit channel-path limit.
+// Bare EINVAL and other unexpected probe errors remain faults.
 func Refused(err error) bool {
-	return errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES) || errors.Is(err, fs.ErrPermission)
+	return errors.Is(err, ErrSocketPathTooLong) || errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES) || errors.Is(err, fs.ErrPermission)
+}
+
+// ErrSocketPathTooLong identifies the channel-directory limit in session/privatefs.go.
+var ErrSocketPathTooLong = errors.New("socket path exceeds the library's 90-byte channel-directory limit")
+
+// RequireNestedSandbox probes a trivial OS sandbox independently of generated profiles.
+func RequireNestedSandbox(t testing.TB) {
+	t.Helper()
+	require(t, "a nested OS sandbox", nestedSandbox.result())
+}
+
+// RequireLoopback probes listening and connecting on IPv4 localhost.
+func RequireLoopback(t testing.TB) {
+	t.Helper()
+	require(t, "a loopback listener", loopback.result())
+}
+
+// Listen checks an actual test listener; unexpected errors still fail loudly.
+func Listen(t testing.TB, network, addr string) net.Listener {
+	t.Helper()
+	l, err := net.Listen(network, addr)
+	SkipIfRefused(t, "a "+network+" listener", err)
+	return l
+}
+
+func probeLoopback() error {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return &Refusal{Op: "listen", Err: err}
+	}
+	defer l.Close()
+	c, err := net.Dial("tcp", l.Addr().String())
+	if err != nil {
+		return &Refusal{Op: "connect", Err: err}
+	}
+	return c.Close()
+}
+
+// RequireAtomicWrite probes reserved file-tool temporaries. An outer command
+// sandbox deliberately protects these names, even below its writable TMPDIR.
+func RequireAtomicWrite(t testing.TB) {
+	t.Helper()
+	require(t, "creating an atomic workbench temporary", atomicWrite.result())
+}
+
+func probeAtomicWrite() error {
+	dir, err := os.MkdirTemp("", "ah-write-")
+	if err != nil {
+		return &Refusal{Op: "mkdir", Err: err}
+	}
+	defer os.RemoveAll(dir)
+	name := filepath.Join(dir, ".harness-workbench-00000000000000000000000000000000-0123456789abcdef.tmp")
+	f, err := os.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
+	if err != nil {
+		return &Refusal{Op: "create", Err: err}
+	}
+	defer f.Close()
+	if _, err := f.Write([]byte("probe")); err != nil {
+		return &Refusal{Op: "write", Err: err}
+	}
+	if _, err := f.Seek(0, 0); err != nil {
+		return err
+	}
+	var b [5]byte
+	if _, err := f.Read(b[:]); err != nil {
+		return &Refusal{Op: "read", Err: err}
+	}
+	return nil
 }

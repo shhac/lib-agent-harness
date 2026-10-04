@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
 func TestClaudeNativeLoginEnvironment(t *testing.T) {
@@ -38,6 +39,7 @@ func TestClaudeNativeLoginEnvironment(t *testing.T) {
 }
 
 func TestClaudeTransportIsCoordinationOnlyAndUsesState(t *testing.T) {
+	testenv.RequireLoopback(t) // Constrained CLI preflight starts a local refusal provider.
 	root := t.TempDir()
 	calls := 0
 	reserved := false
@@ -100,6 +102,7 @@ func TestClaudeRejectsNativeToolsAndMalformedResult(t *testing.T) {
 }
 
 func TestClaudeDoesNotRetryFailure(t *testing.T) {
+	testenv.RequireLoopback(t) // Constrained CLI preflight starts a local refusal provider.
 	calls := 0
 	cfg := Config{Provider: cliProvider(harness.Claude, "test", ""), Model: "test", MaxContextBytes: 10000, run: func(context.Context, string, []string, string, []string, string) ([]byte, error) {
 		calls++

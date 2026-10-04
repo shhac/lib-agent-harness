@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 	"github.com/shhac/lib-agent-harness/process"
 )
 
@@ -63,6 +64,7 @@ func TestWorkbenchLinuxStructuralProof(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
+	testenv.RequireUnixSocket(t) // TMPDIR must fit the library channel and kernel socket limits.
 	socket := filepath.Join(t.TempDir(), "socket")
 	listener, e := net.Listen("unix", socket)
 	if e != nil {
@@ -542,6 +544,7 @@ func TestWorkbenchLinuxSocketClientSelection(t *testing.T) {
 }
 
 func TestWorkbenchLinuxSocketBaselineNonzeroAfterConnect(t *testing.T) {
+	testenv.RequireUnixSocket(t) // Long sandbox TMPDIR cannot hold this Unix socket.
 	path := filepath.Join(t.TempDir(), "socket")
 	l, e := net.Listen("unix", path)
 	if e != nil {

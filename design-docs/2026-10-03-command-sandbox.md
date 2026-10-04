@@ -124,3 +124,34 @@ consumer adoption is separate and requires no breaking migration.
 
 See [the final sandbox package boundary](2026-10-03-sandbox-package.md) for
 ownership, the split verification cache, error translation and compatibility.
+
+### Checking the library inside the command boundary
+
+The test suite probes refused prerequisites through internal/testenv: nested
+Seatbelt, the Linux full-flags bubblewrap trial, Unix sockets under TMPDIR,
+loopback listen/connect, writes outside allowed scratch, reserved atomic
+workbench temporaries, and access to system paths needed by mount fixtures. The socket probe
+checks session/privatefs.go's 90-byte channel-directory limit before binding;
+bare EINVAL and other unexpected errors remain failures. Shared probes cache
+one verdict per test binary, including concurrent callers. A partially completed
+socket probe closes its listener and removes its directory; a killed probe can
+leave a random owner-only ahp-* directory; an interrupted atomic-write probe
+can similarly leave ah-write-* scratch. Successful and refused probes clean
+up their temporary directories.
+
+The CI re-exec fixture opens the real command sandbox with padded private
+scratch and checks that nested-sandbox and Unix socket-path tests (plus loopback-bind on macOS;
+Linux allows the private namespace's own localhost) exit zero with named SKIP reasons. It repeats them with NO_SKIP=1 in the command
+string and requires FAIL and “forbids skipping”. Env neither inherits nor accepts
+AGENT_HARNESS_* variables. Timeouts, truncation and interrupted fixture runs
+fail the assertion; Run settles its tree and Close removes the runtime state.
+
+The opt-in `go run ./internal/cmd/sandboxcheck` runner runs vet and race tests
+from the module root with the cached toolchain/modules, no downloads, and a
+private GOCACHE. Cancellation settles Run before Close; SIGKILL may leave
+scratch, with interrupted command state swept on the next Open of that home.
+This is test infrastructure only: no sandbox profile, permissions or
+harness.Support claims change. After landing the owner confirms the runner
+unsandboxed on macOS and Linux with bubblewrap, and confirms an unsandboxed
+NO_SKIP race run retains full coverage. Implementer/QA command sandboxes cannot
+perform that nested owner confirmation.

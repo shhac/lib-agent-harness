@@ -6,8 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/shhac/lib-agent-harness/internal/testenv"
 	"golang.org/x/sys/windows"
+
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
 // shortName is the 8.3 alias Windows gives the last element of name, or ""

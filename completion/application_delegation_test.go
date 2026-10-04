@@ -10,11 +10,13 @@ import (
 	"testing"
 
 	"github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
 // A transport without native agents must still carry the caller's delegation
 // function. The CLI proposes an action; only the application may execute it.
 func TestApplicationDelegationAcrossConstrainedTransports(t *testing.T) {
+	testenv.RequireLoopback(t) // Constrained CLI preflight starts a local refusal provider.
 	// Use an existing executable for preflight on every platform. The injected
 	// transport handles every invocation; no CLI or native login is required.
 	binary, err := os.Executable()

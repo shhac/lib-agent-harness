@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
 // Synthetic installation and configuration; never reads the real app or home.
@@ -105,6 +107,7 @@ func fakeBrowserProof(url, scenario string) int {
 }
 
 func TestCodexSandboxBrowserProofAdmission(t *testing.T) {
+	testenv.RequireLoopback(t) // Native canary proof uses a local provider and network witnesses.
 	for scenario, want := range map[string]string{"sandbox-ok": "", "browser-proof-write": CapabilityBrowserSandboxNotEnforced, "browser-proof-file": CapabilityBrowserSandboxNotEnforced, "browser-proof-error": CapabilityBrowserSandboxUnproven, "browser-proof-crash": CapabilityBrowserSandboxUnproven, "browser-proof-no-result": CapabilityBrowserSandboxUnproven} {
 		t.Run(scenario, func(t *testing.T) {
 			binary, log := fakeHarness(t, scenario)
@@ -208,6 +211,7 @@ func TestBrowserSandboxJudgement(t *testing.T) {
 }
 
 func TestSandboxBrowserEvidenceChangesWithInstallation(t *testing.T) {
+	testenv.RequireLoopback(t) // Native canary proof uses a local provider and network witnesses.
 	binary, log := fakeHarness(t, fakeSandboxOK)
 	o := sandboxOptions(t, "codex", binary, true)
 	o.Browser = true

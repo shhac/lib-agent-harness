@@ -11,10 +11,12 @@ import (
 
 	"github.com/shhac/lib-agent-harness/completion"
 	"github.com/shhac/lib-agent-harness/internal/sandboxhook"
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 	"github.com/shhac/lib-agent-harness/sandbox"
 )
 
 func TestWorkbenchLegacyTemporaryResume(t *testing.T) {
+	testenv.RequireAtomicWrite(t) // The outer command boundary refuses reserved atomic temporaries.
 	for _, fail := range []bool{false, true} {
 		t.Run(map[bool]string{false: "removes_only_own", true: "failure_is_unusable"}[fail], func(t *testing.T) {
 			o := workbenchOptions(t, nopHandler())

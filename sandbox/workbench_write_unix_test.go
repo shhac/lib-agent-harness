@@ -13,9 +13,12 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
 func TestWorkbenchWriteFIFOAndSetID(t *testing.T) {
+	testenv.RequireAtomicWrite(t) // The outer command boundary refuses reserved atomic temporaries.
 	w, work, _ := testWorkspace(t)
 	w.id = newID()
 	fifo := filepath.Join(work, "fifo")
@@ -50,6 +53,7 @@ func TestWorkbenchWriteFIFOAndSetID(t *testing.T) {
 }
 
 func TestWorkbenchNewFileModeUmask(t *testing.T) {
+	testenv.RequireAtomicWrite(t) // The outer command boundary refuses reserved atomic temporaries.
 	if mask := os.Getenv("WORKBENCH_TEST_UMASK"); mask != "" {
 		n, _ := strconv.ParseInt(mask, 8, 32)
 		syscall.Umask(int(n))

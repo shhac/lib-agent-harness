@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io/fs"
 	"net"
 	"os"
 	"os/exec"
@@ -22,21 +21,12 @@ import (
 
 func requireWorkbenchSeatbelt(t *testing.T) {
 	t.Helper()
+	testenv.RequireLoopback(t) // Real command proofs need network witnesses.
 	testenv.RequireProcessGroup(t)
-	// A trivial profile isolates nesting refusal from generated-profile errors.
-	trivial := exec.Command("/usr/bin/sandbox-exec", "-p", "(version 1)(allow default)", "/bin/sh", "-c", "true")
-	out, err := trivial.CombinedOutput()
-	if err != nil {
-		var exit *exec.ExitError
-		aborted := errors.As(err, &exit) && exit.ProcessState.Sys().(syscall.WaitStatus).Signal() == syscall.SIGABRT
-		if aborted || strings.Contains(string(out), "sandbox_apply: Operation not permitted") {
-			err = errors.Join(fs.ErrPermission, err)
-		}
-		testenv.SkipIfRefused(t, "nested Seatbelt launch", err)
-	}
+	testenv.RequireNestedSandbox(t)
 	profile := seatbeltProfile(workbenchLayout{Work: t.TempDir(), Home: t.TempDir(), Tmp: t.TempDir(), System: workbenchSystemDirs(), Write: true})
 	cmd := exec.Command("/usr/bin/sandbox-exec", "-p", profile, "/bin/sh", "-c", "true")
-	out, err = cmd.CombinedOutput()
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("generated Seatbelt profile failed after trivial launch succeeded: %v: %s", err, out)
 	}
@@ -191,6 +181,7 @@ func TestWorkbenchCanaryJudge(t *testing.T) {
 }
 
 func TestWorkbenchCanaryWithoutSandboxReportsEscapes(t *testing.T) {
+	testenv.RequireLoopback(t) // Provider fixtures and canaries need a real loopback bind.
 	// All filesystem and socket escapes use disposable fixtures. The two
 	// privileged witnesses use synthetic success here; only the real canary
 	// establishes keychain and disk-image denial against the installed OS.
@@ -210,9 +201,7 @@ func TestWorkbenchCanaryWithoutSandboxReportsEscapes(t *testing.T) {
 	read := filepath.Join(root, "readset")
 	l := workbenchLayout{Work: work, Home: filepath.Join(root, "runtime", "home"), Tmp: filepath.Join(root, "runtime", "tmp"), Write: true}
 	for _, p := range []string{filepath.Join(work, ".git", "config"), filepath.Join(work, ".GIT", "config"), filepath.Join(root, "owner", "marker"), filepath.Join(root, "private", "marker"), filepath.Join(root, "runtime", "transcript"), filepath.Join(read, "marker"), filepath.Join(work, ".harness-workbench-00000000000000000000000000000000-0000000000000000.tmp")} {
-		if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
-			t.Fatal(err)
-		}
+		testenv.SkipIfRefused(t, "creating the canary workspace and git fixtures", os.MkdirAll(filepath.Dir(p), 0700))
 		// Only an actual fixture permission refusal may skip; CI forbids it.
 		testenv.SkipIfRefused(t, "canary fixture creation", os.WriteFile(p, []byte("marker\n"), 0600))
 	}
@@ -453,6 +442,7 @@ func TestWorkbenchRealCanary(t *testing.T) {
 }
 
 func TestWorkbenchWidenedProfileFailsProof(t *testing.T) {
+	testenv.RequireLoopback(t) // Provider fixtures and canaries need a real loopback bind.
 	requireWorkbenchSeatbelt(t)
 	root := t.TempDir()
 	work := filepath.Join(root, "work")

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
 func claudeResult(subtype string, isError bool, usage string) string {
@@ -262,6 +263,7 @@ func TestFailedParseKeepsUsageAndReturnsNoProposal(t *testing.T) {
 // A CLI that exits nonzero after the provider billed the request must not make
 // that consumption disappear.
 func TestProcessFailureKeepsReportedConsumption(t *testing.T) {
+	testenv.RequireLoopback(t) // Constrained CLI preflight starts a local refusal provider.
 	root := t.TempDir()
 	stream := claudeResultWithCost("error_during_execution", true, `{"input_tokens":40,"output_tokens":8,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}`, "0.75")
 	cfg := Config{Provider: cliProvider(harness.Claude, "test-claude", filepath.Join(root, "login")), Model: "test-model", WorkDirRoot: root, MaxContextBytes: 100000, Timeout: time.Second}
@@ -365,6 +367,7 @@ func TestCodexContextWindowIsUnknown(t *testing.T) {
 }
 
 func TestClaudeContextWindowSurvivesSuccessParseAndProcessFailure(t *testing.T) {
+	testenv.RequireLoopback(t) // Constrained CLI preflight starts a local refusal provider.
 	stream := claudeAssistant("claude-opus-4-7") + "\n" + claudeResultWithModels("success", false, `{"input_tokens":10,"output_tokens":4}`, claudeModelUsage(map[string]string{"claude-opus-4-7": "200000"}))
 	result, err := parseClaude([]byte(stream), nil)
 	if err != nil || result.ContextWindow != 200000 || !result.Usage.Known {

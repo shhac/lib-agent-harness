@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 	"github.com/shhac/lib-agent-harness/internal/tomltest"
 
 	"github.com/shhac/lib-agent-harness"
@@ -96,6 +97,7 @@ func TestCodexOverridesReadBackAsTheirValues(t *testing.T) {
 }
 
 func TestCodexTransportProposesOnlyCallerTools(t *testing.T) {
+	testenv.RequireLoopback(t) // Constrained CLI preflight starts a local refusal provider.
 	t.Setenv("CODEX_HOME", t.TempDir())
 	calls := 0
 	reservations := 0
@@ -152,6 +154,7 @@ func findProbeURL(args []string) string {
 }
 
 func TestCodexProbeFailsBeforeBillableCall(t *testing.T) {
+	testenv.RequireLoopback(t) // Constrained CLI preflight starts a local refusal provider.
 	t.Setenv("CODEX_HOME", t.TempDir())
 	for _, request := range []string{`{"model":"test-model","reasoning":{"effort":"high"},"tools":[{"name":"shell"}]}`, `{"model":"substitute","reasoning":{"effort":"high"}}`, `{"model":"test-model","reasoning":{"effort":"low"}}`} {
 		t.Run(request, func(t *testing.T) {
@@ -194,6 +197,7 @@ func TestCodexRejectsUnsafeOrPartialOutput(t *testing.T) {
 // It neither calls a model nor uses the owner's login. New CLI builds must pass
 // this same capability check before each real model invocation in production.
 func TestInstalledCodexCapabilityProbe(t *testing.T) {
+	testenv.RequireLoopback(t) // Constrained CLI preflight starts a local refusal provider.
 	bin := os.Getenv("AGENT_HARNESS_TEST_CODEX")
 	if bin == "" {
 		t.Skip("set AGENT_HARNESS_TEST_CODEX to test installed CLI without inference")
@@ -224,6 +228,7 @@ func TestInstalledCodexCapabilityProbe(t *testing.T) {
 }
 
 func TestInstalledCodexStructuredResponse(t *testing.T) {
+	testenv.RequireLoopback(t) // Provider fixtures and canaries need a real loopback bind.
 	bin := os.Getenv("AGENT_HARNESS_TEST_CODEX")
 	if bin == "" {
 		t.Skip("set AGENT_HARNESS_TEST_CODEX for local-only protocol smoke")
@@ -247,7 +252,7 @@ func TestInstalledCodexStructuredResponse(t *testing.T) {
 
 	envelope := `{"content":"Ready.","tool_calls":[]}`
 	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := &httptest.Server{Config: &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
 		var body map[string]any
 		if json.NewDecoder(r.Body).Decode(&body) != nil {
@@ -280,7 +285,8 @@ func TestInstalledCodexStructuredResponse(t *testing.T) {
 			data, _ := json.Marshal(event)
 			fmt.Fprintf(w, "data: %s\n\n", data)
 		}
-	}))
+	})}, Listener: testenv.Listen(t, "tcp", "127.0.0.1:0")}
+	server.Start()
 	defer server.Close()
 	args, err := codexArgs(cfg, dir, filepath.Join(dir, "models.json"), filepath.Join(dir, "schema.json"), filepath.Join(dir, "instructions.txt"))
 	if err != nil {
@@ -419,6 +425,7 @@ func TestConfiguredCodexHomeGuardChecksSelectedDirectory(t *testing.T) {
 }
 
 func TestConcurrentCodexRequestsKeepTheirSelectedHomes(t *testing.T) {
+	testenv.RequireLoopback(t) // Constrained CLI preflight starts a local refusal provider.
 	ambient := t.TempDir()
 	t.Setenv("CODEX_HOME", ambient)
 	// A valid explicitly configured home must work even when the daemon inherited

@@ -51,6 +51,8 @@ func TestRequireSkipsOnlyARefusal(t *testing.T) {
 		{name: "eacces", err: &Refusal{Op: "connect", Err: syscall.EACCES}, skip: "environment refuses a thing: connect: permission denied"},
 		{name: "wrapped", err: fmt.Errorf("start: %w", &os.PathError{Op: "fork/exec", Path: "/bin/sh", Err: syscall.EPERM}), skip: "environment refuses a thing"},
 		{name: "enoent", err: &Refusal{Op: "start", Err: syscall.ENOENT}, failure: "probing a thing failed: start: " + syscall.ENOENT.Error()},
+		{name: "socket limit", err: &Refusal{Op: "socket path", Err: ErrSocketPathTooLong}, skip: "environment refuses a thing: socket path: "},
+		{name: "einval", err: &Refusal{Op: "listen", Err: syscall.EINVAL}, failure: "probing a thing failed: listen: " + syscall.EINVAL.Error()},
 		{name: "other", err: errors.New("ps reported nothing"), failure: "probing a thing failed: ps reported nothing"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -106,11 +108,50 @@ func TestProbeRunsOnceForEveryCaller(t *testing.T) {
 // where the suite runs, and the Require helpers act on it. Nothing else is an
 // acceptable outcome, and the verdict is logged for go test -v.
 func TestProbesReportAllowedOrRefused(t *testing.T) {
-	for name, p := range map[string]*probe{"unix socket": unixSocket, "process group": processGroup, "process status": processStatus, "group priority": groupPriority} {
+	for name, p := range map[string]*probe{"unix socket": unixSocket, "process group": processGroup, "process status": processStatus, "group priority": groupPriority, "nested OS sandbox": nestedSandbox, "loopback listener": loopback, "atomic workbench temporary": atomicWrite} {
 		err := p.result()
 		t.Logf("%s: %v", name, err)
 		if err != nil && !Refused(err) {
 			t.Errorf("%s probe failed without a refusal: %v", name, err)
 		}
+	}
+}
+
+func TestNewCapabilityReasonsAndNoSkip(t *testing.T) {
+	for _, what := range []string{"a nested OS sandbox", "a loopback listener", "a Unix domain socket under TMPDIR"} {
+		for _, noSkip := range []string{"", "1"} {
+			t.Setenv(NoSkipVariable, noSkip)
+			r := &recorder{}
+			func() {
+				defer func() {
+					if v := recover(); v != nil && v != r {
+						panic(v)
+					}
+				}()
+				require(r, what, &Refusal{Op: "probe", Err: ErrSocketPathTooLong})
+			}()
+			if noSkip == "" {
+				if !strings.Contains(r.skipped, what) || !strings.Contains(r.skipped, "90-byte") || r.failed != "" {
+					t.Fatalf("%+v", r)
+				}
+			} else if r.skipped != "" || !strings.Contains(r.failed, "forbids skipping") || !strings.Contains(r.failed, what) {
+				t.Fatalf("%+v", r)
+			}
+		}
+	}
+}
+
+func TestCapabilityProbesShareVerdict(t *testing.T) {
+	for _, p := range []*probe{unixSocket, processGroup, processStatus, groupPriority, nestedSandbox, loopback, atomicWrite} {
+		want := p.result()
+		var wg sync.WaitGroup
+		for range 16 {
+			wg.Go(func() {
+				if got := p.result(); got != want {
+					t.Errorf("verdict changed: %v / %v", got, want)
+				}
+			})
+		}
+		wg.Wait()
 	}
 }

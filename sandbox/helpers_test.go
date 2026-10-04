@@ -25,9 +25,9 @@ func symlink(t *testing.T, target, link string) {
 func writeFile(t *testing.T, name, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(name), 0o700); err != nil {
-		t.Fatal(err)
+		testenv.SkipIfRefused(t, "creating a workspace fixture", err)
 	}
 	if err := os.WriteFile(name, []byte(content), 0o600); err != nil {
-		t.Fatal(err)
+		testenv.SkipIfRefused(t, "creating a workspace fixture", err)
 	}
 }

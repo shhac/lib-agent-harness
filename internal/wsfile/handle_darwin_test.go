@@ -3,6 +3,8 @@ package wsfile
 import (
 	"os"
 	"testing"
+
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
 func TestDistinctDarwinMounts(t *testing.T) {
@@ -16,9 +18,7 @@ func TestDistinctDarwinMounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	f, err := os.Open("/dev")
-	if err != nil {
-		t.Fatal(err)
-	}
+	testenv.SkipIfRefused(t, "opening the /dev mount", err)
 	defer f.Close()
 	facts, err := Check(f, m)
 	if err != nil || facts.SameMount {

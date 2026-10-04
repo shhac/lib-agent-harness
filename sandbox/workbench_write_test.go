@@ -10,9 +10,12 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
 func TestWorkbenchAtomicWriteAndEdit(t *testing.T) {
+	testenv.RequireAtomicWrite(t) // The outer command boundary refuses reserved atomic temporaries.
 	w, work, _ := testWorkspace(t)
 	w.id = newID()
 	w.mode = 0644
@@ -50,6 +53,7 @@ func TestWorkbenchAtomicWriteAndEdit(t *testing.T) {
 }
 
 func TestWorkbenchWriteRefusals(t *testing.T) {
+	testenv.RequireAtomicWrite(t) // The outer command boundary refuses reserved atomic temporaries.
 	w, work, outside := testWorkspace(t)
 	w.id = newID()
 	writeFile(t, filepath.Join(work, ".git", "config"), "metadata")
@@ -82,6 +86,7 @@ func TestWorkbenchWriteRefusals(t *testing.T) {
 }
 
 func TestWorkbenchNewReadOnlyModeCreatesParents(t *testing.T) {
+	testenv.RequireAtomicWrite(t) // The outer command boundary refuses reserved atomic temporaries.
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows inherits ACLs instead of permission bits")
 	}
@@ -104,6 +109,7 @@ func TestWorkbenchNewReadOnlyModeCreatesParents(t *testing.T) {
 }
 
 func TestWorkbenchWriteFaults(t *testing.T) {
+	testenv.RequireAtomicWrite(t) // The outer command boundary refuses reserved atomic temporaries.
 	for _, stage := range []string{"create", "write", "sync_file", "chmod", "rename", "sync_directory"} {
 		t.Run(stage, func(t *testing.T) {
 			w, work, _ := testWorkspace(t)
@@ -134,6 +140,7 @@ func TestWorkbenchWriteFaults(t *testing.T) {
 }
 
 func TestWorkbenchWritePreservesModeAndRefusesLinks(t *testing.T) {
+	testenv.RequireAtomicWrite(t) // The outer command boundary refuses reserved atomic temporaries.
 	for _, mode := range []os.FileMode{0755, 0640} {
 		t.Run(mode.String(), func(t *testing.T) {
 			w, work, _ := testWorkspace(t)
@@ -162,6 +169,7 @@ func TestWorkbenchWritePreservesModeAndRefusesLinks(t *testing.T) {
 }
 
 func TestWorkbenchWriteCancellationAtCommit(t *testing.T) {
+	testenv.RequireAtomicWrite(t) // The outer command boundary refuses reserved atomic temporaries.
 	for _, stage := range []string{"chmod", "sync_directory"} {
 		t.Run(stage, func(t *testing.T) {
 			w, work, _ := testWorkspace(t)
@@ -192,6 +200,7 @@ func TestWorkbenchWriteCancellationAtCommit(t *testing.T) {
 }
 
 func TestWorkbenchRenameErrorJudgedByIdentity(t *testing.T) {
+	testenv.RequireAtomicWrite(t) // The outer command boundary refuses reserved atomic temporaries.
 	for _, effect := range []bool{true, false} {
 		t.Run(strconv.FormatBool(effect), func(t *testing.T) {
 			w, work, _ := testWorkspace(t)

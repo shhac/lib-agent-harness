@@ -60,6 +60,7 @@ func TestBwrapTrialClassifiesOnlyExitStatus(t *testing.T) {
 
 func linuxTestLayout(t *testing.T) workbenchLayout {
 	t.Helper()
+	requireBwrapSystemMetadata(t)
 	root := t.TempDir()
 	l := workbenchLayout{Work: filepath.Join(root, "work"), Home: filepath.Join(root, "home"), Tmp: filepath.Join(root, "tmp"), System: bwrapSystemDirs()}
 	for _, p := range []string{l.Work, l.Home, l.Tmp} {
@@ -84,6 +85,14 @@ func TestBwrapVersion(t *testing.T) {
 
 func TestWorkbenchLinuxSocketAbsenceRequiresReadableParents(t *testing.T) {
 	root := t.TempDir()
+	// The shell witness walks and reads every ancestor, not just the fixture.
+	for parent := root; ; parent = filepath.Dir(parent) {
+		_, err := os.ReadDir(parent)
+		testenv.SkipIfRefused(t, "reading socket witness parent directories", err)
+		if parent == filepath.Dir(parent) {
+			break
+		}
+	}
 	socket := filepath.Join(root, "socket")
 	check := func(path string, want bool) {
 		t.Helper()
@@ -268,6 +277,7 @@ func simulateBwrap(t *testing.T, args []string) {
 }
 
 func TestBwrapArgsPhases(t *testing.T) {
+	requireBwrapSystemMetadata(t)
 	for _, tc := range []struct {
 		work, home, tmp string
 		read            []string
@@ -397,5 +407,18 @@ func TestWorkbenchLinuxCanaryJudge(t *testing.T) {
 	}
 	if judgeLinuxWorkbench(good, true, true, false, false) == nil || judgeLinuxWorkbench(good, false, false, false, false) == nil || judgeLinuxWorkbench(good, true, false, true, false) == nil {
 		t.Fatal("observations ignored")
+	}
+}
+
+func requireBwrapSystemMetadata(t *testing.T) {
+	t.Helper()
+	// Missing optional Linux paths are expected on macOS; permission denial is
+	// different. Nested fails closed on that denial when checking placement.
+	for _, path := range append(bwrapSystemDirs(), "/etc") {
+		_, err := os.Stat(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		testenv.SkipIfRefused(t, "reading Linux sandbox system-path metadata", err)
 	}
 }

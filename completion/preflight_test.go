@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
 func requireDiagnostic(t *testing.T, err error, engine harness.Engine, phase ErrorPhase, code string) *RequestError {
@@ -35,6 +36,7 @@ func requireDiagnostic(t *testing.T, err error, engine harness.Engine, phase Err
 }
 
 func TestCompletePreflightDiagnostics(t *testing.T) {
+	testenv.RequireLoopback(t) // Constrained CLI preflight starts a local refusal provider.
 	binary, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -161,6 +163,7 @@ func TestProbeMismatchDiagnostics(t *testing.T) {
 }
 
 func TestCompletionPreservesCallerBeforeRequestError(t *testing.T) {
+	testenv.RequireLoopback(t) // Constrained CLI preflight starts a local refusal provider.
 	binary, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)

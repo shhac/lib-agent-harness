@@ -16,6 +16,7 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
 func TestJudgeLoopback(t *testing.T) {
@@ -51,6 +52,7 @@ func TestJudgeLoopback(t *testing.T) {
 // The real canary, run with no sandbox at all, must be caught: the witness it
 // is handed is reachable, so the judge sees an open network.
 func TestLoopbackCanaryUnsandboxedIsCaught(t *testing.T) {
+	testenv.RequireLoopback(t) // Provider fixtures and canaries need a real loopback bind.
 	if _, err := exec.LookPath("nc"); err != nil {
 		t.Skip("no nc on this machine")
 	}
@@ -96,8 +98,10 @@ func TestLoopbackCanaryIsFlat(t *testing.T) {
 }
 
 func TestCanaryProviderScriptsOneCallAndReadsItsResult(t *testing.T) {
+	testenv.RequireLoopback(t) // Provider fixtures and canaries need a real loopback bind.
 	result := make(chan string, 1)
-	server := httptest.NewServer(canaryProvider("echo canary", result))
+	server := &httptest.Server{Config: &http.Server{Handler: canaryProvider("echo canary", result)}, Listener: testenv.Listen(t, "tcp", "127.0.0.1:0")}
+	server.Start()
 	defer server.Close()
 	post := func(body string) (*http.Response, string) {
 		t.Helper()

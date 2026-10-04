@@ -17,6 +17,7 @@ import (
 
 	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/completion"
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
 const apiToken = "sk-synthetic-SECRET-7f3a9c"
@@ -81,9 +82,11 @@ type fakeEndpoint struct {
 }
 
 func newEndpoint(t *testing.T, replies ...endpointReply) *fakeEndpoint {
+	testenv.RequireLoopback(t) // Provider fixtures and canaries need a real loopback bind.
 	t.Helper()
 	e := &fakeEndpoint{t: t, replies: replies, quit: make(chan struct{})}
-	server := httptest.NewServer(http.HandlerFunc(e.serve))
+	server := &httptest.Server{Config: &http.Server{Handler: http.HandlerFunc(e.serve)}, Listener: testenv.Listen(t, "tcp", "127.0.0.1:0")}
+	server.Start()
 	t.Cleanup(func() {
 		close(e.quit)
 		server.Close()

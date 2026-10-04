@@ -329,6 +329,7 @@ var readFileLike = ToolDefinition{Name: "view", Description: "The caller's own v
 // On the wire as well: the endpoint receives the workbench's tools after the
 // caller's.
 func TestWorkbenchToolsReachTheWire(t *testing.T) {
+	testenv.RequireLoopback(t) // Provider fixtures and canaries need a real loopback bind.
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err == nil {
 		_ = listener.Close()
@@ -424,9 +425,9 @@ func TestWorkbenchLoopCallsItsToolsBesideTheCallers(t *testing.T) {
 func writeFile(t *testing.T, name, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(name), 0o700); err != nil {
-		t.Fatal(err)
+		testenv.SkipIfRefused(t, "creating a workspace fixture", err)
 	}
 	if err := os.WriteFile(name, []byte(content), 0o600); err != nil {
-		t.Fatal(err)
+		testenv.SkipIfRefused(t, "creating a workspace fixture", err)
 	}
 }

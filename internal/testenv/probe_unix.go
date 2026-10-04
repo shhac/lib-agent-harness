@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -19,6 +20,11 @@ import (
 // under os.TempDir, the base a restricted session's channel directory uses.
 // The name is random, so a directory a killed probe left behind is harmless.
 func probeUnixSocket() error {
+	// Match shortPrivateDir's directory limit, not the kernel socket limit.
+	channel := filepath.Join(os.TempDir(), "agent-harness-"+strconv.Itoa(os.Getuid()), "1234567890")
+	if len(channel) > 90 {
+		return &Refusal{Op: "socket path", Err: fmt.Errorf("%w: %d bytes", ErrSocketPathTooLong, len(channel))}
+	}
 	name := make([]byte, 4)
 	_, _ = rand.Read(name)
 	dir := filepath.Join(os.TempDir(), "ahp-"+hex.EncodeToString(name))

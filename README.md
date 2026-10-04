@@ -1439,22 +1439,25 @@ Windows. Consumers depend on published module tags, not sibling-directory
 ### Running the tests inside a sandbox
 
 The suite also runs inside a sandbox, such as the one an agent runs its
-commands in, provided it allows loopback connections: the provider stand-ins
-and capability checks listen on `127.0.0.1`. Tests that need something else
-such a sandbox commonly refuses first probe for it, once per test binary, and
-skip with the probe's refusal when the environment denies it with a permission
-error:
+commands in. Tests that need a capability such a sandbox commonly refuses
+first probe for it and skip with a one-line reason naming the capability. Shared
+probes run once per test binary. Permission refusals and the library's own
+90-byte channel-directory limit may skip; unexpected errors still fail:
 
 | Needs | Tests |
 | --- | --- |
 | Creating FIFOs, sockets, hard links and Windows junctions; a writable package directory | workbench containment tests; `TestWorkbenchFIFOAndSocketRefusal` binds directly in a workspace under `./.wbs-*` to keep the socket path short; Linux bind mounts require the CI mount setup |
+| A loopback listener and connection | local provider fixtures and CLI capability checks (`completion/`, `session/`, `sandbox/`) |
+| A `TMPDIR` short enough for the library's 90-byte channel directory | restricted session and tool-host tests; checked before the probe binds, so a long path is not mistaken for an unexplained EINVAL |
 | A Unix domain socket under `TMPDIR` | every test that opens a restricted or sandboxed session's tool channel (`session/`) |
 | A process group of its own (setpgid) | the tests of what containment does with the group — detach, group cancellation, descendant pipes, escapees, sweeps (`process/`); the stand-in bridge and `Reclaim` tests (`session/`) |
 | Reading process status with `ps` | the cancelled-group and sweep tests (`process/`), which otherwise could not tell a live process from a gone one |
 | Lowering a process group's priority | `TestBackgroundLowersTheWholeTree` (`process/`) |
 | Writing `/tmp` and `TMPDIR` directly | `TestOpenCanaryEscapesAreEachDetected` (`session/`): an outer sandbox contains the unsandboxed canary too, which then rightly reports no escape |
 | A real Linux bubblewrap launch | five-phase mount simulation, fixed refusals, four canary layouts, raw syscall attacks, edit-and-run and cleanup; distribution and SHA-256-checked upstream 0.8.0 CI jobs forbid skips |
-| A real macOS Seatbelt launch | workbench canary, edit-and-run, cancellation and crash-cleanup tests; the generated profile is parsed before an OS permission refusal can skip, and CI forbids that skip |
+| Creating reserved atomic workbench temporaries | file-tool write/edit, recovery and reserved-file fixtures; a command sandbox deliberately protects these names even under TMPDIR |
+| Reading Linux system-path metadata and socket-witness ancestors; opening /dev | Linux mount-builder fixtures and the macOS distinct-mount test probe actual paths, skipping only permission refusals |
+| A nested OS sandbox on macOS | a cached trivial Seatbelt launch checks nesting independently of generated profiles; real workbench canary, edit-and-run, cancellation and crash-cleanup tests still prove their generated profiles after the prerequisite succeeds |
 
 Any other probe failure fails the test, so a real fault is never hidden behind a
 skip. `go test -v ./...` lists each skip with its reason, for example
@@ -1464,7 +1467,37 @@ process group of their own, and that has to work wherever the library runs.
 
 Setting `AGENT_HARNESS_TEST_NO_SKIP=1` turns every such skip into a failure. CI
 sets it, so an unsandboxed run can never pass by skipping. The helpers live in
-`internal/testenv`.
+`internal/testenv`. A bare bind EINVAL remains a failure.
+
+To check the entire suite under the library's own command boundary, run from
+the module root in an **unsandboxed** checkout with dependencies already cached:
+
+```sh
+go run ./internal/cmd/sandboxcheck
+```
+
+The runner uses the installed Go toolchain, read-only cached modules, private
+scratch for GOCACHE, no proxy or toolchain downloads, and a ten-minute timeout.
+It prints vet/test output and propagates the command's exit status; cancellation
+settles the command tree before Close. A crash may leave private runtime scratch;
+Open sweeps interrupted command state through its lifetime lock on reuse.
+The working tree receives only normal Go test writes. A stopped socket probe may
+leave an owner-only random `ahp-*` directory under TMPDIR; a killed atomic-write
+probe may similarly leave `ah-write-*` scratch.
+
+`TestCommandSandboxRunSkipsRefusedCapabilities` is CI's re-exec evidence:
+nested sandbox and Unix channel-path prerequisites skip inside
+a real command sandbox (plus loopback bind on macOS; Linux permits its
+namespace's own localhost), and the same fixtures fail with NO_SKIP. The outer CI
+run still forbids prerequisite skips. NO_SKIP cannot be inherited or supplied
+through `sandbox.Options.Env`; set it in the sandboxed command string.
+`go run ./internal/cmd/sandboxcheck -no-skip` does this explicitly and is
+expected to fail where the command boundary refuses prerequisites.
+
+After landing, the owner confirms the default runner exits zero on unsandboxed
+macOS and Linux with bubblewrap, then runs
+`AGENT_HARNESS_TEST_NO_SKIP=1 go test -race ./...` unsandboxed for full coverage.
+These test-only changes do not alter `harness.Support` or production sandboxes.
 
 Licensed under [PolyForm Perimeter 1.0.0](LICENSE), matching the sibling
 `lib-agent-*` libraries.

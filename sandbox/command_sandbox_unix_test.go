@@ -18,6 +18,7 @@ import (
 
 	"github.com/shhac/lib-agent-harness/internal/sandboxhook"
 	"github.com/shhac/lib-agent-harness/internal/skills"
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 	"github.com/shhac/lib-agent-harness/process"
 )
 
@@ -138,6 +139,7 @@ func TestCommandSandboxRealRunAndClose(t *testing.T) {
 }
 
 func TestCommandSandboxRealLoopbackSuite(t *testing.T) {
+	testenv.RequireLoopback(t) // Provider fixtures and canaries need a real loopback bind.
 	for _, allowed := range []bool{false, true} {
 		t.Run(fmt.Sprint(allowed), func(t *testing.T) {
 			s := openTestCommandSandbox(t, commandSandboxOptions(t, allowed))
@@ -170,6 +172,7 @@ func TestCommandSandboxRealLoopbackSuite(t *testing.T) {
 }
 
 func TestCommandSandboxRealStartedServer(t *testing.T) {
+	testenv.RequireLoopback(t) // Provider fixtures and canaries need a real loopback bind.
 	s := openTestCommandSandbox(t, commandSandboxOptions(t, true))
 	port, err := freeLoopbackPort()
 	if err != nil {

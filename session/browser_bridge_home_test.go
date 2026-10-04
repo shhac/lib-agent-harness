@@ -119,6 +119,7 @@ func TestReadBrowserBridgeNamedHome(t *testing.T) {
 }
 
 func TestSandboxBrowserNamedHomeAndCache(t *testing.T) {
+	testenv.RequireLoopback(t) // Provider fixtures and canaries need a real loopback bind.
 	binary, log := fakeHarness(t, fakeSandboxOK)
 	o := sandboxOptions(t, "codex", binary, true)
 	o.Browser = true

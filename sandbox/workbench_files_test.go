@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
 const outsideMarker = "OUTSIDE-MARKER-4d1c"
@@ -44,6 +46,7 @@ func call(t *testing.T, ws *Workspace, tool string, args any) Result {
 	)
 	switch tool {
 	case workbenchWriteFile, workbenchEditFile:
+		testenv.RequireAtomicWrite(t) // An outer sandbox protects file-tool temporaries.
 		result, err = ws.writeFile(context.Background(), tool, raw)
 	case workbenchReadFile:
 		result, err = ws.readFile(context.Background(), raw)

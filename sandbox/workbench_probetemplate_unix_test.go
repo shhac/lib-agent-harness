@@ -181,6 +181,7 @@ func legacyNested(outer, inner string) bool {
 	}
 }
 func TestWorkbenchBwrapTemplatePinned(t *testing.T) {
+	requireBwrapSystemMetadata(t)
 	root := t.TempDir()
 	for _, name := range []string{"work/.git", "home", "tmp"} {
 		if err := os.MkdirAll(filepath.Join(root, name), 0700); err != nil {
