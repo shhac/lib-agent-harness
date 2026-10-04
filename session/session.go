@@ -47,6 +47,12 @@ type Session struct {
 	grokCapacity int64
 	// commandCodeModel is the model a Command Code session reported running.
 	commandCodeModel string
+	// commandCodeWatch is the Command Code session whose permission mode is
+	// being watched, commandCodeMode the mode it last reported, and
+	// commandCodeConfigured whether it was put in the asking mode.
+	commandCodeWatch      string
+	commandCodeMode       string
+	commandCodeConfigured bool
 	// removeSkillFiles removes the private plugin this launch wrote, once
 	// the session is over.
 	removeSkillFiles func()

@@ -21,7 +21,10 @@ package session
 //     the effort and answers with the resulting configOptions. An unknown value
 //     is refused with -32602; an effort for a model without one with -32601.
 //   - session/set_mode {sessionId, modeId} selects a permission mode. Mode
-//     "default" (Standard) asks before every tool that changes anything.
+//     "default" (Standard) asks before every tool that changes anything. Every
+//     mode change, set_mode's own included, is announced as a
+//     current_mode_update before set_mode answers; the agent can also change
+//     mode itself, through tools of kind "switch_mode".
 //   - session/prompt streams session/update notifications and answers, when
 //     the turn is over, with its stopReason, the session's cumulative usage,
 //     and the turn's own usage in _meta.usage. Only one prompt runs at a time.
@@ -279,7 +282,7 @@ func (s *Session) commandCodeHolds(ctx context.Context, id string) (bool, error)
 			return false, ErrProtocol
 		}
 		for _, listed := range *page.Sessions {
-			if listed.ID == id && filepath.Clean(listed.Cwd) == filepath.Clean(s.options.WorkDir) {
+			if listed.ID == id && sameDirectory(listed.Cwd, s.options.WorkDir) {
 				return true, nil
 			}
 		}
@@ -291,10 +294,26 @@ func (s *Session) commandCodeHolds(ctx context.Context, id string) (bool, error)
 	return false, ErrProtocol
 }
 
+// sameDirectory reports whether two paths name the same directory. Command
+// Code may list the path it was given or the one it resolves to.
+func sameDirectory(a, b string) bool {
+	if filepath.Clean(a) == filepath.Clean(b) {
+		return true
+	}
+	resolvedA, errA := filepath.EvalSymlinks(a)
+	resolvedB, errB := filepath.EvalSymlinks(b)
+	return errA == nil && errB == nil && resolvedA == resolvedB
+}
+
 // configureCommandCode puts the session in the asking mode, then sets the
 // requested model and effort. Command Code reports the configuration each
-// change produced, and that report, not the request, is what is checked.
+// change produced, and that report, not the request, is what is checked. From
+// here on the session watches the mode Command Code reports (see
+// commandCodeModeUpdate), and the mode is checked again once the rest is set.
 func (s *Session) configureCommandCode(ctx context.Context, id string, state commandCodeSessionState) error {
+	s.mu.Lock()
+	s.commandCodeWatch, s.commandCodeMode = id, state.mode
+	s.mu.Unlock()
 	if state.mode != commandCodeAskingMode {
 		if !slices.Contains(state.modes, commandCodeAskingMode) {
 			return &CapabilityError{Engine: harness.CommandCode, Code: CapabilityChangedPermissionMode, Phase: BeforeFirstPrompt}
@@ -328,10 +347,47 @@ func (s *Session) configureCommandCode(ctx context.Context, id string, state com
 		}
 		config = next
 	}
+	// The mode update set_mode announces arrives before its answer, so by now
+	// the reported mode is what the session runs in.
 	s.mu.Lock()
-	s.commandCodeModel = config.model
-	s.mu.Unlock()
+	defer s.mu.Unlock()
+	if s.commandCodeMode != commandCodeAskingMode {
+		return &CapabilityError{Engine: harness.CommandCode, Code: CapabilityChangedPermissionMode, Phase: BeforeFirstPrompt}
+	}
+	s.commandCodeModel, s.commandCodeConfigured = config.model, true
 	return nil
+}
+
+// commandCodeModeUpdate records a mode Command Code reports for the session
+// being configured or run, wherever it arrives: in a turn, between turns or
+// during configuration. Once the session is configured, any mode but the
+// asking one stops it, because every change its tools make would then run
+// without reaching the session's policy.
+func (s *Session) commandCodeModeUpdate(m map[string]json.RawMessage) bool {
+	if str(m, "method") != "session/update" {
+		return false
+	}
+	var p struct {
+		SessionID string `json:"sessionId"`
+		Update    struct {
+			Kind string `json:"sessionUpdate"`
+			Mode string `json:"currentModeId"`
+		} `json:"update"`
+	}
+	if json.Unmarshal(m["params"], &p) != nil || p.Update.Kind != "current_mode_update" {
+		return false
+	}
+	s.mu.Lock()
+	ours := p.SessionID != "" && p.SessionID == s.commandCodeWatch
+	if ours {
+		s.commandCodeMode = p.Update.Mode
+	}
+	stop := ours && s.commandCodeConfigured && p.Update.Mode != commandCodeAskingMode
+	s.mu.Unlock()
+	if stop {
+		s.fail(&CapabilityError{Engine: harness.CommandCode, Code: CapabilityChangedPermissionMode, Phase: DuringSession})
+	}
+	return true
 }
 
 func (s *Session) setCommandCodeOption(ctx context.Context, id, option, value, code string) (commandCodeConfig, error) {
@@ -389,12 +445,17 @@ func commandCodeServerReply(m map[string]json.RawMessage, permission string) map
 
 // commandCodePermissionOutcome selects the allow-once option under
 // CommandCodeAllowWhenAsked and the reject-once option otherwise, and only
-// when the request offers both. Command Code asks the user a question through
-// the same method, offering only allow-once options, one per answer; such a
-// request is answered cancelled, as is anything unreadable, so no answer and
-// no permission is ever guessed.
+// when the request offers both. A tool that would change the permission mode
+// is rejected under either policy: allowing it would let every later change
+// run without asking. Command Code asks the user a question through the same
+// method, offering only allow-once options, one per answer; such a request is
+// answered cancelled, as is anything unreadable, so no answer and no
+// permission is ever guessed.
 func commandCodePermissionOutcome(raw json.RawMessage, permission string) map[string]any {
 	var p struct {
+		ToolCall struct {
+			Kind string `json:"kind"`
+		} `json:"toolCall"`
 		Options []struct {
 			ID   string `json:"optionId"`
 			Kind string `json:"kind"`
@@ -418,7 +479,7 @@ func commandCodePermissionOutcome(raw json.RawMessage, permission string) map[st
 	if allow == "" || reject == "" {
 		return cancelled
 	}
-	if permission == CommandCodeAllowWhenAsked {
+	if permission == CommandCodeAllowWhenAsked && p.ToolCall.Kind != "switch_mode" {
 		return map[string]any{"outcome": "selected", "optionId": allow}
 	}
 	return map[string]any{"outcome": "selected", "optionId": reject}

@@ -184,6 +184,10 @@ const (
 	// BeforeFirstPrompt: the harness had started and advertised a surface that
 	// disagreed with the session's. No prompt was sent; the session was closed.
 	BeforeFirstPrompt = "before_first_prompt"
+	// DuringSession: the harness reported a change, after the session was
+	// established, that the session's configuration does not allow. The
+	// session was stopped; a turn that was running may already have done work.
+	DuringSession = "during_session"
 )
 
 // CapabilityError reports that a requested session capability could not be established.

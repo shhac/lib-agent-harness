@@ -31,6 +31,9 @@ func (s *Session) notificationLocked(m map[string]json.RawMessage) {
 	if s.options.Provider.Engine == harness.Claude && s.observeClaudeInit(m) {
 		return
 	}
+	if s.options.Provider.Engine == harness.CommandCode && s.commandCodeModeUpdate(m) {
+		return
+	}
 	if t == nil {
 		s.idleTelemetry(m, ref, nil)
 		return

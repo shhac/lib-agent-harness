@@ -1042,6 +1042,7 @@ func TestAPISessionRefusesWhatItCannotHonour(t *testing.T) {
 		{"work dir", func(o *Options) { o.WorkDir = "/w" }, RefusedConflict, harness.FailureCapability},
 		{"env", func(o *Options) { o.Env = []string{"A=b"} }, RefusedConflict, harness.FailureCapability},
 		{"policy", func(o *Options) { o.Policy.ClaudeTools = []string{} }, RefusedOtherEnginePolicy, harness.FailureCapability},
+		{"command code policy", func(o *Options) { o.Policy.CommandCodePermission = CommandCodeAllowWhenAsked }, RefusedOtherEnginePolicy, harness.FailureCapability},
 		{"effort without parameter", func(o *Options) { o.Provider.API.EffortParameter = "" }, "api_effort_parameter_required", harness.FailurePreflight},
 		{"no restriction", func(o *Options) { o.Restriction = nil }, RefusedNotConfigured, harness.FailurePreflight},
 		{"bridge", func(o *Options) { o.Restriction.Tools.Bridge = Bridge{Path: "/bin/bridge"} }, RefusedConflict, harness.FailureCapability},

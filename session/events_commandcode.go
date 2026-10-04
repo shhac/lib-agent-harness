@@ -157,7 +157,7 @@ func (s *Session) commandCodePromptEnded(t *Turn, body json.RawMessage, err erro
 		}
 		// A refused prompt is a definitive answer about this turn, not about the
 		// session, which stays usable. Tools may already have run.
-		s.commandCodeTurnEnded(t, "failed", refusal.code, Usage{})
+		s.commandCodeTurnEnded(t, "failed", refusal.code, refusal.HarnessFacts().Cause, Usage{})
 		return
 	}
 	var r struct {
@@ -174,7 +174,7 @@ func (s *Session) commandCodePromptEnded(t *Turn, body json.RawMessage, err erro
 	interrupted := t.interruptRequested
 	t.mu.Unlock()
 	status, code := commandCodeOutcome(r.StopReason, interrupted)
-	s.commandCodeTurnEnded(t, status, code, parseCommandCodeTurnUsage(r.Meta.Usage))
+	s.commandCodeTurnEnded(t, status, code, "", parseCommandCodeTurnUsage(r.Meta.Usage))
 }
 
 // commandCodeOutcome maps a stop reason to a turn status and, for a failure, a
@@ -196,8 +196,9 @@ func commandCodeOutcome(stop string, interruptRequested bool) (string, string) {
 }
 
 // commandCodeTurnEnded publishes the turn's own accounting, when Command Code
-// stated it, and its status, then ends it.
-func (s *Session) commandCodeTurnEnded(t *Turn, status, code string, usage Usage) {
+// stated it, and its status, then ends it. A refused prompt carries the
+// cause its refusal was classified with.
+func (s *Session) commandCodeTurnEnded(t *Turn, status, code string, cause harness.Cause, usage Usage) {
 	var err error
 	t.mu.Lock()
 	if usage.Known {
@@ -206,7 +207,7 @@ func (s *Session) commandCodeTurnEnded(t *Turn, status, code string, usage Usage
 	}
 	if code != "" {
 		t.result.NativeError = true
-		err = &TurnError{Engine: harness.CommandCode, Code: code}
+		err = &TurnError{Engine: harness.CommandCode, Code: code, Cause: cause}
 	}
 	t.mu.Unlock()
 	if usage.Known {

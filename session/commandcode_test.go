@@ -25,6 +25,13 @@ const (
 	// commandCodeFixtureStubborn makes set_config_option answer without
 	// changing anything, as a harness that ignored the request would.
 	commandCodeFixtureStubborn = "LIB_HARNESS_COMMAND_CODE_FIXTURE_STUBBORN"
+	// commandCodeFixtureSetMode is how set_mode behaves: "" changes the mode
+	// and announces it, "refuse" answers -32602, "silent" answers without
+	// changing anything.
+	commandCodeFixtureSetMode = "LIB_HARNESS_COMMAND_CODE_FIXTURE_SET_MODE"
+	// commandCodeFixtureResolve makes session/list name each directory by its
+	// resolved path, as Command Code may store it.
+	commandCodeFixtureResolve = "LIB_HARNESS_COMMAND_CODE_FIXTURE_RESOLVE"
 )
 
 func init() {
@@ -44,6 +51,7 @@ func runCommandCodeFixture() int {
 	record("args", strings.Join(os.Args[1:], " "))
 	record("home", os.Getenv("HOME"))
 	record("codex_home", os.Getenv("CODEX_HOME"))
+	record("inherited", os.Getenv("CMD_LOCAL_ONLY")+","+os.Getenv("COMMANDCODE_SKIP_UPDATES")+","+os.Getenv("COMMAND_CODE_TELEMETRY_SYNC"))
 	mode := os.Getenv(commandCodeFixtureMode)
 	if mode == "" {
 		mode = "default"
@@ -92,12 +100,18 @@ func runCommandCodeFixture() int {
 	sessionState := func() map[string]any {
 		var available []any
 		for _, m := range []string{"default", "auto-accept", "plan", "dont-ask", "bypass"} {
+			if m == "default" && mode == "no-default" {
+				continue
+			}
 			available = append(available, map[string]any{"id": m, "name": m})
 		}
 		return map[string]any{"modes": map[string]any{"currentModeId": mode, "availableModes": available}, "configOptions": config()}
 	}
-	permission := func(session string, options []any) (string, bool) {
-		send(map[string]any{"jsonrpc": "2.0", "id": 0, "method": "session/request_permission", "params": map[string]any{"sessionId": session, "toolCall": map[string]any{"toolCallId": "call_1", "kind": "edit"}, "options": options}})
+	onceOrAlways := []any{
+		map[string]any{"optionId": "allow_once", "kind": "allow_once"}, map[string]any{"optionId": "allow_always", "kind": "allow_always"},
+		map[string]any{"optionId": "reject_once", "kind": "reject_once"}, map[string]any{"optionId": "reject_always", "kind": "reject_always"}}
+	permission := func(session, kind string, options []any) (string, bool) {
+		send(map[string]any{"jsonrpc": "2.0", "id": 0, "method": "session/request_permission", "params": map[string]any{"sessionId": session, "toolCall": map[string]any{"toolCallId": "call_1", "kind": kind}, "options": options}})
 		answer, ok := next()
 		if !ok || string(answer["id"]) != "0" {
 			return "", false
@@ -131,6 +145,11 @@ func runCommandCodeFixture() int {
 		case "session/list":
 			record("list", string(m["params"]))
 			cwd := str(p, "cwd")
+			if os.Getenv(commandCodeFixtureResolve) == "1" {
+				if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
+					cwd = resolved
+				}
+			}
 			// The conversation is on the second page, behind another one.
 			if str(p, "cursor") == "" {
 				reply(map[string]any{"sessions": []any{map[string]any{"sessionId": "cc-session-other", "cwd": cwd}}, "nextCursor": "page-2"})
@@ -145,7 +164,15 @@ func runCommandCodeFixture() int {
 			reply(map[string]any{})
 		case "session/set_mode":
 			record("mode", str(p, "modeId"))
-			mode = str(p, "modeId")
+			switch os.Getenv(commandCodeFixtureSetMode) {
+			case "refuse":
+				refuse(-32602, "Unknown mode: secret")
+				continue
+			case "silent":
+			default:
+				mode = str(p, "modeId")
+				update(str(p, "sessionId"), map[string]any{"sessionUpdate": "current_mode_update", "currentModeId": mode})
+			}
 			reply(map[string]any{})
 		case "session/set_config_option":
 			option, value := str(p, "configId"), str(p, "value")
@@ -182,9 +209,7 @@ func runCommandCodeFixture() int {
 			switch {
 			case strings.HasSuffix(text, "permission"):
 				update(session, map[string]any{"sessionUpdate": "tool_call", "toolCallId": "call_1", "title": "Write: /secret/path", "kind": "edit", "status": "pending", "rawInput": map[string]any{"file_path": "/secret/path", "content": "hi"}})
-				answer, ok := permission(session, []any{
-					map[string]any{"optionId": "allow_once", "kind": "allow_once"}, map[string]any{"optionId": "allow_always", "kind": "allow_always"},
-					map[string]any{"optionId": "reject_once", "kind": "reject_once"}, map[string]any{"optionId": "reject_always", "kind": "reject_always"}})
+				answer, ok := permission(session, "edit", onceOrAlways)
 				if !ok {
 					return 3
 				}
@@ -195,8 +220,20 @@ func runCommandCodeFixture() int {
 				}
 				update(session, map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": "call_1", "status": status})
 				reply(map[string]any{"stopReason": "end_turn"})
+			case strings.HasSuffix(text, "switch"):
+				answer, ok := permission(session, "switch_mode", onceOrAlways)
+				if !ok {
+					return 3
+				}
+				record("switch", answer)
+				reply(map[string]any{"stopReason": "end_turn"})
+			case strings.HasSuffix(text, "drift"):
+				// The agent leaves the asking mode by itself, mid-turn.
+				update(session, map[string]any{"sessionUpdate": "current_mode_update", "currentModeId": "bypass"})
+				update(session, map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": "editing freely"}})
+				reply(map[string]any{"stopReason": "end_turn"})
 			case strings.HasSuffix(text, "question"):
-				answer, ok := permission(session, []any{map[string]any{"optionId": "option_0", "kind": "allow_once"}, map[string]any{"optionId": "option_1", "kind": "allow_once"}})
+				answer, ok := permission(session, "think", []any{map[string]any{"optionId": "option_0", "kind": "allow_once"}, map[string]any{"optionId": "option_1", "kind": "allow_once"}})
 				if !ok {
 					return 3
 				}
@@ -252,6 +289,9 @@ func commandCodeFixtureOptions(t *testing.T) (Options, string) {
 
 func TestCommandCodeSessionOverTheAgentProtocol(t *testing.T) {
 	o, log := commandCodeFixtureOptions(t)
+	t.Setenv("CMD_LOCAL_ONLY", "1")
+	t.Setenv("COMMANDCODE_SKIP_UPDATES", "1")
+	t.Setenv("COMMAND_CODE_TELEMETRY_SYNC", "1")
 	o.Model, o.Effort = "fixture-fast", "max"
 	ctx := testContext(t)
 	s, err := Start(ctx, o)
@@ -320,6 +360,10 @@ func TestCommandCodeSessionOverTheAgentProtocol(t *testing.T) {
 	// No other engine's home variable is set on Command Code's behalf.
 	if logged["home"][0] != os.Getenv("HOME") || logged["codex_home"][0] != "" {
 		t.Errorf("environment: home %q codex home %q", logged["home"], logged["codex_home"])
+	}
+	// Command Code's own variables are no more inherited than accepted.
+	if logged["inherited"][0] != ",," {
+		t.Errorf("inherited Command Code variables: %q", logged["inherited"])
 	}
 	var created struct {
 		Cwd  string         `json:"cwd"`
@@ -402,6 +446,95 @@ func TestCommandCodeSessionRunsInTheAskingMode(t *testing.T) {
 	}
 }
 
+// A session that cannot be put in the asking mode, or that does not report
+// being in it, is refused before the first prompt and its conversation closed.
+func TestCommandCodeAskingModeMustBeReported(t *testing.T) {
+	for _, tc := range []struct{ name, mode, setMode string }{
+		{"no asking mode", "no-default", ""},
+		{"set_mode refused", "bypass", "refuse"},
+		{"set_mode ignored", "bypass", "silent"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o, log := commandCodeFixtureOptions(t)
+			t.Setenv(commandCodeFixtureMode, tc.mode)
+			t.Setenv(commandCodeFixtureSetMode, tc.setMode)
+			_, err := Start(testContext(t), o)
+			var failure *CapabilityError
+			if !errors.As(err, &failure) || failure.Code != CapabilityChangedPermissionMode || failure.Phase != BeforeFirstPrompt {
+				t.Fatalf("%v", err)
+			}
+			if got := grokFixtureLogged(t, log)["close"]; len(got) != 1 || got[0] != "cc-session-1" {
+				t.Fatalf("the refused session was not closed: %q", got)
+			}
+		})
+	}
+}
+
+// Leaving the asking mode would let every later change run without asking,
+// so a session never approves it, and one that leaves anyway is stopped.
+func TestCommandCodeNeverLeavesTheAskingMode(t *testing.T) {
+	o, log := commandCodeFixtureOptions(t)
+	o.Policy.CommandCodePermission = CommandCodeAllowWhenAsked
+	ctx := testContext(t)
+	s, err := Start(ctx, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	turn, err := s.StartTurn(ctx, Input{Text: "switch"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drain(t, turn)
+	if result, err := turn.Wait(ctx); err != nil || result.Status != "completed" {
+		t.Fatalf("%+v %v", result, err)
+	}
+	if got := grokFixtureLogged(t, log)["switch"]; len(got) != 1 || got[0] != "selected:reject_once" {
+		t.Fatalf("a mode switch was answered %q", got)
+	}
+	turn, err = s.StartTurn(ctx, Input{Text: "drift"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drain(t, turn)
+	result, err := turn.Wait(ctx)
+	var failure *CapabilityError
+	if result.Status != "failed" || !errors.As(err, &failure) || failure.Code != CapabilityChangedPermissionMode || failure.Phase != DuringSession {
+		t.Fatalf("a session left the asking mode: %+v %v", result, err)
+	}
+	if _, err = s.StartTurn(ctx, Input{Text: "hello"}); err == nil {
+		t.Fatal("the session kept running outside the asking mode")
+	}
+}
+
+// Command Code may list a conversation's directory by its resolved path.
+func TestCommandCodeResumeMatchesTheResolvedDirectory(t *testing.T) {
+	o, log := commandCodeFixtureOptions(t)
+	t.Setenv(commandCodeFixtureResolve, "1")
+	link := filepath.Join(t.TempDir(), "workspace")
+	if err := os.Symlink(t.TempDir(), link); err != nil {
+		t.Fatal(err)
+	}
+	o.WorkDir = link
+	ctx := testContext(t)
+	n, err := normalize(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := reference(n, "cc-session-1")
+	s, opened, err := Open(ctx, o, &ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if !opened.Resumed || s.Ref().ID != "cc-session-1" {
+		t.Fatalf("%+v %+v", opened, s.Ref())
+	}
+	if got := grokFixtureLogged(t, log)["resume"]; len(got) != 1 {
+		t.Fatalf("resumed %q", got)
+	}
+}
+
 func TestCommandCodePermissionRequestsFollowThePolicy(t *testing.T) {
 	for _, tc := range []struct {
 		policy, answer, tool string
@@ -458,6 +591,12 @@ func TestCommandCodePermissionNeverGrantsMoreThanOnce(t *testing.T) {
 			if got := commandCodePermissionOutcome(json.RawMessage(tc), policy); got["outcome"] != "cancelled" {
 				t.Errorf("%s under %s: %v", tc, policy, got)
 			}
+		}
+	}
+	modeSwitch := json.RawMessage(`{"toolCall":{"kind":"switch_mode"},"options":[{"optionId":"allow_once","kind":"allow_once"},{"optionId":"reject_once","kind":"reject_once"}]}`)
+	for _, policy := range []string{CommandCodeDenyWhenAsked, CommandCodeAllowWhenAsked} {
+		if got := commandCodePermissionOutcome(modeSwitch, policy); got["optionId"] != "reject_once" {
+			t.Errorf("a mode switch under %s: %v", policy, got)
 		}
 	}
 	reply := commandCodeServerReply(map[string]json.RawMessage{"id": json.RawMessage(`3`), "method": json.RawMessage(`"terminal/create"`)}, CommandCodeAllowWhenAsked)
@@ -518,6 +657,9 @@ func TestCommandCodeRefusedPromptFailsOnlyItsTurn(t *testing.T) {
 	var failure *TurnError
 	if !errors.As(err, &failure) || failure.Code != commandCodeRateLimited || result.Usage.Known || !result.NativeError {
 		t.Fatalf("%+v %v", result, err)
+	}
+	if facts, ok := harness.ErrorFacts(err); !ok || facts.Cause != harness.CauseRateLimited || facts.Family != harness.FailureTurn {
+		t.Fatalf("the refusal's cause was lost: %+v", facts)
 	}
 	if strings.Contains(err.Error(), "secret") {
 		t.Fatal("provider text reached the error")
