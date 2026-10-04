@@ -1,9 +1,7 @@
 package completion
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"strings"
 	"time"
 
@@ -153,7 +151,7 @@ func separateSkillCalls(engine harness.Engine, result Result) (Result, error) {
 		if !skillTool(call.Function.Name) {
 			continue
 		}
-		if _, ok := decodeSkillCall(call); !ok {
+		if _, ok := skills.DecodeCall(call.Function.Name, []byte(call.Function.Arguments)); !ok {
 			return Result{Usage: result.Usage, Cost: result.Cost, ContextWindow: result.ContextWindow},
 				&RequestError{Cause: harness.CauseUnknown, Engine: engine, Phase: PhaseResponse, Code: "invalid_skill_call"}
 		}
@@ -176,49 +174,6 @@ func (r Result) ApplicationCalls() []ToolCall {
 		}
 	}
 	return calls
-}
-
-type skillCall struct {
-	Skill  string   `json:"skill"`
-	File   string   `json:"file"`
-	Script string   `json:"script"`
-	Args   []string `json:"args"`
-}
-
-// decodeSkillCall reads a skill call's arguments strictly: a JSON object with
-// only that tool's fields, each of its type.
-func decodeSkillCall(call ToolCall) (skillCall, bool) {
-	var fields map[string]json.RawMessage
-	if json.Unmarshal([]byte(call.Function.Arguments), &fields) != nil || fields == nil {
-		return skillCall{}, false
-	}
-	allowed := map[string]bool{"skill": true}
-	switch call.Function.Name {
-	case LoadSkillTool:
-		allowed["file"] = true
-	case RunSkillScriptTool:
-		allowed["script"], allowed["args"] = true, true
-		if fields["script"] == nil {
-			return skillCall{}, false
-		}
-	default:
-		return skillCall{}, false
-	}
-	for key, value := range fields {
-		if !allowed[key] || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
-			return skillCall{}, false
-		}
-	}
-	decoder := json.NewDecoder(strings.NewReader(call.Function.Arguments))
-	decoder.DisallowUnknownFields()
-	var decoded skillCall
-	if decoder.Decode(&decoded) != nil || decoded.Skill == "" {
-		return skillCall{}, false
-	}
-	if _, present := fields["file"]; present && decoded.File == "" {
-		return skillCall{}, false
-	}
-	return decoded, true
 }
 
 // SkillRunOptions says how AnswerSkillCalls runs a skill's scripts.
@@ -284,85 +239,25 @@ func AnswerSkillCalls(ctx context.Context, calls []ToolCall, set harness.Skills,
 		if !skillTool(call.Function.Name) {
 			continue
 		}
-		content := ""
-		if err != nil {
-			content = skillError(call.Function.Name, "skills_unavailable")
-		} else {
-			content = answerSkillCall(ctx, call, loaded, opts)
+		content := skills.ErrorText(call.Function.Name, "skills_unavailable")
+		if err == nil {
+			content, _ = skills.Answer(ctx, loaded, call.Function.Name, []byte(call.Function.Arguments), runOptions(opts))
 		}
 		answers = append(answers, Message{Role: "tool", ToolCallID: call.ID, Content: content})
 	}
 	return answers
 }
 
-func skillError(tool, code string) string { return tool + " error: " + code }
-
-func answerSkillCall(ctx context.Context, call ToolCall, loaded []skills.Skill, opts SkillRunOptions) string {
-	name := call.Function.Name
-	decoded, ok := decodeSkillCall(call)
-	if !ok {
-		return skillError(name, "invalid_arguments")
+// runOptions carries SkillRunOptions into the shared skill runner, adapting
+// only the caller's Exec at its boundary.
+func runOptions(opts SkillRunOptions) skills.RunOptions {
+	run := skills.RunOptions{WorkDir: opts.WorkDir, Env: opts.Env, Timeout: opts.Timeout}
+	if opts.Exec == nil {
+		return run
 	}
-	var skill skills.Skill
-	found := false
-	for _, candidate := range loaded {
-		if candidate.Name == decoded.Skill {
-			skill, found = candidate, true
-		}
+	run.Exec = func(ctx context.Context, c skills.ExecCommand) (skills.ExecOutput, error) {
+		out, err := opts.Exec(ctx, SkillCommand{Skill: c.Skill, Dir: c.Dir, Script: c.Script, Args: c.Args, WorkDir: c.WorkDir, Env: c.Env, Timeout: c.Timeout})
+		return skills.ExecOutput(out), err
 	}
-	if !found {
-		return skillError(name, "unknown_skill")
-	}
-	if name == LoadSkillTool {
-		file := decoded.File
-		if file == "" {
-			file = skills.Manifest
-		}
-		text, err := skill.Read(file)
-		if err != nil {
-			return skillError(name, skills.Code(err))
-		}
-		return text
-	}
-	return runSkillScript(ctx, skill, decoded, opts)
-}
-
-func runSkillScript(ctx context.Context, skill skills.Skill, call skillCall, opts SkillRunOptions) string {
-	command, err := skills.Prepare(skill, call.Script, call.Args, opts.WorkDir, opts.Env, opts.Timeout)
-	if err != nil {
-		return skillError(RunSkillScriptTool, skills.Code(err))
-	}
-	if ctx.Err() != nil {
-		return skillError(RunSkillScriptTool, "cancelled")
-	}
-	var output SkillOutput
-	if opts.Exec != nil {
-		output, err = opts.Exec(ctx, SkillCommand{Skill: skill.Name, Dir: skill.Root(), Script: command.Script, Args: command.Args, WorkDir: command.WorkDir, Env: command.Env, Timeout: command.Timeout})
-		if err != nil {
-			return skillError(RunSkillScriptTool, "script_failed")
-		}
-		output.Stdout, output.StdoutTruncated = boundOutput(output.Stdout, output.StdoutTruncated)
-		output.Stderr, output.StderrTruncated = boundOutput(output.Stderr, output.StderrTruncated)
-	} else {
-		ran, err := skills.Run(ctx, command)
-		if err != nil {
-			if code := skills.Code(err); code != "" {
-				return skillError(RunSkillScriptTool, code)
-			}
-			return skillError(RunSkillScriptTool, "cancelled")
-		}
-		output = SkillOutput{ExitCode: ran.ExitCode, TimedOut: ran.TimedOut, Stdout: ran.Stdout, StdoutTruncated: ran.StdoutTruncated, Stderr: ran.Stderr, StderrTruncated: ran.StderrTruncated}
-	}
-	encoded, err := json.Marshal(output)
-	if err != nil {
-		return skillError(RunSkillScriptTool, "script_failed")
-	}
-	return string(encoded)
-}
-
-func boundOutput(text string, truncated bool) (string, bool) {
-	if len(text) <= skills.MaxOutputBytes {
-		return text, truncated
-	}
-	return text[:skills.MaxOutputBytes], true
+	return run
 }
