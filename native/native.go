@@ -438,13 +438,8 @@ func nativeEnvironment(c Config) []string {
 		if env == nil {
 			env = os.Environ()
 		}
-		key := "CODEX_HOME"
-		switch engine {
-		case harness.Claude:
-			key = "CLAUDE_CONFIG_DIR"
-		case harness.Grok:
-			key = "GROK_HOME"
-		}
+		described, _ := harness.Describe(engine)
+		key := described.HomeVariable
 		if engine == harness.Claude && isDefaultClaudeHome(home, env) {
 			env = withoutEnv(env, key)
 		} else {
