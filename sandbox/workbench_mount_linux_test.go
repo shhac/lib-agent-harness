@@ -22,7 +22,7 @@ func TestWorkbenchBindMountAndParentSwap(t *testing.T) {
 	defer w.close()
 	marker := "OUTSIDE-BIND-MOUNT-MARKER"
 	readResult := call(t, w, workbenchReadFile, map[string]any{"path": "parent/mount/marker"})
-	if !strings.Contains(readResult.Content, wbOtherMount) {
+	if !strings.Contains(readResult.Content, RefusedNotOffered) {
 		t.Fatal(readResult.Content)
 	}
 	listing := call(t, w, workbenchListFiles, map[string]any{"depth": 8})
@@ -30,14 +30,14 @@ func TestWorkbenchBindMountAndParentSwap(t *testing.T) {
 		t.Fatal(listing.Content)
 	}
 	fileRead := call(t, w, workbenchReadFile, map[string]any{"path": "parent/filemount"})
-	if !strings.Contains(fileRead.Content, wbOtherMount) {
+	if !strings.Contains(fileRead.Content, RefusedNotOffered) {
 		t.Fatal(fileRead.Content)
 	}
 	if !strings.Contains(listing.Content, "parent/filemount [mount]") {
 		t.Fatal(listing.Content)
 	}
 	search := call(t, w, workbenchSearchFiles, map[string]any{"pattern": marker})
-	if strings.Contains(search.Content, marker) || !strings.Contains(search.Content, wbOtherMount) {
+	if strings.Contains(search.Content, marker) || !strings.Contains(search.Content, RefusedNotOffered) {
 		t.Fatal(search.Content)
 	}
 	if strings.Contains(search.Content, "directories_incomplete") {

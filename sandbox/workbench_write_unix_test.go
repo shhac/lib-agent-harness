@@ -42,7 +42,7 @@ func TestWorkbenchWriteFIFOAndSetID(t *testing.T) {
 	if err := os.Chmod(file, 0755|os.ModeSetuid|os.ModeSetgid|os.ModeSticky); err != nil {
 		t.Fatal(err)
 	}
-	r := call(t, w, workbenchEditFile, map[string]any{"path": "a.txt", "old": "inside", "new": "new"})
+	r := call(t, w, workbenchWriteFile, map[string]any{"path": "a.txt", "content": "new"})
 	if r.IsError {
 		t.Fatal(r)
 	}

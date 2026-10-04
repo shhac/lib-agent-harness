@@ -63,7 +63,8 @@ func (w *Workspace) Close() { w.close() }
 // Stuck reports whether cancelled I/O exceeded its settlement grace.
 func (w *Workspace) Stuck() bool { return w.stuck.Load() != nil }
 
-// Read executes read_file through the workspace worker.
+// Read executes read_file through the workspace worker. Linux and macOS
+// refuse it as not_offered before content I/O pending verified admission.
 func (w *Workspace) Read(ctx context.Context, raw json.RawMessage) (Result, error) {
 	return w.dispatch(ctx, func() (Result, error) { return w.readFile(ctx, raw) })
 }
@@ -73,7 +74,8 @@ func (w *Workspace) List(ctx context.Context, raw json.RawMessage) (Result, erro
 	return w.dispatch(ctx, func() (Result, error) { return w.listFiles(ctx, raw) })
 }
 
-// Search executes search_files through the workspace worker.
+// Search executes search_files through the workspace worker. Linux and macOS
+// refuse it as not_offered before content I/O pending verified admission.
 func (w *Workspace) Search(ctx context.Context, raw json.RawMessage) (Result, error) {
 	return w.dispatch(ctx, func() (Result, error) { return w.searchFiles(ctx, raw) })
 }
@@ -84,6 +86,7 @@ func (w *Workspace) Write(ctx context.Context, raw json.RawMessage) (Result, err
 }
 
 // Edit executes edit_file, retaining the settled commit result on cancellation.
+// Linux and macOS refuse it as not_offered before content I/O.
 func (w *Workspace) Edit(ctx context.Context, raw json.RawMessage) (Result, error) {
 	return w.write(ctx, workbenchEditFile, raw)
 }

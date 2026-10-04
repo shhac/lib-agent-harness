@@ -5,8 +5,9 @@ package sandbox
 // refused on every platform. Then it is walked a component at a time through
 // directory handles (walk.go), all inside one os.Root on the
 // resolved WorkDir, so no .., absolute path or link reaches outside, and no
-// name checked earlier is trusted when something is opened. What is read is
-// decided by the opened handle.
+// name checked earlier is trusted when something is opened. These independent
+// observations do not prove coherent admission under concurrent unlink.
+// Content operations are disabled on Linux/macOS until admission is verified.
 //
 // Results are text the library builds: file contents, entry names, fixed
 // codes and the relative path the model gave. No host path or OS error prose
@@ -114,6 +115,12 @@ type Workspace struct {
 	step func()
 	// openStep lets tests swap a name after Lstat but before an open.
 	openStep func()
+	// contentStep observes actual target opens/reads, including edits which do
+	// not use openIn. Tests install it before admitting work.
+	contentStep func(tool, stage string)
+	// Instance-local namespace observations for deterministic admission fixtures.
+	statName func(*os.Root, string) (fs.FileInfo, error)
+	openName func(*os.Root, string) (*os.File, error)
 	// dirFault, when set, fails reading a directory before its batch n; tests
 	// use it to stand in for an I/O error part-way through a listing. rel is
 	// the directory's slash path from the root.
@@ -169,7 +176,11 @@ func (w *Workspace) openIn(dir *os.Root, name string) (*os.File, error) {
 	if w.openStep != nil {
 		w.openStep()
 	}
-	f, err := dir.OpenFile(name, wsfile.OpenFlags, 0)
+	open := func(dir *os.Root, name string) (*os.File, error) { return dir.OpenFile(name, wsfile.OpenFlags, 0) }
+	if w.openName != nil {
+		open = w.openName
+	}
+	f, err := open(dir, name)
 	if err != nil {
 		return nil, err
 	}
@@ -259,6 +270,9 @@ func rootFailure(err error) string {
 // readFile answers read_file: a regular UTF-8 file of at most 16 MiB, from
 // line offset, at most limit lines and the result budget.
 func (w *Workspace) readFile(ctx context.Context, raw json.RawMessage) (Result, error) {
+	if ToolAvailability(workbenchReadFile) != "" {
+		return contentRefusal(workbenchReadFile)
+	}
 	var in struct {
 		Path   string `json:"path"`
 		Offset *int   `json:"offset"`
@@ -339,7 +353,7 @@ func (w *Workspace) openRegular(c *cursor, top *dirNode, clean string) (*os.File
 		case err != nil:
 			return nil, rootFailure(err)
 		}
-		info, err := dir.Lstat(part)
+		info, err := w.lstat(dir, part)
 		if err != nil {
 			return nil, rootFailure(err)
 		}
@@ -384,10 +398,10 @@ func (w *Workspace) openRegular(c *cursor, top *dirNode, clean string) (*os.File
 				w.release(f)
 				return nil, wbUnreadable
 			}
-			// Linux drops a hard link's count before its name goes, so both
-			// checks above can see one link on a file whose other name is
-			// outside. The name must still be that one-link file once open.
-			if again, err := dir.Lstat(part); err != nil || !os.SameFile(again, info) || wsfile.LinkCount(again) > 1 {
+			// Resample identity after open. Independent namespace and descriptor
+			// samples do not prove admission under concurrent unlink; the
+			// Linux/macOS content policy refuses before this path.
+			if again, err := w.lstat(dir, part); err != nil || !os.SameFile(again, info) || wsfile.LinkCount(again) > 1 {
 				w.release(f)
 				return nil, wbLinked
 			}
@@ -777,4 +791,11 @@ func (w *Workspace) fileOtherMount(dir *os.Root, name string, info fs.FileInfo) 
 	}
 	facts, err := wsfile.Check(f, w.mount)
 	return err == nil && facts.Regular && !facts.SameMount
+}
+
+func (w *Workspace) lstat(dir *os.Root, name string) (fs.FileInfo, error) {
+	if w.statName != nil {
+		return w.statName(dir, name)
+	}
+	return dir.Lstat(name)
 }

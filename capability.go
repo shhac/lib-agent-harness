@@ -148,6 +148,9 @@ func platform(e Engine, op Operation, f Feature, c Capability) Capability {
 	if e == OpenAICompatible && op == Session && (f == Sandbox || f == Loopback || f == Background) && runtime.GOOS != "darwin" {
 		return Capability{Unsupported, "API commands require a proved macOS Seatbelt sandbox; this platform has no command sandbox"}
 	}
+	if e == OpenAICompatible && op == Session && (f == WorkspaceRead || f == WorkspaceWrite) && (runtime.GOOS == "linux" || runtime.GOOS == "darwin") {
+		return Capability{Unsupported, "workbench file tools are off until their workspace check is verified"}
+	}
 	if e == OpenAICompatible && op == Session && f == WorkspaceWrite && runtime.GOOS == "windows" {
 		c.Reason += "; not directory-synced; new files inherit the directory ACL"
 	}

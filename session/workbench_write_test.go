@@ -16,6 +16,7 @@ import (
 	"github.com/shhac/lib-agent-harness/completion"
 	"github.com/shhac/lib-agent-harness/internal/sandboxhook"
 	"github.com/shhac/lib-agent-harness/internal/testenv"
+	"github.com/shhac/lib-agent-harness/sandbox"
 )
 
 func TestWorkbenchBackgroundWithoutCommandsRefused(t *testing.T) {
@@ -245,6 +246,12 @@ func TestWorkbenchWriteDefinitions(t *testing.T) {
 	o := workbenchOptions(t, nopHandler())
 	o.Workbench.Write = true
 	defs := workbenchDefinitions(o)
+	if sandbox.ToolAvailability("read_file") != "" {
+		if len(defs) != 2 || defs[0].Name != workbenchListFiles || defs[1].Name != workbenchWriteFile {
+			t.Fatal(defs)
+		}
+		return
+	}
 	if len(defs) != 5 || defs[3].Name != workbenchWriteFile || defs[4].Name != workbenchEditFile {
 		t.Fatal(defs)
 	}
@@ -259,6 +266,12 @@ func TestWorkbenchCommandDefinitions(t *testing.T) {
 	o.Workbench.Write = true
 	o.Workbench.Commands = &Commands{}
 	defs := workbenchDefinitions(o)
+	if sandbox.ToolAvailability("read_file") != "" {
+		if len(defs) != 3 || defs[2].Name != workbenchRunCommand {
+			t.Fatal(defs)
+		}
+		return
+	}
 	if len(defs) != 6 || defs[5].Name != workbenchRunCommand {
 		t.Fatal(defs)
 	}
@@ -334,7 +347,11 @@ func TestWorkbenchWriteLoop(t *testing.T) {
 		t.Fatalf("%+v %v", done.result, done.err)
 	}
 	data, _ := os.ReadFile(filepath.Join(o.WorkDir, "file"))
-	if string(data) != "new" {
+	want := "new"
+	if sandbox.ToolAvailability("edit_file") != "" {
+		want = "old"
+	}
+	if string(data) != want {
 		t.Fatalf("%s", data)
 	}
 }

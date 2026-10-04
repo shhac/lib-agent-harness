@@ -18,7 +18,7 @@ func TestWorkspaceWorkerWaitsForCancellationSettlement(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		_, err := w.dispatch(ctx, func() (Result, error) { return w.readFile(ctx, json.RawMessage(`{"path":"a.txt"}`)) })
+		_, err := w.dispatch(ctx, func() (Result, error) { return w.listFiles(ctx, json.RawMessage(`{}`)) })
 		done <- err
 	}()
 	<-entered
@@ -46,7 +46,7 @@ func TestWorkspaceWorkerRepeatedCancellation(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan error, 1)
 		go func() {
-			_, err := w.dispatch(ctx, func() (Result, error) { return w.readFile(ctx, json.RawMessage(`{"path":"a.txt"}`)) })
+			_, err := w.dispatch(ctx, func() (Result, error) { return w.listFiles(ctx, json.RawMessage(`{}`)) })
 			done <- err
 		}()
 		<-entered

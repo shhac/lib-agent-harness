@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"runtime"
 	"testing"
@@ -49,8 +50,11 @@ func TestWorkspaceWorkerStuckFailsSessionAndReleasesLock(t *testing.T) {
 			baseline := runtime.NumGoroutine()
 			controlDone := make(chan error, 1)
 			o := workbenchOptions(t, nopHandler())
-			o.complete = (&scriptedModel{steps: [][]scriptedCall{{{"read", "read_file", `{"path":"file"}`}}}}).complete
+			o.complete = (&scriptedModel{steps: [][]scriptedCall{{{"read", "list_files", `{}`}}}}).complete
 			writeFile(t, o.WorkDir+"/file", "inside")
+			for i := 0; i < 70; i++ {
+				writeFile(t, fmt.Sprintf("%s/item-%d", o.WorkDir, i), "")
+			}
 			s, err := Start(context.Background(), o)
 			if err != nil {
 				t.Fatal(err)

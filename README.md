@@ -369,25 +369,58 @@ s, opened, err := session.Open(ctx, session.Options{
 
 ### Workbench
 
+On Linux and macOS, `read_file`, `search_files` and `edit_file` are
+temporarily not offered: “workbench file tools are off until their workspace
+check is verified”. Standalone `Workspace.Read`, `Search` and `Edit` return
+a typed `*sandbox.RefusalError` (`not_offered`, capability family,
+`Unsupported`) before parsing arguments or performing content I/O.
+There is no opt-in bypass. `list_files`, opt-in atomic `write_file`, skills,
+caller tools and proved commands continue.
+
+API workbench `Start`, `Open` and `Resume` continue with this reduced
+surface. `Session.Capabilities().WorkbenchTools` lists each configured tool
+with its availability and reason, returned as a defensive copy. A generated
+system notice tells the model which content tools are absent; advertisements
+and hosted admission use the same effective definitions. All six names remain
+reserved. Forced calls are refused before handlers run and do not close
+admission; an ordinary closing tool can still succeed.
+
+`harness.Support` reports aggregate `WorkspaceRead` and `WorkspaceWrite`
+as unsupported on Linux/macOS because their full tool sets are unavailable.
+This does not deny the surviving listing or write tool, or change command
+claims. Windows retains its existing file-tool behavior. Configuration digests
+and reference formats do not change: resumption reconstructs availability,
+preserves historical content results, and never replays old calls. The notice
+is regenerated outside durable transcript content and does not accumulate.
+
+Restoration requires a reviewed storage/admission invariant against concurrent
+links, renames, unlinks and external mutation (LAH-27 design, LAH-28 implementation);
+passing repetitions or independent stat samples cannot establish that invariant.
+Consumer migration is tracked separately in LAH-33/34 under the approved split.
+The [investigation and validation record](design-docs/2026-10-03-sandbox-package.md#lah-32-review-repair-after-main-afbaf07)
+separates modeled admission observations, verified content refusals, synthetic
+session checks and outstanding platform enforcement evidence.
+
+
 Workspace file access opens through `sandbox.OpenWorkspace(sandbox.Config)`;
 session hosts its tools and preserves the existing workbench API and error types.
 Standalone command execution uses `sandbox.Open`; `session.OpenCommandSandbox`
 is a deprecated compatibility wrapper for v0.23.0.
 See the [package-boundary design](design-docs/2026-10-03-sandbox-package.md).
 
-Set `Options.Workbench = &session.Workbench{}` for read-only workspace tools
+Set `Options.Workbench = &session.Workbench{}` for the available workspace tools
 on an OpenAI-compatible session, on Linux, macOS or Windows. `WorkDir` must
 be an absolute existing directory; it and `RuntimeHome` must not contain
 one another. Its resolved path and workbench permissions form part of the
 resume reference. CLI engines refuse this option.
 
-- `read_file(path, offset, limit)` reads UTF-8 text: files at most 16 MiB,
+- On Windows, `read_file(path, offset, limit)` reads UTF-8 text: files at most 16 MiB,
   at most 2,000 lines and 64 KiB per result, with continuation notes.
 - `list_files(path, depth)` lists at most 2,000 entries, to depth 8,
   visiting at most 20,000 names. Links, FIFOs, linked files and mounts are
   marked; Windows omits the listing's linked mark but still refuses linked
   reads. Links are never followed while listing.
-- `search_files(pattern, literal, path, glob)` uses RE2, or literal text,
+- On Windows, `search_files(pattern, literal, path, glob)` uses RE2, or literal text,
   with patterns at most 4,096 bytes. It returns at most 200 matches in
   `relative:line: text` form, cutting each result line to 400 bytes on rune
   boundaries.
@@ -419,7 +452,7 @@ transcript records an unknown outcome, shutdown releases its lock, and
 worker and its read handle remain until the syscall returns. Health preserves
 an earlier session failure; Release still reports abandoned workspace I/O.
 
-`harness.Support` reports `WorkspaceRead` and `WorkspaceWrite` as `Composed`,
+On Windows, `harness.Support` reports `WorkspaceRead` and `WorkspaceWrite` as `Composed`,
 and `RestrictTools` includes the library's workbench tools.
 A caller-supplied `CatalogModel` known to lack tools refuses before launch;
 unknown tool support proceeds.
@@ -431,7 +464,7 @@ workspace free of secrets, outside hard links and mounts. File tools reject
 multiply-linked files and other mounts. Keep other processes from injecting
 outside data while the session runs.
 
-Set `Workbench.Write` to add `write_file(path, content)` and
+Set `Workbench.Write` to add `write_file(path, content)` and, on Windows,
 `edit_file(path, old, new, replace_all)`. Writes replace UTF-8 content up to
 1 MiB atomically, creating parents when needed. Edits require exactly one
 match unless `replace_all` is true. Neither follows symlinks or writes `.git`;

@@ -38,6 +38,7 @@ import (
 	"github.com/shhac/lib-agent-harness/catalog"
 	"github.com/shhac/lib-agent-harness/completion"
 	"github.com/shhac/lib-agent-harness/internal/skills"
+	"github.com/shhac/lib-agent-harness/sandbox"
 )
 
 // Loop bounds the agent loop the library runs for an OpenAI-compatible
@@ -462,6 +463,22 @@ func openAPI(ctx context.Context, o Options, r *Ref) (*Session, error) {
 	if complete == nil {
 		complete = completion.Complete
 	}
+	if o.Workbench != nil {
+		names := []string{"read_file", "list_files", "search_files"}
+		if o.Workbench.Write {
+			names = append(names, "write_file", "edit_file")
+		}
+		if o.Workbench.Commands != nil {
+			names = append(names, "run_command")
+		}
+		for _, name := range names {
+			c := harness.Capability{Availability: harness.Composed, Reason: "library-hosted workspace tool"}
+			if reason := sandbox.ToolAvailability(name); reason != "" {
+				c = harness.Capability{Availability: harness.Unsupported, Reason: reason}
+			}
+			s.caps.WorkbenchTools = append(s.caps.WorkbenchTools, WorkbenchTool{Name: name, Capability: c})
+		}
+	}
 	a := &apiSession{store: store, workspace: ws, complete: complete, tools: apiTools(o), system: o.Instructions.Text, resultLimit: o.Restriction.Tools.resultLimit(), records: records, responses: countResponses(records), released: make(chan struct{}), failed: s.fail}
 	if err = restoreAPIRecovery(a, ws, o, ref, r == nil); err != nil {
 		return nil, err
@@ -472,6 +489,9 @@ func openAPI(ctx context.Context, o Options, r *Ref) (*Session, error) {
 	}
 	// No onRefusal: the loop owns every call it hands the host, so it reports
 	// each refusal on the turn itself, in order.
+	if o.Workbench != nil && sandbox.ToolAvailability("read_file") != "" {
+		a.system += "\nWorkbench tools read_file, search_files and edit_file are unavailable: " + sandbox.FileToolsDisabledReason + "."
+	}
 	host := newDirectToolHost(apiToolHost(o, ws), append(apiSkillDefinitions(o), workbenchDefinitions(o)...)...)
 	host.activeTurn = s.activeTurnID
 	s.tools = host

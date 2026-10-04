@@ -19,6 +19,7 @@ import (
 	"github.com/shhac/lib-agent-harness/completion"
 	"github.com/shhac/lib-agent-harness/internal/skills"
 	"github.com/shhac/lib-agent-harness/internal/testenv"
+	"github.com/shhac/lib-agent-harness/sandbox"
 )
 
 var finishTool = ToolDefinition{Name: "finish", Description: "Report the work.", Schema: map[string]any{"type": "object"}, Closing: true}
@@ -295,7 +296,7 @@ func TestWorkbenchToolsReachTheRequest(t *testing.T) {
 		t.Fatal(done.err)
 	}
 	tools := model.tools[0]
-	if names := strings.Join(offeredNames(tools), ","); names != "view,finish,read_file,list_files,search_files" {
+	if names := strings.Join(offeredNames(tools), ","); names != expectedWorkbenchNames("view,finish") {
 		t.Fatalf("tools %s", names)
 	}
 	for i, def := range workbenchDefinitions(o) {
@@ -306,7 +307,11 @@ func TestWorkbenchToolsReachTheRequest(t *testing.T) {
 	}
 	// Every request carries them; pin their size so no edit bloats them.
 	encoded, _ := json.Marshal(completionTools(workbenchDefinitions(o)))
-	if len(encoded) != workbenchDefinitionsBytes {
+	wantSize := workbenchDefinitionsBytes
+	if sandbox.ToolAvailability("read_file") != "" {
+		wantSize = 509
+	}
+	if len(encoded) != wantSize {
 		t.Fatalf("the workbench definitions encode to %d bytes, pinned at %d", len(encoded), workbenchDefinitionsBytes)
 	}
 
@@ -342,7 +347,7 @@ func TestWorkbenchToolsReachTheWire(t *testing.T) {
 	if done := runAPITurnToEnd(t, s, "Look."); done.err != nil {
 		t.Fatal(done.err)
 	}
-	if names := strings.Join(e.seen()[0].toolNames(), ","); names != "finish,read_file,list_files,search_files" {
+	if names := strings.Join(e.seen()[0].toolNames(), ","); names != expectedWorkbenchNames("finish") {
 		t.Fatalf("tools on the wire %s", names)
 	}
 }
@@ -382,10 +387,17 @@ func TestWorkbenchLoopCallsItsToolsBesideTheCallers(t *testing.T) {
 	if got := answered(1, "c1"); got != "docs/\ndocs/notes.md" {
 		t.Fatalf("list_files answered %q", got)
 	}
-	if got := answered(2, "c2"); got != "first\nsecond\n" {
+	readWant := "first\nsecond\n"
+	if sandbox.ToolAvailability("read_file") != "" {
+		readWant = answered(2, "c2")
+		if !strings.Contains(readWant, "not available") {
+			t.Fatal(readWant)
+		}
+	}
+	if got := answered(2, "c2"); got != readWant {
 		t.Fatalf("read_file answered %q", got)
 	}
-	if got := answered(3, "c3"); !strings.Contains(got, "file_outside_workspace") {
+	if got := answered(3, "c3"); !strings.Contains(got, "file_outside_workspace") && !(sandbox.ToolAvailability("read_file") != "" && strings.Contains(got, "not available")) {
 		t.Fatalf("an escape answered %q", got)
 	}
 	var events []string
@@ -396,14 +408,19 @@ func TestWorkbenchLoopCallsItsToolsBesideTheCallers(t *testing.T) {
 		if ev.Kind == "tool_started" && ev.Tool == "read_file" && ev.ItemID == "c2" && string(ev.Input) != `{"path":"docs/notes.md"}` {
 			t.Errorf("read_file's input %s", ev.Input)
 		}
-		if ev.Kind == "tool_completed" && ev.ItemID == "c2" && ev.Output != "first\nsecond\n" {
+		if ev.Kind == "tool_completed" && ev.ItemID == "c2" && ev.Output != readWant {
 			t.Errorf("read_file's output %q", ev.Output)
 		}
 	}
-	if got := answered(4, "search"); got != "docs/notes.md:2: second" {
+	if got := answered(4, "search"); got != "docs/notes.md:2: second" && !(sandbox.ToolAvailability("search_files") != "" && strings.Contains(got, "not available")) {
 		t.Fatal(got)
 	}
 	want := "tool_started:list_files:running,tool_completed:list_files:completed,tool_started:read_file:running,tool_completed:read_file:completed,tool_started:read_file:running,tool_completed:read_file:failed,tool_started:search_files:running,tool_completed:search_files:completed,tool_started:finish:running,tool_completed:finish:completed"
+	if sandbox.ToolAvailability("read_file") != "" {
+		want = strings.Replace(want, "tool_completed:read_file:completed", "tool_completed:read_file:refused", 1)
+		want = strings.Replace(want, "tool_completed:search_files:completed", "tool_completed:search_files:refused", 1)
+		want = strings.Replace(want, "tool_completed:read_file:failed", "tool_completed:read_file:refused", 1)
+	}
 	if strings.Join(events, ",") != want {
 		t.Fatalf("events\n got %v\nwant %s", events, want)
 	}
@@ -430,4 +447,11 @@ func writeFile(t *testing.T, name, content string) {
 	if err := os.WriteFile(name, []byte(content), 0o600); err != nil {
 		testenv.SkipIfRefused(t, "creating a workspace fixture", err)
 	}
+}
+
+func expectedWorkbenchNames(prefix string) string {
+	if sandbox.ToolAvailability("read_file") != "" {
+		return prefix + ",list_files"
+	}
+	return prefix + ",read_file,list_files,search_files"
 }

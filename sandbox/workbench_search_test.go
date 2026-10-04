@@ -15,6 +15,9 @@ import (
 )
 
 func TestWorkbenchSearchBoundsAndPaths(t *testing.T) {
+	if contentDisabled(t, workbenchSearchFiles) {
+		return
+	}
 	w, work, _ := testWorkspace(t)
 	writeFile(t, filepath.Join(work, "docs", "one.txt"), "alpha.x\nalpha-x\n"+strings.Repeat("界", 200)+"\n")
 	writeFile(t, filepath.Join(work, "docs", "two.go"), "alpha.x\n")
@@ -52,6 +55,9 @@ func TestWorkbenchSearchBoundsAndPaths(t *testing.T) {
 }
 
 func TestWorkbenchSearchSkipsUnsafeFiles(t *testing.T) {
+	if contentDisabled(t, workbenchSearchFiles) {
+		return
+	}
 	w, work, outside := testWorkspace(t)
 	writeFile(t, filepath.Join(work, "binary"), "\x00"+outsideMarker)
 	writeFile(t, filepath.Join(work, "invalid"), "\xff"+outsideMarker)
@@ -73,6 +79,9 @@ func TestWorkbenchSearchSkipsUnsafeFiles(t *testing.T) {
 }
 
 func TestWorkbenchSearchCancellation(t *testing.T) {
+	if contentDisabled(t, workbenchSearchFiles) {
+		return
+	}
 	w, _, _ := testWorkspace(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	w.step = cancel
@@ -83,6 +92,9 @@ func TestWorkbenchSearchCancellation(t *testing.T) {
 }
 
 func TestWorkbenchSearchIncompleteAndVisitedBounds(t *testing.T) {
+	if contentDisabled(t, workbenchSearchFiles) {
+		return
+	}
 	w, work, _ := testWorkspace(t)
 	writeFile(t, filepath.Join(work, "docs", "one"), "inside")
 	w.dirFault = func(rel string, batch int) error {
@@ -109,6 +121,9 @@ func TestWorkbenchSearchIncompleteAndVisitedBounds(t *testing.T) {
 }
 
 func TestWorkbenchSearchNumericLineOrder(t *testing.T) {
+	if contentDisabled(t, workbenchSearchFiles) {
+		return
+	}
 	w, work, _ := testWorkspace(t)
 	writeFile(t, filepath.Join(work, "numbers"), strings.Repeat("match\n", 12))
 	got := call(t, w, workbenchSearchFiles, map[string]any{"path": "numbers", "pattern": "match"})

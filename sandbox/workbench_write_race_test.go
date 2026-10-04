@@ -10,6 +10,7 @@ import (
 )
 
 func TestWorkbenchWriteSymlinkSwapConfinesEdits(t *testing.T) {
+
 	w, work, outside := testWorkspace(t)
 	w.id = newID()
 	live, parked := filepath.Join(work, "racing"), filepath.Join(work, "parked")

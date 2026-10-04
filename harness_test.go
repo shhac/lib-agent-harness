@@ -347,11 +347,15 @@ func TestWorkbenchCapabilityClaims(t *testing.T) {
 	}
 	reason := "the library's read_file, list_files and search_files: regular, singly linked files reached inside WorkDir on WorkDir's own mount"
 	read := Support(OpenAICompatible, Session, WorkspaceRead)
-	supported := runtime.GOOS == "linux" || runtime.GOOS == "darwin" || runtime.GOOS == "windows"
+	supported := runtime.GOOS == "windows"
 	if supported && (read.Availability != Composed || read.Reason != reason) || !supported && read.Usable() {
 		t.Fatal(read)
 	}
-	if write := Support(OpenAICompatible, Session, WorkspaceWrite); write.Availability != Composed {
+	wantWrite := Composed
+	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
+		wantWrite = Unsupported
+	}
+	if write := Support(OpenAICompatible, Session, WorkspaceWrite); write.Availability != wantWrite {
 		t.Fatal(write)
 	}
 	if c := Support(OpenAICompatible, Session, RestrictTools); c.Reason != "only the caller's hosted tools and the library's workbench tools exist: the library writes every request itself" {

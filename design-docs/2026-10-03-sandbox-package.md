@@ -1,5 +1,40 @@
 ## The sandbox package
 
+## Containment contract, 2026-10-04
+
+On Linux and macOS, `read_file`, `search_files` and `edit_file` are
+temporarily not offered: “workbench file tools are off until their workspace
+check is verified”. Standalone `Workspace.Read`, `Search` and `Edit` return
+a typed `*sandbox.RefusalError` (`not_offered`, capability family,
+`Unsupported`) before parsing arguments or performing content I/O.
+There is no opt-in bypass. `list_files`, opt-in atomic `write_file`, skills,
+caller tools and proved commands continue.
+
+API workbench `Start`, `Open` and `Resume` continue with this reduced
+surface. `Session.Capabilities().WorkbenchTools` lists each configured tool
+with its availability and reason, returned as a defensive copy. A generated
+system notice tells the model which content tools are absent; advertisements
+and hosted admission use the same effective definitions. All six names remain
+reserved. Forced calls are refused before handlers run and do not close
+admission; an ordinary closing tool can still succeed.
+
+`harness.Support` reports aggregate `WorkspaceRead` and `WorkspaceWrite`
+as unsupported on Linux/macOS because their full tool sets are unavailable.
+This does not deny the surviving listing or write tool, or change command
+claims. Windows retains its existing file-tool behavior. Configuration digests
+and reference formats do not change: resumption reconstructs availability,
+preserves historical content results, and never replays old calls. The notice
+is regenerated outside durable transcript content and does not accumulate.
+
+Restoration requires a reviewed storage/admission invariant against concurrent
+links, renames, unlinks and external mutation (LAH-27 design, LAH-28 implementation);
+passing repetitions or independent stat samples cannot establish that invariant.
+Consumer migration is tracked separately in LAH-33/34 under the approved split.
+
+The historical read/admission descriptions below describe the retained
+implementation, not current Linux/macOS authorization.
+
+
 The OS sandbox has a package boundary apart from session orchestration,
 tool admission, telemetry and transport. `github.com/shhac/lib-agent-harness/sandbox`
 is part of the existing module, not a separate module. Stage A extracted file
@@ -186,6 +221,215 @@ Windows under go vet and go test -race, with sandbox-required skips forbidden.
 Cross-compilation covers all Windows test packages, retaining native coverage.
 The owner checks all CI jobs and tags/publishes v0.23.0 after landing.
 
+
+## LAH-32 draft-1 investigation and historical validation
+
+Source baseline: `181960cb6bcb320f89c4d71b3e157439b7441d29`, as supplied by
+the planning record. No commits, dependency replacements, branch changes or
+publication were made. The source candidate is identified by the SHA-256 of the
+sorted manifest of Go sources, go.mod and go.sum (each line is
+`<file SHA-256>  <relative path>\n`):
+`1490d561fd6a2391f49df5898467000dd38a1ba0cbf157beb23fef58ca673ea3` (380 files). Documentation and workflow changes are outside
+that code digest. Recompute with `rg --files -g '*.go' -g go.mod -g go.sum`,
+sort paths, hash each file, then hash the resulting manifest.
+
+### Evidence boundaries
+
+The supplied CI report is run 37167992825, Linux/bubblewrap 0.8.0,
+commit 3017616, returning `OUTSIDE-MARKER-4d1c\n` at the old regression's
+line 52; main reportedly passed the same commit. Its raw CI log was not
+available in this offline workspace. This is supplied evidence, not a
+newly witnessed Linux execution or an established kernel mechanism.
+LAH-26's stopped investigation was read; its draft was not assumed landed.
+
+The new fixture keeps the outside source. A channel handshake joins the
+workspace-name link/open/unlink swap before reading. The descriptor really
+opened through that workspace name; after unlink, its facts are
+`Regular=true, Directory=false, SameMount=true, Links=1`. The workspace name
+really no longer exists. Instance-local stat/open adapters then **model** that
+name still being reachable while returning the real descriptor and stat facts.
+Production defaults are unchanged; no global hook or policy bypass is added.
+The model does not pause unlink inside a kernel and does not reproduce an APFS
+or Linux namespace event. It supplies an admission-rule counterexample.
+
+The first read-path experiment returned the outside marker. It was repeated
+after adding the explicit unchanged-source assertion, with only the read
+policy guard temporarily removed and restored in a finally block. The other
+containment changes remained present: this was a read-path counterfactual,
+not a complete unrestricted baseline suite. Exact experiment inputs:
+
+- `sandbox/workspace.go` SHA-256:
+  `3a55dfd855910453b9642e999770aa6761fee1a1328bbc9b13e655a429cb1226`
+- `sandbox/workbench_link_test.go` SHA-256:
+  `2160a9ba9e540996e12639c5e51a6e75e59db33d505dbc508f025e4dd5fab68b`
+- Command: `go test -v ./sandbox -run '^TestWorkbenchHardLinkAndConcurrentSwaps$' -timeout 30s`
+- Exit 1, expected counterexample: result content
+  `OUTSIDE-MARKER-4d1c\n`, IsError=false, error=nil.
+  Outside source was asserted unchanged with those same bytes.
+- This proves the retained admission samples can accept the modeled descriptor.
+  It does not prove the modeled namespace state can occur on this filesystem.
+
+With the policy restored, the exact same fixture receives typed `not_offered`
+before either adapter is invoked. The outside-marker prohibition, ordinary
+workspace target controls, persistent link facts and completed-unlink control
+remain; Windows keeps real linked-file refusal and ordinary reads. The refusal
+boundary tests check public and private read/search/edit against ordinary,
+outside-linked, missing and malformed targets and recursive search, with open,
+chunk and write-stage hooks and filesystem snapshots. They also exercise
+concurrent requests, cancellation, closed admission and instance isolation.
+Cancellation may win admission or an already admitted request may return the
+typed refusal; edit's existing cancelled-write result mapping is retained.
+No content I/O, parent creation, temporary creation or edit effects are allowed.
+
+### Executed checks
+
+Host: Go 1.27.1, darwin/arm64, Darwin 27.0.0
+(xnu-13432.1.9~1/RELEASE_ARM64_T6000), local APFS workspace.
+These are host library tests in the agent's outer filesystem/process sandbox,
+not a successful nested Seatbelt command execution. macOS Seatbelt uses
+`/usr/bin/sandbox-exec` shipped with this OS; a separate runtime version was
+not reported. Bubblewrap is inapplicable here.
+
+| Command | Outcome and boundary |
+| --- | --- |
+| `go vet ./...` | Exit 0 on macOS |
+| `go test -race -count=1 ./... -timeout 180s` | Exit 0 on macOS; full package results, normal prerequisite skips permitted |
+| `go test -race -count=200 -v ./sandbox -run '^TestWorkbenchHardLinkAndConcurrentSwaps$'` | Exit 0, 200 deterministic modeled fixture passes, no skips; stability, not an all-interleavings admission proof |
+| `go test -race -count=1 -v ./sandbox -run '^TestContentToolsRefuseBeforeIO$'` | Exit 0, no skips; zero-content-I/O refusal evidence |
+| `go test -race -v ./session -run '^TestWorkbench(DisabledContentSessionLifecycle\|HistoricalContentRecovery)$' -timeout 20s` | Exit 0, no skips; scripted Start/Open/Resume, reduced advertisement/admission, closing handler and historical recovery |
+| `CGO_ENABLED=0 go build -buildvcs=false ./...` | Exit 0; CGO-free build; buildvcs disabled to avoid stat-cache writes outside the permitted workspace |
+| `GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go test -exec=true ./...` | Exit 0; all Windows tests compiled, **no Windows runtime tests executed** |
+| daemon `run_check` | Exit 0, timed_out=false, stderr empty; vet/race project check in a fresh daemon sandbox; returned summary did not identify OS/runtime or enumerate skips |
+| `go test -race -count=1 -v ./session -run '^TestWorkbenchMacOSEditAndRunSession$' -timeout 90s` | Prerequisite skip: outer sandbox refuses loopback bind; no command enforcement evidence |
+| `go test -race -count=1 -v ./sandbox -run '^TestCommandSandboxRunSkipsRefusedCapabilities$' -timeout 90s` | Prerequisite skip: outer sandbox refuses loopback bind; no child strict-mode evidence |
+| `go run -buildvcs=false ./internal/cmd/sandboxcheck` | Exit 1 before launch: TMPDIR/runtime home is inside the workspace in this outer sandbox; no contained-suite evidence |
+
+The initial daemon copy failed on a disappearing compiler temporary; the
+retried check above completed successfully. Earlier intermediate expectation
+failures were fixed and are not final-candidate successes. Changes invalidate
+mismatched candidate evidence; only the code digest above identifies the draft-1
+code tested in those checks. These results do not validate later merged candidates.
+
+### Draft-1 outstanding team evidence
+
+No Linux executor or Windows runtime was accessible, and network/CI access is
+disabled. Linux baseline-model, refusal, 200-repeat, vet/race and both
+bubblewrap-version outcomes remain unexecuted here. macOS real command and
+strict-refusal evidence was unavailable in the outer sandbox. Added focused
+CI steps print source commit, Go/OS/filesystem and bubblewrap version, run the
+three regressions under the race detector, and retain the existing strict
+full suites and real command checks on macOS, Windows, Ubuntu/bubblewrap 0.9
+and bubblewrap 0.8.0. Future CI execution is required evidence, not a pass
+claimed by this change. These remain team requirements; the owner's
+after-landing reruns do not replace them.
+
+LAH-33 and LAH-34 already carry the approved consumer split and depend on
+LAH-32. Their migration/validation is not claimed complete here. The library
+contract they adopt is `Capabilities.WorkbenchTools`, aggregate file
+capabilities unsupported, continuing API sessions, unchanged configuration
+hashes and no historical replay. LAH-27 and LAH-28 already wait for this
+containment repair and own reviewed storage/admission design and restoration.
+Command PATH, loopback, native confinement and unrelated queued work were not
+absorbed.
+
+
+## LAH-32 review repair, after main afbaf07
+
+This revision retains the production refusal and session contract and incorporates
+main afbaf07 as merged by the task runner. It changes no permission defaults,
+provider behavior or generated assets. No generation directives apply to these
+changes. The source commit identifier supplied for the merge is afbaf07; the
+exact revised source is identified independently by the manifest below.
+
+The previous early content guards were too broad: they suppressed unaffected
+directory walking, listings, listing cancellation, bounded-result assertions,
+formatter controls and atomic write/symlink-swap controls. Those controls now run
+on Linux/macOS. Mixed tests branch only read/search/edit expectations; remaining
+whole-test guards cover content-only operations. Windows retains positive reads,
+searches and edits.
+
+Edit's direct target open and io.ReadAll now have an instance-local contentStep
+observer at their actual boundaries. Refusal tests install it before admission
+and assert no calls, alongside the existing read/search and write-stage hooks.
+Concurrent admitted requests cover Read, Search and Edit. A local mutation
+experiment removed only edit's guard, ran
+`go test -count=1 -v ./sandbox -run '^TestContentToolsRefuseBeforeIO$' -timeout 30s`,
+then restored the source in a finally block. Exit 1 was expected: the test
+reported both `edit_file target open reached` and `edit_file target read reached`.
+This is test-sensitivity evidence, not passing containment evidence. No mutation
+or runtime switch remains in the candidate.
+
+Synthetic session cases now cover default, Write, writable Commands and
+read-only Commands across Start, Open and Resume (12 cases). They exercise the
+merged launch-time proof orchestration with a synthetic proof callback and
+runner constructor; production retains NewRunner's normal checks. Each Commands
+case verifies exact effective capability names (including run_command), exact
+advertisement, admitted command results, successful permitted writes when
+enabled, a later closing handler after three refused content calls, fresh
+proof/runner preparation on resume and no historical replay. These are
+transport/contract tests, not evidence of OS command sandbox enforcement.
+
+The modeled fixture is now shared with
+`TestWorkbenchModeledReadAdmissionBaseline`. That test executes the retained
+openRegular admission beneath the public content-operation refusal, reads only
+the fixture descriptor, and requires the observed marker. The descriptor's
+identity matches the retained outside source; regular-file, mount and link
+facts are real. Namespace reachability is still modeled. Completed-unlink and
+ordinary-file controls use real namespace observations. This test offers no
+public/runtime bypass and makes the baseline admission observation runnable on
+both Linux and macOS without changing production policy. It does not claim a
+complete historical read_file invocation or exact reproduction of CI's kernel
+event. Both Linux CI variants and macOS CI now run this baseline explicitly
+before the containment repetitions.
+
+### Exact revised candidate
+
+Go source/module manifest SHA-256:
+`6c28810a01a0c002537d3e402e68d3144a669e07b21dd3d96f4dde587b8a5e24` (381 files).
+Algorithm: sort the paths returned by
+`rg --files -g '*.go' -g go.mod -g go.sum`; for each write
+`<SHA-256 of file bytes>  <path>\n`, then hash the concatenated UTF-8 manifest.
+Workflow SHA-256: `f9dc0af4889cd915e959225c084e4e267f6258bb86ae675f5e3c445e217162a6`.
+Documentation lies outside these source/workflow identities.
+
+### Executed revision validation
+
+Local platform: Go 1.27.1, darwin/arm64, Darwin 27.0.0,
+xnu-13432.1.9~1/RELEASE_ARM64_T6000; APFS workspace. macOS command runtime:
+OS-supplied /usr/bin/sandbox-exec; no independent version reported.
+These local executions are within the implementer's outer sandbox.
+
+| Command | Outcome |
+| --- | --- |
+| `go vet ./...` | Exit 0 |
+| `go test -race -count=1 ./... -timeout 180s` | Exit 0; normal environment probes may skip, so this is not strict OS enforcement evidence |
+| `go test -race -count=200 -v ./sandbox -run '^TestWorkbenchHardLinkAndConcurrentSwaps$'` | Exit 0, 200 passes, no skips; typed refusal and no modeled namespace observations reached |
+| `go test -race -count=1 -v ./sandbox -run '^TestWorkbenchModeledReadAdmissionBaseline$\|^TestContentToolsRefuseBeforeIO$'` | Exit 0, no skips; actual baseline bytes `OUTSIDE-MARKER-4d1c\n`, unchanged outside source, Regular=true, Directory=false, SameMount=true, Links=1; all three content operations refuse without target content I/O |
+| `go test -race -count=1 -v ./session -run '^TestWorkbench(DisabledContentSessionLifecycle\|HistoricalContentRecovery)$'` | Exit 0, all 12 lifecycle cases and historical recovery pass, no skips |
+| `CGO_ENABLED=0 go build -buildvcs=false ./...` | Exit 0; CGO-free build |
+| `GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go test -exec=true ./...` | Exit 0; compilation only, no Windows runtime execution |
+| daemon `run_check` | Exit 0, timed_out=false, stderr empty; full vet/race project check, including the newly added baseline and command lifecycle tests |
+
+The daemon summary does not report its OS, kernel, sandbox version or skips.
+It is recorded as a passing project check without inventing Linux/Windows
+provenance. The added CI commands retain source commit, Go version, OS/kernel,
+filesystem and bubblewrap version beside the baseline/refusal/session outputs.
+
+### Team validation still pending
+
+The earlier owner-step assignment of required platform checks was incorrect;
+none of these team requirements has been moved to owner undertakings.
+A Linux baseline and final Linux/bubblewrap 0.9 and 0.8.0 runtime results,
+Windows runtime results, and strict macOS real-command enforcement have not
+been returned by the available executions. Future CI steps are prepared but
+are not counted as already executed evidence. run_check has no platform
+selector in its exposed schema. The installed local Docker client reports
+permission denied connecting to its selected Unix socket; that is an unavailable
+local path, not proof that team/daemon platform executors do not exist.
+The team execution entry point has been requested while all independent repairs
+and checks continued. Required cross-platform evidence remains a team completion
+requirement; after-landing owner reruns are still context only.
+
 ## Readable command PATH and execution
 
 The shared runner filters the merged environment before each invocation using
@@ -210,3 +454,141 @@ Result retains bounded diagnostics and the settled error; callers must inspect
 non-nil handles even on failure. Pre-launch refusals retain nil handles.
 Compatibility propagation is assigned to LAH-30. See the command design for
 actual execution results and unrun checks.
+
+## LAH-32 merged draft-3 validation
+
+Merged main identifier supplied by the task:
+`1c0700f2ab413bacab23711e9fb1abb5e8ad2514`. The documentation conflict is
+resolved by retaining both the LAH-32 investigation and the landed
+readable-command PATH/execution contract.
+
+Current Go source/module manifest SHA-256: 2bc211111e5af8ead7f04f60d624203f13dba31801270db5fc58d27928d39e50 (387 files), using the algorithm above. Workflow SHA-256 remains f9dc0af4889cd915e959225c084e4e267f6258bb86ae675f5e3c445e217162a6. Draft-2 hashes and outcomes above describe that earlier candidate only.
+
+Runtime evidence for Linux/bubblewrap 0.9.x and 0.8.0 and Windows is still unavailable through the exposed tools: run_check accepts only an empty object and returns no runner provenance; external network and CI dispatch are prohibited in this checkout. A team executor entry point has been requested again. This does not move team criteria to owner checks or establish platform success.
+
+Re-executed against this merged source identity on Go 1.27.1 darwin/arm64,
+Darwin 27.0.0 xnu-13432.1.9~1/RELEASE_ARM64_T6000, APFS. Sandbox runtime is
+the OS-supplied /usr/bin/sandbox-exec, without an independent version.
+
+| Command | Observed outcome |
+| --- | --- |
+| `go vet ./...` | Exit 0 |
+| `go test -race -count=1 ./... -timeout 180s` | Exit 0; environment-probe skips remain possible, not strict enforcement evidence |
+| `go test -race -count=200 ./sandbox -run '^TestWorkbenchHardLinkAndConcurrentSwaps$'` | Exit 0, 200 passes, no skips |
+| `go test -race -count=1 -v ./sandbox -run '^TestWorkbenchModeledReadAdmissionBaseline$\|^TestContentToolsRefuseBeforeIO$'` | Exit 0, no skips; baseline marker bytes, unchanged source, Regular=true, Directory=false, SameMount=true, Links=1; refusal coverage passes |
+| `go test -race -count=1 -v ./session -run '^TestWorkbench(DisabledContentSessionLifecycle\|HistoricalContentRecovery)$'` | Exit 0; all 12 synthetic lifecycle cases and historical recovery pass, no skips |
+| `CGO_ENABLED=0 go build -buildvcs=false ./...` | Exit 0 |
+| `GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go test -exec=true ./...` | Exit 0; compilation only |
+| daemon `run_check` on merged source | Exit 0, timed_out=false, stderr empty; sandbox 6.697s, session 123.634s; runner platform and skips unspecified |
+| `AGENT_HARNESS_TEST_NO_SKIP=1 go test -race -count=1 -v ./sandbox -run '^TestCommandSandboxRunSkipsRefusedCapabilities$'` | Exit 1 at prerequisite: loopback listen bind operation not permitted; no command enforcement observation or passing skip |
+
+Strict macOS command enforcement therefore remains unavailable locally, rather
+than passing. No production changes, generated-file changes, dependency
+replacements or consumer edits were needed to combine the landed command policy
+with this repair.
+
+Draft-4 validation follow-up: the source and workflow identities above were
+recomputed and remain unchanged. The exposed tool inventory still provides only
+`run_check({})` for daemon execution, without platform selection, command override
+or runner provenance. A shared task note now requests the team runner entry point
+or exact-candidate CI logs for the outstanding platforms and strict enforcement
+checks. This is an unresolved team execution dependency; no new passing platform
+claim or after-landing owner requirement is introduced.
+The repeated daemon project check completed with exit 0, timed_out=false and
+empty stderr (sandbox 11.362s, session 124.479s). As before, the summary contains
+no platform/sandbox provenance and does not satisfy the missing runtime evidence.
+
+## LAH-32 draft-5: supplied platform evidence and crash-fixture repair
+
+The owner proxy supplied results for draft-4 commit
+`1eb1bf9404359e4522950bcd429036b1e8c5b60c`, executed outside the sandbox:
+
+- macOS 27 arm64: `go vet ./...`, the strict race suite with
+  `AGENT_HARNESS_TEST_NO_SKIP=1`, and `go run ./internal/cmd/sandboxcheck` passed.
+- Windows: `GOOS=windows go vet ./...` and test compilation of sandbox/session/
+  process passed. The owner explicitly accepts Windows runtime CI on main after
+  landing; compilation is still not recorded as runtime execution.
+- Ubuntu 24.04, bubblewrap 0.9.0, strict suite with bind-mount witness: failed
+  `TestWorkbenchLinuxLaunchFailureAfterProof` and
+  `TestStartupBeforeNotifyRetainsDiagnostics/true`. The owner identified these
+  as inherited base-1c0700f failures, fixed upstream in dea80b0. The supplied
+  main dea80b0 CI result is green across all four jobs, including bubblewrap
+  0.8.0; it is evidence for main, not this containment candidate.
+- Linux sandboxcheck failed once in
+  `TestAPISessionResumeAfterACrashNeverRerunsACall` with an unscripted third
+  request; the isolated test subsequently passed three times.
+
+Main dea80b0 was merged into this checkout by the task runner without conflicts;
+its startup classification and status-writer fixture fixes are retained. No Git
+metadata was modified by the implementer.
+
+The crash test's previous deferred close(release) ran before startAPI's registered
+test cleanup closed the original session. Its blocked handler could then return
+success to a live original turn, causing that turn's next model request to race
+teardown. Workbench is nil in this test, so availability reporting and the absence
+notice do not execute; they introduce no provider probe or retry. The fixture now
+closes the original session before releasing the handler, awaits actual state
+release, and asserts exactly two model requests. The other release-channel tests
+already interrupt or close their session before releasing an admitted handler.
+
+New candidate Go source/module manifest SHA-256:
+`1d0fee3c5d7fd08248adb5e7b381b275ae9d51e591bb235f6078d69ae9faaf20`
+(387 files), using the manifest algorithm above. Earlier candidate results stay
+tied to their original identities. Passing focused Linux baseline, 200-repeat
+containment, refusal and lifecycle results for both bubblewrap versions have not
+yet been supplied; the owner has undertaken a Linux rerun on this repaired
+candidate. Those outcomes are not inferred from main's green CI.
+
+Local repaired-candidate validation: Go 1.27.1, darwin/arm64, Darwin 27.0.0,
+APFS; OS-supplied sandbox-exec (no separate version). Commands and outcomes:
+
+The repaired candidate's daemon `run_check` also passed: exit 0,
+timed_out=false, stderr empty, sandbox 11.739s and session 135.196s. Its platform
+and sandbox provenance remain unspecified, so it is project-check evidence only.
+
+| Command | Outcome |
+| --- | --- |
+| `go vet ./...` | Exit 0 |
+| `go test -race ./... -timeout 180s` | Exit 0; environment-probe skips possible |
+| `go test -race -count=200 ./session -run '^TestAPISessionResumeAfterACrashNeverRerunsACall$' -timeout 180s` | Exit 0; 200 passes, no skips, exactly two requests per fixture |
+| `go test -race -count=200 ./sandbox -run '^TestWorkbenchHardLinkAndConcurrentSwaps$'` | Exit 0; 200 passes, no skips |
+| `go test -race -count=1 -v ./sandbox -run '^TestWorkbenchModeledReadAdmissionBaseline$\|^TestContentToolsRefuseBeforeIO$'` | Exit 0, no skips; modeled marker baseline with unchanged source and real Regular=true, Directory=false, SameMount=true, Links=1; zero-I/O refusal passes |
+| `go test -race -count=1 ./session -run '^TestWorkbench(DisabledContentSessionLifecycle\|HistoricalContentRecovery)$'` | Exit 0, no skips; synthetic contract evidence |
+| `CGO_ENABLED=0 go build -buildvcs=false ./...` | Exit 0 |
+| `GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go test -exec=true ./...` | Exit 0; compilation only |
+
+## LAH-32 draft-6: exact-candidate owner results
+
+Owner note 8 supplies outside-sandbox results for draft-5 commit
+`65d291574027c030aa34daf818287a0668af3b9f`, based on dea80b0. Its Go source
+manifest remains `1d0fee3c5d7fd08248adb5e7b381b275ae9d51e591bb235f6078d69ae9faaf20`;
+recomputed in this round, it is unchanged. This round changes documentation only.
+The following results supersede the earlier pending statements for this source,
+without changing the historical evidence for older drafts:
+
+| Platform and sandbox | Supplied command/check | Supplied outcome |
+| --- | --- | --- |
+| Ubuntu 24.04, bubblewrap 0.9.0, `AGENT_HARNESS_TEST_NO_SKIP=1`, bind-mount witness | `go vet ./...` and `go test -race ./...` | PASS |
+| Same Linux configuration | Focused `-run 'TestWorkbenchHardLinkAndConcurrentSwaps\|Refus\|Disabled'` on sandbox and session | 162 passing tests/subtests, none failing |
+| Same Linux configuration | `go run ./internal/cmd/sandboxcheck` | PASS |
+| macOS 27, OS Seatbelt | Strict race suite | PASS on this exact draft-5 candidate |
+
+These are supplied owner observations, not executions by the implementer.
+The strict Linux full suite includes the modeled admission baseline and rejects
+environment-prerequisite skips. The focused filter covers containment, refusal
+and disabled-session cases. The note does not supply verbose baseline bytes,
+descriptor facts, Go/kernel/architecture/filesystem metadata, exact focused
+flags or an explicit Linux `-count=200` result; those details are not invented.
+The baseline test's modeled namespace remains distinct from the original CI
+event; suite success is not an exact kernel reproduction.
+
+The owner explicitly states that bubblewrap 0.8.0 and Windows results come from
+CI after landing. Those runtime checks are accepted follow-up validation for
+this task, not already observed passing evidence. The recorded after-landing
+Linux 0.8/0.9 rerun remains an owner undertaking. Local macOS 200-repeat
+containment and crash-fixture results remain as recorded above; an explicit
+Linux 200-repeat result has not been supplied.
+
+This documentation round's `run_check` completed successfully: exit 0,
+timed_out=false, stderr empty, sandbox 9.430s and session 130.391s. Its summary
+does not identify the platform and adds no new platform-specific claim.

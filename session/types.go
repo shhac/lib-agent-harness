@@ -23,7 +23,15 @@ const MaxFrameBytes = 16 << 20
 // Capabilities is what one session has established about its installed
 // harness. It starts from harness.Support's static claim for the engine and
 // records what the running harness has since shown.
+// WorkbenchTool reports one configured tool and its effective availability.
+type WorkbenchTool struct {
+	Name       string
+	Capability harness.Capability
+}
+
 type Capabilities struct {
+	// WorkbenchTools lists the configured workbench surface, including unavailable tools.
+	WorkbenchTools                                                           []WorkbenchTool
 	Start, Resume, Interrupt, Steer, ReplaceInstructions, AppendInstructions harness.Capability
 	// Telemetry capabilities become Native only after a successful response or
 	// event. Older CLI versions may reject optional inspection methods.

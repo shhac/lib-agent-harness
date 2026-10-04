@@ -93,6 +93,9 @@ func (w *Workspace) writeParent(ctx context.Context, rel string, create bool) (*
 }
 
 func (w *Workspace) writeFile(ctx context.Context, tool string, raw json.RawMessage) (Result, error) {
+	if ToolAvailability(tool) != "" {
+		return contentRefusal(tool)
+	}
 	var in struct {
 		Path    string  `json:"path"`
 		Content *string `json:"content"`
@@ -152,6 +155,9 @@ func (w *Workspace) writeFile(ctx context.Context, tool string, raw json.RawMess
 		if git, e := dir.Lstat(".git"); e == nil && os.SameFile(git, info) {
 			return fail(wbReserved)
 		}
+		if tool == workbenchEditFile && w.contentStep != nil {
+			w.contentStep(tool, "open")
+		}
 		f, e := dir.OpenFile(name, wsfile.OpenFlags, 0)
 		if e != nil {
 			return fail(rootFailure(e))
@@ -175,6 +181,9 @@ func (w *Workspace) writeFile(ctx context.Context, tool string, raw json.RawMess
 		if tool == workbenchEditFile {
 			if facts.Links != 1 {
 				return fail(wbLinked)
+			}
+			if w.contentStep != nil {
+				w.contentStep(tool, "read")
 			}
 			data, e := io.ReadAll(io.LimitReader(f, maxReadFileBytes+1))
 			if e != nil {

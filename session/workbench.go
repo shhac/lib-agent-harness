@@ -6,7 +6,7 @@ package session
 // the two lists cannot drift apart. The tools themselves are in
 // sandbox.Workspace.
 //
-// Read tools are always present. Writes are opt-in and atomic; shell commands
+// Only verified file tools are present. Writes are opt-in and atomic; shell commands
 // require a pre-launch proof of the pinned operating-system sandbox.
 
 import (
@@ -23,13 +23,13 @@ import (
 )
 
 // Workbench gives an OpenAI-compatible session the library's own tools over
-// Options.WorkDir. The zero value asks for read_file, list_files and
-// search_files, which run in the library's process, confined to WorkDir.
-//
-// Reads require singly linked regular files on the workspace mount.
+// Options.WorkDir. The zero value offers list_files on Linux and macOS;
+// read_file and search_files are disabled pending verified workspace admission.
+// Capabilities.WorkbenchTools reports the effective configured surface.
 type Workbench struct {
 	proof sandbox.Proof
-	// Write adds atomic write_file and edit_file tools.
+	// Write adds atomic write_file. On Windows it also adds edit_file;
+	// edit_file is disabled on Linux and macOS pending verified admission.
 	Write bool
 	// NewFileMode defaults to 0600. Windows uses the parent directory ACL.
 	NewFileMode fs.FileMode

@@ -6,7 +6,7 @@ type Definition struct {
 	Schema            map[string]any
 }
 
-// Definitions returns the read tools and, when write is true, the write tools.
+// Definitions returns only offered tools, including mutation when write is true.
 func Definitions(write bool) []Definition {
 	defs := []Definition{
 		{
@@ -49,5 +49,11 @@ func Definitions(write bool) []Definition {
 	if write {
 		defs = append(defs, workbenchWriteDefinitions()...)
 	}
-	return defs
+	offered := defs[:0]
+	for _, d := range defs {
+		if ToolAvailability(d.Name) == "" {
+			offered = append(offered, d)
+		}
+	}
+	return offered
 }

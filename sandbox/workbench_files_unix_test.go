@@ -34,6 +34,9 @@ func TestWorkbenchListMarksAFIFOWithoutOpeningIt(t *testing.T) {
 }
 
 func TestWorkbenchFIFOAndSocketRefusal(t *testing.T) {
+	if contentDisabled(t, workbenchReadFile) {
+		return
+	}
 	// A writable package directory supplies a short relative socket path.
 	// Keep the workspace here too so no cross-file-system rename is needed.
 	socketDir, err := os.MkdirTemp(".", ".wbs-")
@@ -78,6 +81,9 @@ func TestWorkbenchFIFOAndSocketRefusal(t *testing.T) {
 // The swap is exactly between the pre-filter and open, rather than hoping
 // a concurrent writer happens to hit that window.
 func TestWorkbenchNonblockingFIFOOpenAfterLstat(t *testing.T) {
+	if contentDisabled(t, workbenchReadFile) {
+		return
+	}
 	for _, directory := range []bool{false, true} {
 		t.Run(map[bool]string{false: "file", true: "directory"}[directory], func(t *testing.T) {
 			w, work, _ := testWorkspace(t)

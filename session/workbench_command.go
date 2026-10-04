@@ -14,6 +14,10 @@ import (
 
 var errWorkbenchCommandUnknown = errors.New("command_outcome_unknown")
 
+// Tests replace runner construction with a synthetic transport. Production
+// always uses NewRunner's proof/configuration and state checks.
+var newWorkbenchRunner = sandbox.NewRunner
+
 func commandOptions(o Options) sandbox.Options {
 	c := o.Workbench.Commands
 	return sandbox.Options{WorkDir: o.WorkDir, RuntimeHome: o.RuntimeHome, Write: o.Workbench.Write, Read: c.Read, Env: c.Env, Loopback: c.Loopback, Timeout: c.Timeout, Background: o.Background}
@@ -45,7 +49,7 @@ func setupWorkbenchCommands(w *workbenchHost, o Options, id string) error {
 	if o.Workbench.Commands == nil {
 		return nil
 	}
-	r, err := sandbox.NewRunner(commandOptions(o), o.Workbench.proof, filepath.Join(o.RuntimeHome, "sessions", id), w.budget)
+	r, err := newWorkbenchRunner(commandOptions(o), o.Workbench.proof, filepath.Join(o.RuntimeHome, "sessions", id), w.budget)
 	if err == nil {
 		w.commands = r
 	}

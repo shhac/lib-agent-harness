@@ -23,6 +23,9 @@ const maxSearchMatches = 200
 
 // searchFiles shares list_files' handle walk and never follows links.
 func (w *Workspace) searchFiles(ctx context.Context, raw json.RawMessage) (Result, error) {
+	if ToolAvailability(workbenchSearchFiles) != "" {
+		return contentRefusal(workbenchSearchFiles)
+	}
 	var in struct {
 		Pattern *string `json:"pattern"`
 		Literal bool    `json:"literal"`

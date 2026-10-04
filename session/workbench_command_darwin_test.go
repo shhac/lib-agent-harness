@@ -181,7 +181,7 @@ func TestWorkbenchMacOSEditAndRunSession(t *testing.T) {
 	o.Workbench = &Workbench{Write: true, Commands: &Commands{}}
 	writeFile(t, filepath.Join(o.WorkDir, "file"), "old")
 	e := newEndpoint(t,
-		answer("", scriptedCall{"edit", "edit_file", `{"path":"file","old":"old","new":"new"}`}),
+		answer("", scriptedCall{"write", "write_file", `{"path":"file","content":"new"}`}),
 		answer("", scriptedCall{"run", "run_command", fmt.Sprintf(`{"command":"cat file; echo result > result; if echo bad > ../escaped; then echo ESCAPED; fi; if nc -z -w 1 127.0.0.1 %d; then echo NETWORK; fi"}`, port)}),
 		answer("", scriptedCall{"finish", "finish", `{}`}),
 	)

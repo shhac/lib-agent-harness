@@ -55,7 +55,7 @@ func call(t *testing.T, ws *Workspace, tool string, args any) Result {
 	case workbenchSearchFiles:
 		result, err = ws.searchFiles(context.Background(), raw)
 	}
-	if err != nil && !errors.Is(err, errWorkbenchWriteUnknown) {
+	if err != nil && !errors.Is(err, errWorkbenchWriteUnknown) && !(ToolAvailability(tool) != "" && errors.Is(err, ErrUnsupported)) {
 		t.Fatalf("%s %s: %v", tool, raw, err)
 	}
 	if ws.handles.Load() != 0 {
@@ -81,7 +81,9 @@ func refusedWith(t *testing.T, r Result, code string) {
 
 func TestWorkbenchPathsStayInside(t *testing.T) {
 	ws, work, outside := testWorkspace(t)
-	if r := read(t, ws, "a.txt"); r.IsError || r.Content != "inside\n" {
+	if r := read(t, ws, "a.txt"); ToolAvailability(workbenchReadFile) != "" {
+		refusedWith(t, r, RefusedNotOffered)
+	} else if r.IsError || r.Content != "inside\n" {
 		t.Fatalf("%+v", r)
 	}
 	absolute := filepath.ToSlash(filepath.Join(outside, "secret.txt"))
@@ -104,12 +106,12 @@ func TestWorkbenchPathsStayInside(t *testing.T) {
 		"missing.txt":             wbNotFound,
 		strings.Repeat("a/", 600): wbPathInvalid,
 	} {
-		refusedWith(t, read(t, ws, path), code)
+		refusedWith(t, read(t, ws, path), effectiveContentCode(workbenchReadFile, code))
 	}
 	for path, code := range map[string]string{"../outside": wbOutside, "/": wbPathInvalid, "NUL": wbPathInvalid, "a.txt": wbNotDirectory} {
 		refusedWith(t, call(t, ws, workbenchListFiles, map[string]any{"path": path}), code)
 	}
-	if r := call(t, ws, workbenchReadFile, json.RawMessage(`{"path":5}`)); !r.IsError || !strings.Contains(r.Content, wbArgumentsInvalid) {
+	if r := call(t, ws, workbenchReadFile, json.RawMessage(`{"path":5}`)); !r.IsError || !strings.Contains(r.Content, effectiveContentCode(workbenchReadFile, wbArgumentsInvalid)) {
 		t.Fatalf("%+v", r)
 	}
 	if r := read(t, ws, "."); !r.IsError {
@@ -129,14 +131,16 @@ func TestWorkbenchLinksStayInside(t *testing.T) {
 	symlink(t, outside, filepath.Join(work, "dir"))
 	symlink(t, "a.txt", filepath.Join(work, "alias"))
 	for _, path := range []string{"relative", "absolute", "hop1/secret.txt", "hop2/secret.txt", "dir/secret.txt"} {
-		refusedWith(t, read(t, ws, path), wbOutside)
+		refusedWith(t, read(t, ws, path), effectiveContentCode(workbenchReadFile, wbOutside))
 	}
 	// Listing never follows a link, so one out is refused as a link before
 	// the root is ever asked to follow it.
 	refusedWith(t, call(t, ws, workbenchListFiles, map[string]any{"path": "dir"}), wbIsSymlink)
 	refusedWith(t, call(t, ws, workbenchListFiles, map[string]any{"path": "hop2"}), wbIsSymlink)
 	// A link that stays inside is followed for a read.
-	if r := read(t, ws, "alias"); r.IsError || r.Content != "inside\n" {
+	if r := read(t, ws, "alias"); ToolAvailability(workbenchReadFile) != "" {
+		refusedWith(t, r, RefusedNotOffered)
+	} else if r.IsError || r.Content != "inside\n" {
 		t.Fatalf("%+v", r)
 	}
 	// Listing names links and never follows them.
@@ -163,7 +167,7 @@ func TestWorkbenchListFollowsNoRequestedLink(t *testing.T) {
 		t.Fatalf("%q", r.Content)
 	}
 	// read_file still follows a link that stays inside, as the design says.
-	if r := read(t, ws, "link-to-dir/sub/inner.txt"); r.IsError {
+	if r := read(t, ws, "link-to-dir/sub/inner.txt"); r.IsError && ToolAvailability(workbenchReadFile) == "" {
 		t.Fatalf("%+v", r)
 	}
 }
@@ -182,8 +186,10 @@ func TestWorkbenchHiddenNamesStayHiddenWhenAskedFor(t *testing.T) {
 	for _, path := range []string{".git", ".git/refs", ".GIT", ".git.", reserved, reserved + "/x", "src/.git", ".HARNESS-WORKBENCH-x.TMP"} {
 		refusedWith(t, call(t, ws, workbenchListFiles, map[string]any{"path": path}), wbNotListed)
 	}
-	refusedWith(t, read(t, ws, reserved+"/inside.txt"), wbReserved)
-	if r := read(t, ws, ".git/HEAD"); r.IsError {
+	refusedWith(t, read(t, ws, reserved+"/inside.txt"), effectiveContentCode(workbenchReadFile, wbReserved))
+	if r := read(t, ws, ".git/HEAD"); ToolAvailability(workbenchReadFile) != "" {
+		refusedWith(t, r, RefusedNotOffered)
+	} else if r.IsError {
 		t.Fatalf(".git/HEAD is readable: %+v", r)
 	}
 	// Another spelling of .git that reaches it by the file system, not by
@@ -313,6 +319,9 @@ func TestWorkbenchNestedSwapRace(t *testing.T) {
 // read_file follows a link that stays inside, but never to a reserved
 // temporary, and never round a loop.
 func TestWorkbenchReadResolvesLinksItself(t *testing.T) {
+	if contentDisabled(t, workbenchReadFile) {
+		return
+	}
 	ws, work, _ := testWorkspace(t)
 	reserved := ".harness-workbench-0123456789abcdef0123456789abcdef-0123456789abcdef.tmp"
 	writeFile(t, filepath.Join(work, "src", reserved), "half written\n")
@@ -370,6 +379,9 @@ func TestWorkbenchSwappedDirectoryStaysInside(t *testing.T) {
 }
 
 func TestWorkbenchReadBounds(t *testing.T) {
+	if contentDisabled(t, workbenchReadFile) {
+		return
+	}
 	ws, work, _ := testWorkspace(t)
 	var lines strings.Builder
 	for i := 1; i <= 2500; i++ {
@@ -443,6 +455,9 @@ func TestWorkbenchReadOfManyShortLinesIsBounded(t *testing.T) {
 		t.Fatalf("first page ends %q", got[len(got)-80:])
 	}
 
+	if contentDisabled(t, workbenchReadFile) {
+		return
+	}
 	ws, work, _ := testWorkspace(t)
 	short := bytes.Repeat([]byte("x\n"), maxReadFileBytes/2)
 	if err := os.WriteFile(filepath.Join(work, "short.txt"), short, 0o600); err != nil {
@@ -484,7 +499,9 @@ func TestWorkbenchResultFitsTheHostLimit(t *testing.T) {
 	}
 	defer ws.close()
 	r := read(t, ws, "wide.txt")
-	if len(r.Content) > 4096 || !strings.Contains(r.Content, "Continue with offset") {
+	if ToolAvailability(workbenchReadFile) != "" {
+		refusedWith(t, r, RefusedNotOffered)
+	} else if len(r.Content) > 4096 || !strings.Contains(r.Content, "Continue with offset") {
 		t.Fatalf("%d bytes: %q", len(r.Content), r.Content[len(r.Content)-80:])
 	}
 	if len(r.Content) > 4096 {
@@ -538,7 +555,7 @@ func TestWorkbenchAnswersFitTheSmallestLimit(t *testing.T) {
 		{workbenchListFiles, map[string]any{"path": "many"}, "could not be read in full"},
 	} {
 		r := call(t, ws, tc.tool, tc.args)
-		if len(r.Content) > minWorkbenchResult || !strings.Contains(r.Content, tc.note) {
+		if len(r.Content) > minWorkbenchResult || !strings.Contains(r.Content, effectiveContentCode(tc.tool, tc.note)) {
 			t.Errorf("%s %v: %d bytes, ending %q", tc.tool, tc.args["path"], len(r.Content), r.Content[max(0, len(r.Content)-120):])
 		}
 	}
@@ -719,11 +736,15 @@ func TestWorkbenchListBounds(t *testing.T) {
 	if strings.Contains(top.Content, ".git") || !strings.Contains(top.Content, "src/") || r.Content != "src/main.go" {
 		t.Fatalf("listing:\n%s\n%s", top.Content, r.Content)
 	}
-	if r = read(t, ws, ".git/HEAD"); r.IsError {
+	if r = read(t, ws, ".git/HEAD"); r.IsError && ToolAvailability(workbenchReadFile) == "" {
 		t.Fatalf(".git/HEAD is readable: %+v", r)
 	}
-	refusedWith(t, read(t, ws, "src/"+reserved), wbReserved)
-	refusedWith(t, read(t, ws, "src/.HARNESS-WORKBENCH-other.TMP"), wbReserved)
+	code := wbReserved
+	if ToolAvailability(workbenchReadFile) != "" {
+		code = RefusedNotOffered
+	}
+	refusedWith(t, read(t, ws, "src/"+reserved), code)
+	refusedWith(t, read(t, ws, "src/.HARNESS-WORKBENCH-other.TMP"), code)
 
 	empty := filepath.Join(work, "empty")
 	if err := os.Mkdir(empty, 0o700); err != nil {
@@ -749,6 +770,9 @@ func TestWorkbenchCancelStopsTheRead(t *testing.T) {
 		{workbenchReadFile, `{"path":"big.txt"}`},
 		{workbenchListFiles, `{"path":"dir"}`},
 	} {
+		if contentDisabled(t, tc.tool) {
+			continue
+		}
 		ctx, cancel := context.WithCancel(context.Background())
 		steps := 0
 		ws.step = func() {

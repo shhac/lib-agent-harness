@@ -1,5 +1,40 @@
 # The API workbench: workspace tools for OpenAI-compatible sessions
 
+## Containment contract, 2026-10-04
+
+On Linux and macOS, `read_file`, `search_files` and `edit_file` are
+temporarily not offered: “workbench file tools are off until their workspace
+check is verified”. Standalone `Workspace.Read`, `Search` and `Edit` return
+a typed `*sandbox.RefusalError` (`not_offered`, capability family,
+`Unsupported`) before parsing arguments or performing content I/O.
+There is no opt-in bypass. `list_files`, opt-in atomic `write_file`, skills,
+caller tools and proved commands continue.
+
+API workbench `Start`, `Open` and `Resume` continue with this reduced
+surface. `Session.Capabilities().WorkbenchTools` lists each configured tool
+with its availability and reason, returned as a defensive copy. A generated
+system notice tells the model which content tools are absent; advertisements
+and hosted admission use the same effective definitions. All six names remain
+reserved. Forced calls are refused before handlers run and do not close
+admission; an ordinary closing tool can still succeed.
+
+`harness.Support` reports aggregate `WorkspaceRead` and `WorkspaceWrite`
+as unsupported on Linux/macOS because their full tool sets are unavailable.
+This does not deny the surviving listing or write tool, or change command
+claims. Windows retains its existing file-tool behavior. Configuration digests
+and reference formats do not change: resumption reconstructs availability,
+preserves historical content results, and never replays old calls. The notice
+is regenerated outside durable transcript content and does not accumulate.
+
+Restoration requires a reviewed storage/admission invariant against concurrent
+links, renames, unlinks and external mutation (LAH-27 design, LAH-28 implementation);
+passing repetitions or independent stat samples cannot establish that invariant.
+Consumer migration is tracked separately in LAH-33/34 under the approved split.
+
+The historical read/admission descriptions below describe the retained
+implementation, not current Linux/macOS authorization.
+
+
 File access now lives in `sandbox.Workspace`; session retains hosting and
 transcript recovery. See [the stage-A package boundary](2026-10-03-sandbox-package.md)
 for the extraction, compatibility commitments and stage-B scope.

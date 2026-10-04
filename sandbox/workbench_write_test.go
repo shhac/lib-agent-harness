@@ -27,6 +27,11 @@ func TestWorkbenchAtomicWriteAndEdit(t *testing.T) {
 		{workbenchWriteFile, map[string]any{"path": "new/dir/file", "content": "one one"}, "one one"},
 		{workbenchEditFile, map[string]any{"path": "new/dir/file", "old": "one", "new": "two", "replace_all": true}, "two two"},
 	} {
+		if ToolAvailability(tc.tool) != "" {
+			r, err := w.writeFile(context.Background(), tc.tool, mustArgs(tc.args))
+			assertContentRefusal(t, tc.tool, r, err)
+			continue
+		}
 		r := call(t, w, tc.tool, tc.args)
 		if r.IsError {
 			t.Fatal(r.Content)
@@ -36,6 +41,15 @@ func TestWorkbenchAtomicWriteAndEdit(t *testing.T) {
 			t.Fatalf("%q %v", data, e)
 		}
 	}
+	if runtime.GOOS != "windows" {
+		info, _ := os.Stat(filepath.Join(work, "new", "dir", "file"))
+		if info.Mode().Perm() != 0644 {
+			t.Fatal(info.Mode())
+		}
+	}
+	if ToolAvailability(workbenchEditFile) != "" {
+		return
+	}
 	r := call(t, w, workbenchEditFile, map[string]any{"path": "new/dir/file", "old": "two", "new": "x"})
 	if !strings.Contains(r.Content, "match_not_unique") {
 		t.Fatal(r)
@@ -44,12 +58,7 @@ func TestWorkbenchAtomicWriteAndEdit(t *testing.T) {
 	if !strings.Contains(r.Content, "match_not_found") {
 		t.Fatal(r)
 	}
-	if runtime.GOOS != "windows" {
-		info, _ := os.Stat(filepath.Join(work, "new", "dir", "file"))
-		if info.Mode().Perm() != 0644 {
-			t.Fatal(info.Mode())
-		}
-	}
+
 }
 
 func TestWorkbenchWriteRefusals(t *testing.T) {
@@ -80,6 +89,10 @@ func TestWorkbenchWriteRefusals(t *testing.T) {
 		t.Fatal("reserved target changed")
 	}
 	r := call(t, w, workbenchEditFile, map[string]any{"path": reserved, "old": "another", "new": "bad"})
+	if ToolAvailability(workbenchEditFile) != "" {
+		refusedWith(t, r, RefusedNotOffered)
+		return
+	}
 	if !r.IsError || !strings.Contains(r.Content, wbReserved) {
 		t.Fatal(r)
 	}
@@ -149,7 +162,7 @@ func TestWorkbenchWritePreservesModeAndRefusesLinks(t *testing.T) {
 			if os.Chmod(file, mode) != nil {
 				t.Fatal("chmod")
 			}
-			r := call(t, w, workbenchEditFile, map[string]any{"path": "a.txt", "old": "inside", "new": "edited"})
+			r := call(t, w, workbenchWriteFile, map[string]any{"path": "a.txt", "content": "edited"})
 			if r.IsError {
 				t.Fatal(r)
 			}
@@ -160,7 +173,11 @@ func TestWorkbenchWritePreservesModeAndRefusesLinks(t *testing.T) {
 			if err := os.Link(file, filepath.Join(work, "hard")); err != nil {
 				t.Fatal(err)
 			}
-			r = call(t, w, workbenchEditFile, map[string]any{"path": "hard", "old": "missing", "new": "x"})
+			r = call(t, w, workbenchEditFile, map[string]any{"path": "hard", "old": "edited", "new": "x"})
+			if ToolAvailability(workbenchEditFile) != "" {
+				refusedWith(t, r, RefusedNotOffered)
+				return
+			}
 			if !strings.Contains(r.Content, wbLinked) {
 				t.Fatal(r)
 			}
@@ -239,6 +256,9 @@ func TestWorkbenchRenameErrorJudgedByIdentity(t *testing.T) {
 }
 
 func TestWorkbenchEditExpansionIsBounded(t *testing.T) {
+	if contentDisabled(t, workbenchEditFile) {
+		return
+	}
 	w, work, _ := testWorkspace(t)
 	w.id = newID()
 	writeFile(t, filepath.Join(work, "file"), strings.Repeat("x", 1<<20))

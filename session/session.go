@@ -423,8 +423,14 @@ func (s *Session) initialize(ctx context.Context, resume bool) error {
 	}
 	return nil
 }
-func (s *Session) Ref() Ref                   { s.mu.Lock(); defer s.mu.Unlock(); return s.ref }
-func (s *Session) Capabilities() Capabilities { s.mu.Lock(); defer s.mu.Unlock(); return s.caps }
+func (s *Session) Ref() Ref { s.mu.Lock(); defer s.mu.Unlock(); return s.ref }
+func (s *Session) Capabilities() Capabilities {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c := s.caps
+	c.WorkbenchTools = append([]WorkbenchTool(nil), c.WorkbenchTools...)
+	return c
+}
 
 // Close terminates the harness and its subprocess tree. It is idempotent.
 //

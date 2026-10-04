@@ -785,7 +785,6 @@ func TestAPISessionResumeAfterACrashNeverRerunsACall(t *testing.T) {
 	e := newEndpoint(t, answer("", scriptedCall{"w1", "write_file", `{"path":"x"}`}))
 	entered := make(chan struct{})
 	release := make(chan struct{})
-	defer close(release)
 	var first atomic.Int32
 	blocking := ToolHandlerFunc(func(context.Context, ToolCall) (ToolResult, error) {
 		first.Add(1)
@@ -796,6 +795,16 @@ func TestAPISessionResumeAfterACrashNeverRerunsACall(t *testing.T) {
 	write := ToolDefinition{Name: "write_file", Schema: map[string]any{"type": "object"}}
 	o := apiOptions(t, e.url, blocking, write)
 	s := startAPI(t, o)
+	// Stop admission before releasing the original handler. Releasing it first
+	// lets the still-live original turn ask for an unscripted third response.
+	defer func() {
+		s.Close()
+		close(release)
+		closeAPI(t, s) // Await handler settlement and transcript/lock release.
+		if requests := len(e.seen()); requests != 2 {
+			t.Errorf("crash fixture made %d requests, want 2", requests)
+		}
+	}()
 	turn, err := s.StartTurn(context.Background(), Input{Text: "Write x."})
 	if err != nil {
 		t.Fatal(err)

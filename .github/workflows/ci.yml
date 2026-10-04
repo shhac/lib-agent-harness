@@ -72,6 +72,20 @@ jobs:
       - name: Repeat lease cancellation and survivor liveness
         if: runner.os != 'Windows'
         run: go test -race -count=20 -v ./session -run '^TestReclaimKeepsTheLeaseWhileWaiting$'
+      - name: Deterministic workbench containment evidence
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD
+          go version
+          uname -a
+          df -T . 2>/dev/null || df .
+          if [ "$RUNNER_OS" = Linux ]; then bwrap --version; fi
+          go test -race -count=1 -v ./sandbox -run '^TestWorkbenchModeledReadAdmissionBaseline$'
+          go test -race -count=200 -v ./sandbox -run '^TestWorkbenchHardLinkAndConcurrentSwaps$'
+          go test -race -count=1 -v ./sandbox -run '^TestContentToolsRefuseBeforeIO$'
+          go test -race -count=1 -v ./session -run '^TestWorkbench(DisabledContentSessionLifecycle|HistoricalContentRecovery)$'
       - run: go test -race ./...
       - name: Check the full suite inside bubblewrap
         if: runner.os == 'Linux'
@@ -122,6 +136,19 @@ jobs:
           meson install -C upstream/build
           echo "$RUNNER_TEMP/bwrap-0.8.0/bin" >> "$GITHUB_PATH"
       - run: go vet ./...
+      - name: Deterministic workbench containment evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD
+          go version
+          uname -a
+          df -T .
+          bwrap --version
+          go test -race -count=1 -v ./sandbox -run '^TestWorkbenchModeledReadAdmissionBaseline$'
+          go test -race -count=200 -v ./sandbox -run '^TestWorkbenchHardLinkAndConcurrentSwaps$'
+          go test -race -count=1 -v ./sandbox -run '^TestContentToolsRefuseBeforeIO$'
+          go test -race -count=1 -v ./session -run '^TestWorkbench(DisabledContentSessionLifecycle|HistoricalContentRecovery)$'
       - name: Minimum-version sandbox, canary, syscall and session tests
         shell: bash
         run: |

@@ -34,12 +34,19 @@ func TestWorkspacePublicTools(t *testing.T) {
 		{w.Search, `{"pattern":"new"}`},
 	} {
 		r, err := tc.call(ctx, json.RawMessage(tc.args))
+		if ToolAvailability(workbenchReadFile) != "" && errors.Is(err, ErrUnsupported) {
+			continue
+		}
 		if err != nil || r.IsError {
 			t.Fatalf("%s: %+v %v", tc.args, r, err)
 		}
 	}
 	data, err := os.ReadFile(filepath.Join(root, "file"))
-	if err != nil || string(data) != "new" {
+	want := "new"
+	if ToolAvailability(workbenchEditFile) != "" {
+		want = "old"
+	}
+	if err != nil || string(data) != want {
 		t.Fatalf("%s %v", data, err)
 	}
 	if code := w.CheckDir(ctx, "."); code != "" {
@@ -83,7 +90,7 @@ func TestWorkspacePublicCallsSerialize(t *testing.T) {
 	defer func() { unblock(); wg.Wait() }()
 	read := func() {
 		defer wg.Done()
-		r, err := w.Read(context.Background(), json.RawMessage(`{"path":"a.txt"}`))
+		r, err := w.List(context.Background(), json.RawMessage(`{}`))
 		if err != nil || r.IsError {
 			t.Errorf("%+v %v", r, err)
 		}
@@ -136,7 +143,7 @@ func TestWorkspacePublicStuckError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { _, err := w.Read(ctx, json.RawMessage(`{"path":"a.txt"}`)); done <- err }()
+	go func() { _, err := w.List(ctx, json.RawMessage(`{}`)); done <- err }()
 	<-entered
 	w.Close() // A late failure must still reach the configured callback.
 	cancel()
