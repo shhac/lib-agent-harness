@@ -39,34 +39,14 @@ func prepareLaunch(ctx context.Context, o Options, lease *os.File) (*launch, err
 	}
 	l := &launch{host: host}
 	fail := func(err error) (*launch, error) { host.close(); return nil, err }
-	if o.Provider.Engine == harness.Claude {
-		l.extra = claudeRestrictedArgs(host)
-	} else {
-		// The session runs in a home this library owns, with the operator's login
-		// shared into it. Their own home keeps its servers, hooks and trust
-		// settings, and none of it reaches the worker.
-		if _, err = prepareRuntimeHome(o.Provider.CLI.Home, o.RuntimeHome); err != nil {
-			return fail(err)
-		}
-		if err = syncRuntimeSkills(o); err != nil {
-			return fail(err)
-		}
-		catalog, readErr := readCodexCatalog(ctx, o)
-		if readErr != nil {
-			return fail(readErr)
-		}
-		restricted, effort, restrictErr := restrictedCatalogFor(catalog, o.Model, o.Effort)
-		if restrictErr != nil {
-			return fail(restrictErr)
-		}
-		o.Effort = effort
-		catalogFile := catalogPath(host.cfg.Dir)
-		if err = writePrivate(catalogFile, restricted); err != nil {
-			return fail(err)
-		}
-		if l.extra, err = codexRestrictedArgs(host, catalogFile); err != nil {
-			return fail(err)
-		}
+	restrict := engines[o.Provider.Engine].restrictedArgs
+	if restrict == nil {
+		return fail(&UnsupportedError{Engine: o.Provider.Engine, Operation: "restriction", Code: RefusedNotOffered, Capability: harness.Support(o.Provider.Engine, harness.Session, harness.RestrictTools)})
+	}
+	// Restricting may settle options the probe and the launch then use, such
+	// as the effort Codex's narrowed catalog allows.
+	if o, l.extra, err = restrict(ctx, o, host); err != nil {
+		return fail(err)
 	}
 	// The probe is unconditional. What can be skipped is repeating it for a
 	// binary and an argument set already proved in this process — which is a
@@ -97,22 +77,23 @@ type launch struct {
 }
 
 func commandArgs(o Options, nativeID string, resuming bool, l *launch) []string {
-	if o.Provider.Engine == harness.Codex {
-		args := []string{"app-server", "--listen", "stdio://"}
-		if o.Browser {
-			args = append(args, nativecli.CodexBrowserArgs()...)
-		}
-		if l != nil {
-			args = append(args, l.extra...)
-		}
-		return args
+	return engines[o.Provider.Engine].args(o, nativeID, resuming, l)
+}
+
+// codexArgs runs Codex's app server on stdio.
+func codexArgs(o Options, _ string, _ bool, l *launch) []string {
+	args := []string{"app-server", "--listen", "stdio://"}
+	if o.Browser {
+		args = append(args, nativecli.CodexBrowserArgs()...)
 	}
-	if o.Provider.Engine == harness.Grok {
-		return grokArgs(o)
+	if l != nil {
+		args = append(args, l.extra...)
 	}
-	if o.Provider.Engine == harness.CommandCode {
-		return commandCodeArgs()
-	}
+	return args
+}
+
+// claudeArgs runs Claude Code's stream-json protocol for one conversation.
+func claudeArgs(o Options, nativeID string, resuming bool, l *launch) []string {
 	args := []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--permission-mode", o.Policy.ClaudePermission}
 	if l != nil {
 		args = append(args, l.extra...)
@@ -265,4 +246,36 @@ func disposableEnvironment(o Options, dir string) []string {
 		return append(env, "CODEX_HOME="+dir)
 	}
 	return append(env, "CLAUDE_CONFIG_DIR="+dir)
+}
+
+// codexRestrictedLaunch runs a restricted Codex session in a home this library
+// owns, with the operator's login shared into it: their own home keeps its
+// servers, hooks and trust settings, and none of it reaches the worker. The
+// model catalog is narrowed to the requested model and effort.
+func codexRestrictedLaunch(ctx context.Context, o Options, host *toolHost) (Options, []string, error) {
+	if _, err := prepareRuntimeHome(o.Provider.CLI.Home, o.RuntimeHome); err != nil {
+		return o, nil, err
+	}
+	if err := syncRuntimeSkills(o); err != nil {
+		return o, nil, err
+	}
+	catalog, err := readCodexCatalog(ctx, o)
+	if err != nil {
+		return o, nil, err
+	}
+	restricted, effort, err := restrictedCatalogFor(catalog, o.Model, o.Effort)
+	if err != nil {
+		return o, nil, err
+	}
+	o.Effort = effort
+	catalogFile := catalogPath(host.cfg.Dir)
+	if err = writePrivate(catalogFile, restricted); err != nil {
+		return o, nil, err
+	}
+	args, err := codexRestrictedArgs(host, catalogFile)
+	return o, args, err
+}
+
+func claudeRestrictedLaunch(_ context.Context, o Options, host *toolHost) (Options, []string, error) {
+	return o, claudeRestrictedArgs(host), nil
 }

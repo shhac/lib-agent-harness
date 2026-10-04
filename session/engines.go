@@ -57,6 +57,11 @@ type engineEntry struct {
 	composedSteer string
 	// account, quota and context are the engine's native telemetry reads;
 	// accountFromStart serves the account its start-up handshake reported.
+	// args is the CLI's command line for a session, and restrictedArgs what
+	// a restricted session adds once its tool host is open; nil refuses
+	// restriction.
+	args             func(o Options, nativeID string, resuming bool, l *launch) []string
+	restrictedArgs   func(ctx context.Context, o Options, host *toolHost) (Options, []string, error)
 	account          *accountRead
 	accountFromStart bool
 	quota            *quotaRead
@@ -71,6 +76,7 @@ func init() {
 	engines = map[harness.Engine]engineEntry{
 		harness.Codex: {
 			dialect: codexDialect, homeValue: codexHomeValue,
+			args: codexArgs, restrictedArgs: codexRestrictedLaunch,
 			normalizePolicy: normalizeCodexPolicy, refuseAddition: refuseCodexAddition,
 			initialize: (*Session).initializeCodex, event: (*Session).codexEvent,
 			bufferStart: true, startTurn: (*Session).startCodexTurnSynced,
@@ -79,6 +85,7 @@ func init() {
 		},
 		harness.Claude: {
 			dialect: claudeDialect, homeValue: claudeHomeValue,
+			args: claudeArgs, restrictedArgs: claudeRestrictedLaunch,
 			normalizePolicy: normalizeClaudePolicy, overrides: claudeOverrides,
 			initialize: (*Session).initializeClaude, sessionNotice: (*Session).observeClaudeInit, event: (*Session).claudeEvent,
 			startTurn: (*Session).startClaudeTurn, interrupt: (*Session).interruptClaude,
@@ -87,6 +94,7 @@ func init() {
 		},
 		harness.Grok: {
 			dialect:         grokDialect,
+			args:            func(o Options, _ string, _ bool, _ *launch) []string { return grokArgs(o) },
 			normalizePolicy: normalizeGrokPolicy, withheld: grokManaged,
 			refuseAddition: refuseGrokAddition, overrides: grokOverrides,
 			initialize: (*Session).initializeGrok, event: (*Session).grokEvent,
@@ -96,6 +104,7 @@ func init() {
 		},
 		harness.CommandCode: {
 			dialect: commandCodeDialect, resolveHome: commandCodeHome,
+			args:            func(Options, string, bool, *launch) []string { return commandCodeArgs() },
 			normalizePolicy: normalizeCommandCodePolicy, withheld: commandCodeManaged,
 			refuseAddition: refuseCommandCodeAddition,
 			initialize:     (*Session).initializeCommandCode, sessionNotice: (*Session).commandCodeModeUpdate, event: (*Session).commandCodeEvent,
