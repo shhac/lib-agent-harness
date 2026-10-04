@@ -3,6 +3,7 @@
 package sandbox
 
 import (
+	"os"
 	"strings"
 )
 
@@ -10,6 +11,8 @@ type workbenchLayout struct {
 	Work, Home, Tmp string
 	Read, System    []string
 	Write, Loopback bool
+	scratch         *os.Root
+	scratchIdentity os.FileInfo
 }
 
 func workbenchProbeEnvironment(l workbenchLayout) []string {

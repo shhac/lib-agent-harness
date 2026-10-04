@@ -1,4 +1,4 @@
-# Standalone command sandbox
+## Standalone command sandbox
 
 The sandbox package exposes Open without a model session. Its
 options are WorkDir, RuntimeHome, Write, Read, Env, Loopback, Timeout and
@@ -150,14 +150,11 @@ The opt-in `go run ./internal/cmd/sandboxcheck` runner runs vet and race tests
 from the module root with the cached toolchain/modules, no downloads, and a
 private GOCACHE. Cancellation settles Run before Close; SIGKILL may leave
 scratch, with interrupted command state swept on the next Open of that home.
-This is test infrastructure only: no sandbox profile, permissions or
-harness.Support claims change. After landing the owner confirms the runner
-unsandboxed on macOS and Linux with bubblewrap, and confirms an unsandboxed
-NO_SKIP race run retains full coverage. Platform CI remains a separate check;
-an outer prerequisite skip is not evidence that the real child fixtures
-executed. The owner has confirmed there is no team-accessible Linux executor;
-use the reported draft results below, and treat further Linux runs as owner
-steps without reopening that executor question.
+This paragraph records historical LAH-23 infrastructure and owner observations.
+Owner note 20 now assigns platform evidence to the owner's outside-sandbox
+strict suites and sandboxcheck. Unposted results remain unknown; an outer
+prerequisite skip proves no enforcement. Existing CI jobs are unchanged.
+The separately agreed after-landing macOS undertaking does not replace it.
 
 Linux sandbox-check follow-up: the unsandboxed privilege escape control probes
 /proc/self/status. Zero effective, permitted, inheritable and ambient capabilities
@@ -270,3 +267,273 @@ direction. Additional diagnostics, if requested, use disposable copies and
 retain the assertions. The expressly designated after-landing Ubuntu check
 remains separate, and this repair retains priority before the held main push
 and subsequent library landings.
+
+## Readable PATH and execution correction (LAH-25)
+
+Source baseline: command profile `seatbelt-workbench-v7` granted unrestricted
+process-exec; merged inherited/caller PATH was unfiltered. The baseline commit
+was not inspected because this task prohibits touching `.git`; the task system
+records the repository snapshot. LAH-14 and LAH-23 are landed prerequisites.
+
+Supplied owner baseline evidence (task note 4), macOS 27 outside any sandbox,
+reproduced 2026-10-04 with library v0.23.3: within sandbox.Open, PATH placed
+`~/.nvm/versions/node/v22.22.3/bin` before `/opt/homebrew/bin`.
+Both `npm --prefix internal/dashboard/ui run check` and `npx tsc --noEmit`
+exited 139 (`Segmentation fault: 11`). `command -v node` resolved Homebrew node
+because sh skipped the unreadable directory, whereas `#!/usr/bin/env node`
+executed the nvm node. Removing home-directory PATH entries allowed the check
+and all 734 dashboard tests to pass inside the sandbox. This is supplied real
+baseline evidence, distinct from the team's refused synthetic attempt below;
+it does not establish the corrected draft's permission refusal or Linux behavior.
+The supplied note's draft-1 strict-check excerpt is truncated, so no further
+draft-1 enforcement result is inferred from it.
+
+Team synthetic baseline attempt, 2026-10-04: Darwin 27.0.0 arm64, with
+`/usr/bin/sandbox-exec` SHA-256
+`58839ef01b4eef8aac0d2aa8f9d1c074ae45aafe3533965b030672450064acc8`.
+A disposable copy of `/bin/sh` at `.task-tmp/hidden-node` was launched directly
+under `(version 1)(deny default)(allow process-exec)(allow process-fork)` with
+reads only for `/System`, `/usr`, `/bin` and `/dev`. Its arguments were
+`-c 'echo started; cat .task-tmp/runtime'`; inherited PATH was not relevant to
+this direct launch and was not recorded. Output was exactly
+`sandbox-exec: sandbox_apply: Operation not permitted` before child execution.
+This is an enclosing-environment prerequisite refusal, **not experimental
+reproduction of the defect**. No runtime-loading failure or corrected OS errno
+has been observed in that attempt. The fixture was removed. The real regression
+reconstructs unrestricted process-exec, retaining restricted reads, and requires
+an independent startup marker even when the subsequent runtime read fails.
+The current widened regression grants unrestricted process-exec for installed
+/bin/echo under a separate narrow read policy. Individual /bin/sh dispatcher
+interpreter grants permit the supervisor to start while /bin/echo remains
+unreadable. Unauthorized native startup must produce outside-native-started and
+be rejected as not enforced. The script PATH-selection controls are separate;
+this negative control neither copies a native shell nor restores nvm-first PATH.
+
+The effective read policy remains System/toolchain, explicit Read, workspace
+and private Home/Tmp, with platform exclusions. Metadata-only parents and
+file-only grants cannot admit PATH directories. After environment overrides
+replace inherited values, each command rechecks PATH. Existing absolute
+directories whose canonical targets are covered are retained canonically in
+order, including duplicates. Empty/relative, missing, non-directory,
+unresolvable (including dangling/looping links) and outside entries are dropped.
+No access is granted to make a tool usable. Missing/all-dropped PATH uses a
+fresh empty directory under already-readable private Tmp, rather than shell
+defaults or current-directory lookup. Preparation failure or an unrepresentable
+scratch PATH (including a separator in its name) refuses launch.
+The runner captures the source environment once; per-invocation filtering and
+diagnostic buffers are independent and never mutate the parent or source slices.
+
+One `[harness PATH: ...]` note begins result stderr when entries are dropped.
+It quotes paths, uses fixed reasons and counts omitted entries. The note consumes
+the existing per-stream budget, including hosted minimum budgets; subsequent
+output uses the remaining space and the existing truncation flag/marker.
+Run, Start/Result (including repeated reads) and Runner.Execute retain one
+bounded escaped stderr report on nonzero exits, timeouts and settled errors.
+Pre-launch refusals have no command report. Shared Start returns nil before
+launch and a settled non-nil handle on post-launch failures, even when caller
+cancellation or Close races launch. Result is stable and does not imply rollback.
+Hosted settlement, API integration, compatibility translation and their tests
+are assigned to LAH-30, waiting on this core and LAH-32. Their original hunks
+remain in retained draft 4, `0f81bfcd42470ea74b3b6f42c5e5c0ffe6aa6b27`.
+They are extracted here against landed baseline `181960c`, not older local main.
+Session files and the API design document match that baseline; no landed
+ownership, networking or tool-admission behavior was reverted.
+
+Scratch admission captures an os.Root descriptor and identity for private Tmp
+before commands start. Empty-PATH fallback creation uses Root.Mkdir with unique
+names, never pathname-based MkdirTemp. Path identity, canonical location,
+privacy and owner are checked before/after creation; changed paths refuse
+preparation and clean through the anchor. Symlink replacement cannot direct a
+host write into its target. Concurrent replacement regressions assert no outside
+directory is created. Descriptor anchoring does not claim elimination of all
+filesystem races or stronger hard-link/injected-mount containment than the OS
+boundary provides. All-dropped PATH never restores inherited/cwd lookup.
+
+PATH fixtures use #!/bin/sh scripts; no copied Apple shell or signing tool.
+Darwin independently probes installed /bin/echo at its original signed path,
+using a disposable read policy that excludes /bin while retaining /bin/sh as a
+file-only interpreter grant. This exercises the same read/execute selector
+emitter without altering command grants. Native positive startup outside the
+boundary is required, followed by an OS permission refusal before native startup
+inside. Direct and replaced-directory cases are logged. Widening only process-exec
+must allow the native marker and be rejected as not-enforced. Script-read denial
+alone never certifies native execution confinement. Linux uses a copied ELF echo
+fixture outside the unchanged bind set, requiring actual status 126/127 plus
+inaccessible-path or permission diagnostics and no startup marker.
+
+ProofError.Step and harness.Facts.ProofStep expose fixed sanitized values:
+fixture_preparation, outside_control, sandbox_launch and execution_judgment.
+Open errors name the failing step, without paths, output or credentials. Missing
+positive controls remain unavailable; native startup remains not-enforced;
+interruptions remain probe_timed_out and retain the step. No failed/interrupted
+proof records cache evidence or prepares command state. Compatibility propagation
+is LAH-30. Current identities are seatbelt-workbench-v11, bwrap-workbench-v4 and
+readable-path-v2; draft-4 v9/v3/v1 keys are rejected, profile/mount pins remain
+unchanged, and Linux still re-proves. Network rules, atomic recovery, uncertain
+ownership, admission/Close semantics and harness.Support claims are unchanged.
+LAH-21 reuses this corrected policy; native networking is LAH-19/LAH-24 and access
+requests remain LAH-22. LAH-26 containment is separate; restoration is not a
+prerequisite.
+
+Evidence inventory by snapshot:
+
+- Note 4: supplied macOS 27/v0.23.3 baseline above, exit 139 with nvm-first PATH;
+  removing home PATH entries allowed the check and 734 tests to pass.
+- Note 10: supplied draft 3 `1b655a6`, outside any sandbox, Ubuntu 24.04 with
+  bubblewrap 0.9.0: sandboxcheck and strict no-skip race suite both exited zero.
+  macOS 27 arm64 real Open failed; owner instrumentation found the copied
+  /bin/sh outside control SIGKILLed before startup. This is a product fixture
+  failure, distinct from the team's environmental nested-Seatbelt refusal.
+- Draft 4 `0f81bfc`: signed-copy startup passed locally on macOS 27.0 build
+  26A428 arm64, local/daemon vet/race passed, but strict real canary hit nested
+  Seatbelt permission refusal exit 71 before construction. Corrected enforcement
+  and negative control did not run. Those fixture/signing results are historical;
+  the approved candidate now uses scripts and an independent native witness.
+- Current split working tree: tests and real-canary attempts are recorded below.
+  Earlier Linux successes cannot certify this candidate or bubblewrap 0.8.0.
+  No CI configuration, generic aggregate success or skip supplies missing
+  execution/refusal evidence. Unsandboxed suitable runners remain required
+  under owner note 20; future reruns are not completed evidence.
+
+Acceptance audit:
+
+| Criterion | Result |
+| --- | --- |
+| 1: platform vet/race | Current checks below; Linux/Windows runtime matrix acceptance remains pending. |
+| 2: docs | README, command/package design and pending notes reflect the core split. |
+| 3: claims | Support unchanged; failed/unrun probes certify nothing. |
+| 4: shared mechanism | Existing System/Read/Work/Home/Tmp policy reused; hosted/compatibility hunks deferred to LAH-30. |
+| 5: PATH | Canonical ordered inherited/override filtering, symlinks, safe anchored fallback and replacement regressions. |
+| 6: diagnostics | One bounded stderr note retained in shared Run/Start results. |
+| 7: macOS | Script controls plus independent native permission-refusal and widened-control checks; real execution results pending. |
+| 8: Linux | Mounts unchanged; separate native/refusal markers; candidate 0.9/0.8.0 results pending. |
+| 9: regressions | PATH, env-shebang, external Read, replacement and shared command entry points retained; hosted tests deferred. |
+| 10: evidence/cache | v11/v4/v2, old-key rejection/stability, no failed-proof caching; Linux fresh proofs. |
+| 11: release/dependencies | Core docs updated; existing downstream policy dependencies retained. |
+| 12: review | Loopback-free execution tests retained; shared Start diagnostics preserved; owner baseline attributed. |
+| 13: draft-3 defect | Script correction and native witness implemented; owner draft-3 Linux/macOS observations kept snapshot-specific. |
+
+The separate after-landing owner confirmation remains: unsandboxed macOS baseline,
+readable selection and corrected permission refusal. It does not replace any
+verification requirement now assigned to the owner by note 20.
+
+Current candidate local validation (working tree based on `0f81bfc`, extracted
+against `181960c`, 30 changed files): local full `go vet ./... && go test -race
+./...` passed after preserving legacy no-step error wording for the deferred
+compatibility boundary. New step-bearing execution errors use the expanded
+read/execute refusal explanation. Session and API-design paths have no diff
+against the extraction baseline; retained originals are identified above.
+Replacement/concurrent replacement, sanitized step failures and execution judges
+passed ten race-enabled repetitions. Windows/Linux amd64 test packages compiled,
+target vet passed and the CGO-disabled build exited zero (with a denied Go
+module-stat-cache write diagnostic); these are not target runtime results.
+
+The strict fixture test `AGENT_HARNESS_TEST_NO_SKIP=1 go test -race -count=1
+-v ./sandbox -run '^TestWorkbenchExecutionFixtureRunsAtDisposablePaths$'`
+passed on macOS 27.0 build 26A428 arm64. Scripts executed at disposable locations,
+including outside/runtime and readable interpreter/env controls; the installed
+native tool's outside control also ran. The strict real execution-canary command
+with the same flags and `-run '^TestWorkbenchExecutionCanaryReal$'` exited one
+at `environment refuses a nested OS sandbox: sandbox-exec: permission denied
+exit status 71 (AGENT_HARNESS_TEST_NO_SKIP=1 forbids skipping)`.
+Native/script enforcement, replaced-directory refusal, widened negative control
+and successful public Open therefore did not run locally. No corrected Linux
+0.9/0.8.0 runtime transcript is available; network/CI dispatch are prohibited and
+the daemon executor exposes no alternate platform. Historical owner draft-3
+Linux success remains tied to `1b655a6`.
+
+Local `go run ./internal/cmd/sandboxcheck` exited one before launch:
+`work_dir: the workspace and the runtime home must not contain one another`,
+because managed TMPDIR is within the checkout. It supplies no enforcement
+evidence. The experimental CI capture machinery was removed under owner note 20;
+existing CI jobs are unchanged. The owner will post outside-sandbox strict-suite
+and sandboxcheck results for the ready revision.
+
+Lifecycle audit additionally guards the closed low-level runner before scratch
+inspection. The regression checks that Close prevents Execute from preparing a
+PATH or returning diagnostics, including when Close returns cleanup_unknown.
+The local synthetic runner encountered that existing process-inspection
+uncertainty; the test preserves its code and makes no reaping-success claim.
+Focused race regressions passed after this guard; Linux/Windows compilation
+and Linux target vet passed. Final daemon validation is recorded separately.
+
+Final project run_check for this corrected split, including the closed-runner
+guard, completed with exit zero, empty stderr and no timeout/truncation. All
+packages passed the daemon vet/race check. This does not alter the pending strict
+platform enforcement/public-Open evidence listed above.
+
+### Draft-5 review correction (2026-10-04)
+
+The native Darwin trial now grants /bin/sh, /bin/bash, /bin/dash and /bin/zsh
+individually. /bin remains excluded, as does /bin/echo; the existing real trial
+requires the supervisor's readable positive control before accepting native
+direct/replaced-path permission refusals. This fixes the missing interpreter
+grants identified by review, without widening command policy or network access.
+Seatbelt v11 rejects v10 evidence. The Linux draft-4 legacy regression now
+freezes the actual single bwrap-workbench-v3:readable-path-v1 revision element.
+The current widened control is described above rather than the historical
+copied-shell control.
+
+Darwin checks context after successful probe cleanup and before cache publication
+or reuse. Public Prove also checks context before returning evidence. Synthetic
+tests use the actual discovery, cache and Open admission implementation, replacing
+only the disposable trial: successful cleanup cancels the request, returns no
+proof/handle, records no key and leaves the supplied RuntimeHome empty. Failed
+fixture/outside/launch/judgment trials likewise exercise this admission boundary.
+These tests are enforcement-independent and do not claim real OS proof success.
+
+Focused race tests and strict disposable-fixture startup passed on this revision.
+The strict real Darwin trial exited 1 at its prerequisite with:
+`environment refuses a nested OS sandbox: sandbox-exec: permission denied exit status 71
+(AGENT_HARNESS_TEST_NO_SKIP=1 forbids skipping)`.
+This attempt never reached the corrected narrow profile, native refusals, widened
+control or public Open. Those suitable-runner acceptance results remain missing,
+as do corrected Linux 0.9/0.8.0 strict results and Windows runtime acceptance.
+No network or remote runner is accessible here. Historical owner draft-3 Linux
+success and macOS fixture failure remain attributed to 1b655a6; none certifies
+this revision. Prior aggregate run_check results above are historical, not proof
+of this correction. The after-landing macOS undertaking is separate.
+
+Final candidate check: macOS 27.0 build 26A428 arm64, Go 1.27.1.
+Go-source/go.mod/go.sum bundle SHA256 (sorted relative filenames and contents,
+each separated by a NUL): `c3c754cfc365d7e2f3fa9d82a35c6e1eef5788f5709bc462af1002f160514913`.
+Local go vet ./... and go test -race ./... passed; focused cleanup/admission,
+legacy-key and disposable-fixture race regressions passed after the last code
+change. Linux/Windows amd64 target vet and all test-package cross-compilation
+passed, as did CGO_ENABLED=0 go build ./... (the tool printed a module stat-cache
+write refusal but exited zero). Final run_check completed with exit 0, empty
+stderr, timed_out=false and truncated=false; all packages passed. These aggregate
+results do not supply strict macOS/Linux enforcement or Windows runtime evidence.
+
+
+### Final scope under owner note 20
+Owner note 20 supersedes the earlier CI capture/dispatch plan and verification
+ownership. The capture helper, workflow phases, provenance artifacts and failing
+capture-run requirement are removed; CI matches the primary checkout workflow.
+The owner will run strict suites and sandboxcheck outside the sandbox on macOS
+and the Linux VM and post results. No successful corrected enforcement evidence
+is claimed yet; baseline note 4 and draft-3 note 10 remain historical evidence.
+
+The post-start/pre-Notify regression now uses the actual platform runner,
+including its status parser, bounded output capture, settlement and Start/Result.
+Only child launch/setup are synthetic, using internal per-runner dependencies
+that public constructors cannot configure. Both missing status and fast successful
+status are covered. A channel confirms fast status was parsed before the fixture
+returns its setup refusal. The test requires an unknown outcome, retained handle,
+real stdout, exactly one bounded PATH note, truncation and stable repeated Result.
+Priority refusal, read/execute and network policy remain unchanged.
+
+
+Final narrowed-revision validation (owner note 20):
+Go-source/go.mod/go.sum NUL-separated bundle SHA256: `708b7dbf2b80728e5b18bbdff6602d26dcc8092084db6606f1c690095dee874f`.
+The actual-runner post-start regression passed ten race-enabled repetitions,
+including explicit parsed-success synchronization. Local vet, Linux target vet,
+CGO-disabled build and all Windows/Linux amd64 test-package cross-compilation
+passed (Go printed a denied module-stat-cache write diagnostic but exited zero).
+Final run_check passed all packages with exit 0, empty stderr and no timeout or
+truncation. The workflow was compared byte-for-byte with the primary checkout;
+the collection helper is absent. These local checks do not prove macOS execution
+refusal or Linux 0.9/0.8.0 enforcement and do not establish Windows runtime results.
+The owner supplies outside-sandbox platform results under note 20; earlier
+snapshots and environmental refusals remain historical and cannot certify this
+revision. No hosted/compatibility work was reintroduced from LAH-30.

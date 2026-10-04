@@ -60,7 +60,7 @@ func proveWorkbench(ctx context.Context, o Options) (Proof, error) {
 	}
 	proof, e := probeWorkbenchLinux(ctx, o, binary, version)
 	if ctx.Err() != nil {
-		return Proof{}, workbenchCapability(CapabilityProbeTimeout)
+		return Proof{}, executionProofError(ctx, "", e)
 	}
 	if e != nil {
 		return Proof{}, e
@@ -142,7 +142,7 @@ func workbenchLinuxProbeKey(o Options, binary, version string, w workbenchLinuxW
 	for _, p := range o.Read {
 		shapes = append(shapes, linuxShape(p))
 	}
-	payload, _ := json.Marshal([]any{"workbench-linux", workbenchBwrapVersion, binary, info.Size(), info.ModTime(), binaryHash, version, template, system, shapes, o.Write, o.Read, o.Env, o.Loopback, o.Background, w})
+	payload, _ := json.Marshal([]any{"workbench-linux", workbenchBwrapVersion + ":" + workbenchPathVersion, binary, info.Size(), info.ModTime(), binaryHash, version, template, system, shapes, o.Write, o.Read, o.Env, o.Loopback, o.Background, w})
 	hash := sha256.Sum256(payload)
 	return hex.EncodeToString(hash[:]), nil
 }
@@ -348,6 +348,11 @@ func probeWorkbenchLinux(ctx context.Context, o Options, binary, version string)
 		if os.WriteFile(filepath.Join(hidden, name), []byte("marker"), 0600) != nil {
 			return result, unavailable
 		}
+	}
+	if err := proveWorkbenchExecution(ctx, l, hidden, func(ctx context.Context, l workbenchLayout, s string) (string, error) {
+		return runLinuxProbe(ctx, binary, l, s, o.Background)
+	}); err != nil {
+		return result, err
 	}
 	namespace, e := os.Readlink("/proc/self/ns/net")
 	if e != nil {

@@ -18,6 +18,9 @@ type CommandRequest struct {
 }
 
 // CommandResult distinguishes an observed exit from a timeout.
+// Stderr begins with one bounded [harness PATH: ...] note when entries were
+// dropped. The note shares the stream budget and is also returned by Start's
+// Result. Pre-launch refusals have no command report.
 type CommandResult struct {
 	ExitCode  int    `json:"exit_code"`
 	Stdout    string `json:"stdout"`
@@ -44,11 +47,15 @@ type Sandbox struct {
 
 // Open proves the installed sandbox before creating command state.
 func Open(ctx context.Context, opts Options) (*Sandbox, error) {
+	return openWithProof(ctx, opts, proveWorkbench)
+}
+
+func openWithProof(ctx context.Context, opts Options, prove func(context.Context, Options) (Proof, error)) (*Sandbox, error) {
 	o, err := normalize(opts, true)
 	if err != nil {
 		return nil, err
 	}
-	proof, err := proveWorkbench(ctx, o)
+	proof, err := prove(ctx, o)
 	if err != nil {
 		return nil, err
 	}
@@ -86,6 +93,8 @@ func (s *Sandbox) Run(ctx context.Context, req CommandRequest) (CommandResult, e
 // Start starts a command until it exits, its context is cancelled, Stop or Close.
 // It reports process launch, not server readiness. Linux refuses Loopback here:
 // the private namespace cannot expose a server to the owner's browser.
+// On a post-launch error, it returns a non-nil settled handle alongside the
+// error. Result preserves captured diagnostics; the error does not imply rollback.
 func (s *Sandbox) Start(ctx context.Context, req CommandRequest) (*StartedCommand, error) {
 	s.mu.Lock()
 	closed := s.closing
@@ -104,15 +113,13 @@ func (s *Sandbox) Start(ctx context.Context, req CommandRequest) (*StartedComman
 	case <-h.launched:
 	case <-h.done:
 		if h.err != nil {
-			return nil, h.err
+			return startFailure(h, h.err)
 		}
 	case <-ctx.Done():
-		h.Stop()
-		return nil, ctx.Err()
+		return startFailure(h, ctx.Err())
 	}
 	if err := ctx.Err(); err != nil {
-		h.Stop()
-		return nil, err
+		return startFailure(h, err)
 	}
 	s.mu.Lock()
 	closing := s.closing
@@ -120,11 +127,23 @@ func (s *Sandbox) Start(ctx context.Context, req CommandRequest) (*StartedComman
 	if closing {
 		h.Stop()
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return startFailure(h, err)
 		}
-		return nil, commandError(CommandSandboxClosed)
+		return startFailure(h, commandError(CommandSandboxClosed))
 	}
 	return h, nil
+}
+
+// Settlement decides whether launch occurred even when cancellation won the
+// initial select. Pre-launch refusals continue to return no handle.
+func startFailure(h *StartedCommand, err error) (*StartedCommand, error) {
+	h.Stop()
+	select {
+	case <-h.launched:
+		return h, err
+	default:
+		return nil, err
+	}
 }
 
 func (s *Sandbox) admit(ctx context.Context, req CommandRequest, start bool) (*StartedCommand, error) {

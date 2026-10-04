@@ -523,6 +523,11 @@ captures at most 64 KiB, plus a truncation marker, and continues draining.
 Start has no timeout (a nonzero request Timeout is refused); its context, Stop
 or Close ends it. Result is meaningful when its error is nil, including an
 ordinary nonzero exit. Stop waits for settlement and is safe to repeat.
+If Start returns an error after process launch, it also returns a non-nil,
+settled handle. Call Result on that handle to recover bounded output and the
+PATH report; its error still means the command's effects are uncertain. An
+error before launch returns a nil handle. Compatibility integration is tracked
+in LAH-30; callers of the shared API must check the handle even when Start fails.
 
 On macOS, opt-in Loopback permits binding and connections only to this
 machine's own addresses. The proof checks outbound, own-listener and inbound
@@ -558,6 +563,57 @@ remain for one release; it translates every error to the v0.22 session vocabular
 Existing consumers, including crew-assistant, need no change.
 
 See [the command sandbox design](design-docs/2026-10-03-command-sandbox.md).
+
+Every command (`Run`, `Start`, `Runner.Execute`, API workbench `run_command`
+and the deprecated session wrappers) filters its merged inherited/caller PATH
+against the existing system/toolchain, workspace, explicit Read and private
+scratch read policy. Retained entries are canonical absolute directories, in
+original order, including duplicates. Empty and relative entries are dropped,
+as are missing, non-directory, unresolvable and outside-read-set entries. Resolved targets containing a PATH
+separator are also dropped because they cannot be represented as one entry.
+Symlinks qualify only when their resolved directory is readable. Permissions
+are never widened to rescue a tool. An absent or all-dropped PATH becomes a
+fresh empty directory through an anchored private-scratch descriptor, preventing implicit cwd or
+default-path lookup. Unrepresentable scratch paths or preparation failures
+refuse launch. The runner captures the merged environment at creation
+and rechecks its PATH on each invocation; it never changes the parent environment.
+
+Dropped entries produce one `[harness PATH: ...]` note at the start of
+`CommandResult.Stderr`, including fixed reasons, quoted path text and an omitted
+count for long lists. The note consumes the existing stderr/hosted-result budget;
+ordinary output truncation still applies. `StartedCommand.Result` exposes the
+same note. Nonzero exits and
+timeouts retain it; settled cancellation/unknown-outcome results retain available
+diagnostics alongside the error. Pre-launch refusals have no command report.
+Hosted failure settlement and compatibility integration are deferred to LAH-30.
+Successful process startup is retained after settlement even when priority setup
+fails before notification; Start preserves its handle and diagnostics with an
+uncertain outcome. The priority refusal remains enforced.
+
+macOS grants execution only with the same selectors used for data reads,
+including the data-volume exclusion and reserved-temporary denial. The canary
+requires an OS permission refusal before an unreadable native binary starts,
+plus readable executable, interpreter and `#!/usr/bin/env node` controls.
+Disposable PATH fixtures use `#!/bin/sh` scripts, without copied Apple binaries
+or signing tools. Darwin independently checks native execution using installed
+`/bin/echo` under a disposable read policy excluding it while granting the
+dispatcher interpreter files individually, without granting /bin. Script-read refusal alone never certifies native confinement.
+Linux keeps its existing bubblewrap mounts: an unbound executable must be inaccessible
+or permission-refused, without claiming macOS errno behavior. PATH canonicalization
+reduces alias dependence; the OS boundary remains authoritative if paths change.
+
+Command proof failures expose a sanitized `sandbox.ProofError.Step` and
+`harness.Facts.ProofStep`: `fixture_preparation`, `outside_control`,
+`sandbox_launch` or `execution_judgment`. These fixed facts name the failed
+check without paths or raw output. Failed/interrupted proofs create no command
+state and certify no capability. Scratch replacement or ownership changes refuse
+command preparation; anchored fallback writes cannot follow a replaced Tmp symlink.
+Cancellation during probe cleanup refuses evidence publication, and cancelled
+requests cannot reuse cached evidence or return a successful public proof.
+
+Both proof revisions include the filtering-policy revision, invalidating old
+evidence. These are command-policy corrections, not new `harness.Support` claims;
+native-session restrictions remain separate.
 
 Linux `Commands.Read` refuses paths overlapping `/run` (including resolved
 `/var/run` aliases) or containing `/tmp`, with `sandbox_read_path_invalid` refusal.
@@ -1549,12 +1605,9 @@ and Windows/0.8.0 runtime CI results remain unrecorded. See the
 [validation evidence inventory](design-docs/2026-10-03-command-sandbox.md#validation-evidence)
 for snapshot, command and platform boundaries.
 
-There is no team-accessible Linux executor; the owner supplies Linux draft
-results, and further Linux runs are owner steps. After landing, the owner
-confirms the focused regressions, `go run ./internal/cmd/sandboxcheck`, and
-unsandboxed `AGENT_HARNESS_TEST_NO_SKIP=1 go test -race ./...` on Ubuntu 24.04
-with bubblewrap 0.9. These test-only changes do not alter `harness.Support` or
-production sandboxes.
+The preceding owner-supplied results are historical LAH-23 evidence. Under owner note 20, the owner supplies corrected command-policy strict-suite
+and sandboxcheck results from macOS and the Linux VM outside the sandbox.
+Existing CI jobs remain unchanged; runtime results not yet posted remain unverified.
 
 Licensed under [PolyForm Perimeter 1.0.0](LICENSE), matching the sibling
 `lib-agent-*` libraries.

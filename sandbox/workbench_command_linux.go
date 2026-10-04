@@ -31,6 +31,7 @@ func newCommandSandbox(config commandConfig) (*commandSandbox, error) {
 	closing := false
 	commands = &commandSandbox{timeout: o.Timeout}
 	commands.close = func() error {
+		defer layout.scratch.Close()
 		mu.Lock()
 		closing = true
 		children := make(map[*process.Process]chan struct{}, len(live))
@@ -48,12 +49,22 @@ func newCommandSandbox(config commandConfig) (*commandSandbox, error) {
 		return nil
 	}
 	commands.execute = func(ctx context.Context, command, rel string, timeout time.Duration, onStart func()) (CommandResult, error) {
+		mu.Lock()
+		closed := closing
+		mu.Unlock()
+		if closed {
+			return CommandResult{}, commandError(CommandSandboxClosed)
+		}
 		current, e := workbenchBinaryFingerprint(config.proof.binary)
 		if e != nil || current != identity {
 			return CommandResult{}, commandError("command_start_failed")
 		}
 		runCtx, cancel := commandContext(ctx, timeout)
 		defer cancel()
+		commandEnv, dropped, pathErr := workbenchCommandEnvironment(layout, env)
+		if pathErr != nil {
+			return CommandResult{}, commandError("command_start_failed")
+		}
 		args, e := bwrapArgs(layout)
 		if e != nil {
 			return CommandResult{}, commandError("command_start_failed")
@@ -69,11 +80,11 @@ func newCommandSandbox(config commandConfig) (*commandSandbox, error) {
 		if o.Background {
 			binary, args = linuxBackgroundLaunch(binary, args)
 		}
-		cmd, p, e := process.Command(runCtx, binary, args...)
+		cmd, p, e := config.startCommand(runCtx, binary, args...)
 		if e != nil {
 			return CommandResult{}, commandError("command_start_failed")
 		}
-		cmd.Env = env
+		cmd.Env = commandEnv
 		cmd.ExtraFiles = []*os.File{status}
 		cmd.WaitDelay = 2 * time.Second
 		limit := (budget - 1024) / 12
@@ -87,8 +98,16 @@ func newCommandSandbox(config commandConfig) (*commandSandbox, error) {
 			limit = 0
 		}
 		stdout, stderr := &workbenchOutput{limit: limit}, &workbenchOutput{limit: limit}
+		_, _ = stderr.Write([]byte(workbenchPathReport(dropped, limit)))
+		captureFailure := func() CommandResult {
+			out, ot := stdout.finish()
+			errout, et := stderr.finish()
+			return CommandResult{ExitCode: -1, Stdout: out, Stderr: errout, Truncated: ot || et}
+		}
+
 		cmd.Stdout, cmd.Stderr = stdout, stderr
-		p.Notify(func(int) { status.Close() })
+		notified := false
+		p.Notify(func(int) { notified = true; status.Close() })
 		settled := make(chan struct{})
 		mu.Lock()
 		if closing {
@@ -104,16 +123,27 @@ func newCommandSandbox(config commandConfig) (*commandSandbox, error) {
 		live[p] = settled
 		mu.Unlock()
 		completed := make(chan error, 1)
-		go func() { e := p.Run(); status.Close(); completed <- e }()
+		go func() { e := config.runCommand(p); status.Close(); completed <- e }()
 		started, code, known := readBwrapStatus(r, onStart)
-		<-completed
+		if config.statusRead != nil {
+			config.statusRead(code, known)
+		}
+		runErr := <-completed
+		setupFailed := commandSetupFailed(cmd, notified, runErr)
+		started = settledCommandLaunch(cmd, started, onStart)
 		p.Close()
 		mu.Lock()
 		delete(live, p)
 		close(settled)
 		mu.Unlock()
 		if ctx.Err() != nil {
-			return CommandResult{}, ctx.Err()
+			if !started {
+				return CommandResult{}, ctx.Err()
+			}
+			return captureFailure(), ctx.Err()
+		}
+		if setupFailed {
+			return captureFailure(), commandError(CommandOutcomeUnknown)
 		}
 		timedOut := errors.Is(runCtx.Err(), context.DeadlineExceeded)
 		if timedOut {
@@ -121,7 +151,7 @@ func newCommandSandbox(config commandConfig) (*commandSandbox, error) {
 		} else if !started {
 			return CommandResult{}, commandError("command_start_failed")
 		} else if !known {
-			return CommandResult{}, commandError("command_outcome_unknown")
+			return captureFailure(), commandError("command_outcome_unknown")
 		}
 		out, ot := stdout.finish()
 		errout, et := stderr.finish()

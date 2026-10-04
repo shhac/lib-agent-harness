@@ -9,18 +9,23 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
 
 // A versioned template is shared by commands and the disposable canary.
-const workbenchSeatbeltVersion = "seatbelt-workbench-v7"
+const workbenchSeatbeltVersion = "seatbelt-workbench-v11"
 
 func seatbeltProfile(l workbenchLayout) string {
 	var b strings.Builder
+	// Data-read and execution permissions always share the same selectors.
+	allowReadable := func(selector string) {
+		fmt.Fprintf(&b, "(allow file-read* %s)\n(allow process-exec %s)\n", selector, selector)
+	}
 	b.WriteString("(version 1)\n(deny default)\n")
-	b.WriteString("; Shells and their children execute within this sandbox.\n(allow process-exec)\n(allow process-fork)\n(allow signal (target same-sandbox))\n")
+	b.WriteString("; Shells and their children execute within this sandbox.\n(allow process-fork)\n(allow signal (target same-sandbox))\n")
 	b.WriteString("; Hardware and OS version queries needed by runtimes, excluding process arguments.\n(allow sysctl-read (sysctl-name-regex #\"^(hw[.]|kern[.]os|kern[.]max|machdep[.]cpu[.])\") (sysctl-name \"kern.argmax\"))\n; uname(3), which Node reads as it loads its os module.\n(allow sysctl-read (sysctl-name \"kern.version\") (sysctl-name \"kern.hostname\"))\n; Minimal command-line runtime services, excluding keychains.\n(allow mach-lookup (global-name \"com.apple.system.logger\") (global-name \"com.apple.system.notification_center\"))\n")
 	for _, p := range []string{"/private", "/private/etc", "/private/var", "/etc", "/var", "/dev"} {
 		fmt.Fprintf(&b, "; Resolve public runtime configuration without directory listings.\n(allow file-read-metadata (literal %s))\n", strconv.Quote(p))
@@ -29,19 +34,18 @@ func seatbeltProfile(l workbenchLayout) string {
 	// entries, which name only the top-level folders; nothing below them is
 	// listed. /bin/sh reads which shell it runs from /private/var/select.
 	b.WriteString("; The root directory's own entries, which name only top-level folders: shells need them to start.\n(allow file-read-data (literal \"/\"))\n")
-	b.WriteString("; Which shell /bin/sh runs.\n(allow file-read* (subpath \"/private/var/select\"))\n")
-	paths := append([]string{}, l.System...)
-	paths = append(paths, l.Read...)
-	paths = append(paths, l.Work, l.Home, l.Tmp)
+	b.WriteString("; Which shell /bin/sh runs.\n")
+	allowReadable("(subpath \"/private/var/select\")")
+	paths := l.readPaths()
 	for _, p := range paths {
 		b.WriteString("; Read the pinned runtime, explicit caller read set, workspace or private scratch.\n")
 		if p == "/System" {
 			// The APFS data volume exposes owner homes and private transcripts
 			// below /System. Only explicit workspace/read/scratch grants may
 			// authorize data-volume files, through either spelling.
-			b.WriteString("(allow file-read* (require-all (subpath \"/System\") (require-not (subpath \"/System/Volumes/Data\"))))\n")
+			allowReadable("(require-all (subpath \"/System\") (require-not (subpath \"/System/Volumes/Data\")))")
 		} else {
-			fmt.Fprintf(&b, "(allow file-read* (subpath %s))\n", strconv.Quote(p))
+			allowReadable(fmt.Sprintf("(subpath %s)", strconv.Quote(p)))
 		}
 		for parent := filepath.Dir(p); ; parent = filepath.Dir(parent) {
 			fmt.Fprintf(&b, "(allow file-read-metadata (literal %s))\n", strconv.Quote(parent))
@@ -50,11 +54,13 @@ func seatbeltProfile(l workbenchLayout) string {
 			}
 		}
 	}
-	for _, name := range []string{"passwd", "group", "nsswitch.conf", "hosts", "localtime", "ld.so.cache", "ld.so.conf", "ld.so.conf.d", "ssl/certs", "ca-certificates", "alternatives", "os-release"} {
-		fmt.Fprintf(&b, "; Public runtime configuration.\n(allow file-read* (subpath %s))\n", strconv.Quote("/private/etc/"+name))
+	for _, p := range workbenchConfigReadPaths() {
+		b.WriteString("; Public runtime configuration.\n")
+		allowReadable(fmt.Sprintf("(subpath %s)", strconv.Quote(p)))
 	}
-	for _, p := range []string{"/dev/null", "/dev/zero", "/dev/random", "/dev/urandom", "/dev/fd"} {
-		fmt.Fprintf(&b, "; Minimal device runtime.\n(allow file-read* (subpath %s))\n", strconv.Quote(p))
+	for _, p := range workbenchDeviceReadPaths() {
+		b.WriteString("; Minimal device runtime.\n")
+		allowReadable(fmt.Sprintf("(subpath %s)", strconv.Quote(p)))
 	}
 	b.WriteString("; Discard output without exposing other devices.\n(allow file-write* (literal \"/dev/null\"))\n")
 	writes := []string{l.Home, l.Tmp}
@@ -67,9 +73,9 @@ func seatbeltProfile(l workbenchLayout) string {
 	fmt.Fprintf(&b, "; Private scratch may host disposable repositories; preserve metadata elsewhere.\n(deny file-write* (require-all (regex #\"(^|/)[.][gG][iI][tT][ .]*(/|$)\") (require-not (subpath %s))))\n(deny file-link (require-all (regex #\"(^|/)[.][gG][iI][tT][ .]*(/|$)\") (require-not (subpath %s))))\n", strconv.Quote(l.Tmp), strconv.Quote(l.Tmp))
 	// Seatbelt's regular expressions have no counted repetition, so each
 	// hex digit of the temporary's name is spelled out.
-	temporary := `(^|/)[.]harness-workbench-` + strings.Repeat("[0-9a-f]", 32) + "-" + strings.Repeat("[0-9a-f]", 16) + `[.]tmp$`
+	temporary := workbenchTemporaryPattern
 	b.WriteString("; Background commands cannot inspect or disturb atomic file-tool temporaries.\n")
-	for _, op := range []string{"file-read-data", "file-write*", "file-link"} {
+	for _, op := range []string{"file-read-data", "process-exec", "file-write*", "file-link"} {
 		fmt.Fprintf(&b, "(deny %s (regex #\"%s\"))\n", op, temporary)
 	}
 	if l.Loopback {
@@ -156,9 +162,31 @@ func workbenchProbeEvidence(o Options, system []string) (string, string, error) 
 		Write, Loopback                       bool
 		Read, System, Env                     []string
 		Background                            bool
-	}{"workbench", workbenchSeatbeltVersion + ":" + hex.EncodeToString(templateHash[:]), o.WorkDir, o.RuntimeHome, hex.EncodeToString(binaryHash[:]), info.Size(), info.ModTime(), o.Write, o.Loopback, o.Read, system, o.Env, o.Background})
+	}{"workbench", workbenchSeatbeltVersion + ":" + workbenchPathVersion + ":" + hex.EncodeToString(templateHash[:]), o.WorkDir, o.RuntimeHome, hex.EncodeToString(binaryHash[:]), info.Size(), info.ModTime(), o.Write, o.Loopback, o.Read, system, o.Env, o.Background})
 	sum := sha256.Sum256(payload)
 	identityPayload, _ := json.Marshal([]any{"/usr/bin/sandbox-exec", info.Size(), info.ModTime(), info.Mode(), binaryHash})
 	identity := sha256.Sum256(identityPayload)
 	return hex.EncodeToString(sum[:]), hex.EncodeToString(identity[:]), nil
+}
+
+// These are the same public runtime grants emitted above, not a tool list.
+func workbenchConfigReadPaths() []string {
+	var paths []string
+	for _, name := range []string{"passwd", "group", "nsswitch.conf", "hosts", "localtime", "ld.so.cache", "ld.so.conf", "ld.so.conf.d", "ssl/certs", "ca-certificates", "alternatives", "os-release"} {
+		paths = append(paths, "/private/etc/"+name)
+	}
+	return paths
+}
+func workbenchDeviceReadPaths() []string {
+	return []string{"/dev/null", "/dev/zero", "/dev/random", "/dev/urandom", "/dev/fd"}
+}
+func workbenchPublicReadPaths() []string {
+	return append(append(workbenchConfigReadPaths(), workbenchDeviceReadPaths()...), "/private/var/select")
+}
+
+var workbenchTemporaryPattern = `(^|/)[.]harness-workbench-` + strings.Repeat("[0-9a-f]", 32) + "-" + strings.Repeat("[0-9a-f]", 16) + `[.]tmp$`
+var workbenchTemporaryReadDenied = regexp.MustCompile(workbenchTemporaryPattern)
+
+func workbenchReadDirectoryDenied(path string) bool {
+	return workbenchTemporaryReadDenied.MatchString(path)
 }

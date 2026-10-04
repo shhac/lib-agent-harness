@@ -43,3 +43,8 @@ func init() {
 		return checkBwrap(ctx, workbenchLayout{Work: work, Home: home, Tmp: tmp, System: workbenchSystemDirs()})
 	}
 }
+
+// Public runtime files are already part of the pinned system mount set.
+func workbenchPublicReadPaths() []string { return nil }
+
+func workbenchReadDirectoryDenied(path string) bool { return false }

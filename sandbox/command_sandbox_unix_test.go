@@ -32,7 +32,7 @@ func commandSandboxOptions(t *testing.T, loopback bool) Options {
 	if err := os.Chmod(home, 0700); err != nil {
 		t.Fatal(err)
 	}
-	return Options{WorkDir: work, RuntimeHome: home, Write: true, Loopback: loopback, Timeout: 10 * time.Second, Env: []string{"PORT=1234"}}
+	return Options{WorkDir: work, RuntimeHome: home, Write: true, Loopback: loopback, Timeout: 10 * time.Second, Env: []string{"PORT=1234", "PATH=/usr/bin:/bin:/usr/sbin:/sbin"}}
 }
 
 func openTestCommandSandbox(t *testing.T, opts Options) *Sandbox {
@@ -42,6 +42,7 @@ func openTestCommandSandbox(t *testing.T, opts Options) *Sandbox {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Log("public Open succeeded after platform proof")
 	t.Cleanup(func() {
 		if err := s.Close(); err != nil {
 			t.Error(err)

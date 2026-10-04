@@ -1,4 +1,4 @@
-# The sandbox package
+## The sandbox package
 
 The OS sandbox has a package boundary apart from session orchestration,
 tool admission, telemetry and transport. `github.com/shhac/lib-agent-harness/sandbox`
@@ -109,12 +109,14 @@ never authorization to skip a fresh namespace/mount/listener proof. Failed and
 interrupted proofs record nothing. No verification bypass or new Support claim
 is introduced.
 
-Proof-key payloads are byte-identical: `seatbelt-workbench-v4`,
-`bwrap-workbench-v2`, JSON field order and types, Env/Background, the fixed
-Seatbelt template and bwrap argument builder, and `sessions/id/workbench/home`
-and `sessions/id/workbench/tmp` shapes. Even standalone proofs keep the historical
-session shapes. The moved stage-A tests reconstruct the frozen payloads,
-Seatbelt SHA-256 and bwrap argument fixture; their literal pins are unchanged.
+The stage-B package extraction historically preserved the stage-A proof payloads
+(Seatbelt v4 and bubblewrap v2) byte for byte. Subsequent command-policy changes
+intentionally revised that evidence. Current command keys include
+`seatbelt-workbench-v11`, `bwrap-workbench-v4` and `readable-path-v2`, with the
+current Seatbelt template digest pinned. Regression tests reconstruct the old
+payloads and require old-key rejection plus stable new keys; the bubblewrap
+mount argument fixture remains unchanged. Standalone proofs still retain the
+historical `sessions/id/workbench/home` and `sessions/id/workbench/tmp` shapes.
 
 ## Errors and compatibility
 
@@ -183,3 +185,28 @@ CI's existing matrix covers macOS, Linux distribution bwrap, Linux 0.8.0 and
 Windows under go vet and go test -race, with sandbox-required skips forbidden.
 Cross-compilation covers all Windows test packages, retaining native coverage.
 The owner checks all CI jobs and tags/publishes v0.23.0 after landing.
+
+## Readable command PATH and execution
+
+The shared runner filters the merged environment before each invocation using
+the layout's existing System, Read, Work, Home and Tmp coverage. Seatbelt pairs
+data-read and process-exec selectors in one emitter; metadata ancestors do not
+authorize executable descendants. The Linux mount builder is unchanged.
+Run, Start and low-level runners use this mechanism. Diagnostics occupy the
+existing stderr budget; hosted/compatibility settlement is deferred to LAH-30.
+Current proof identities are Seatbelt v11, bubblewrap v4 and readable-path-v2,
+rejecting draft-4 evidence after fixture and scratch changes. PATH fixtures are
+scripts; Darwin independently excludes the installed native echo tool from a
+disposable read policy while retaining its interpreter as a file-only grant.
+Linux checks a copied ELF echo tool outside the bind set; mounts are unchanged.
+ProofError.Step and Facts.ProofStep name fixed preparation/control/launch/judgment
+steps without raw diagnostics. Failed checks cache nothing and create no command
+state. The scratch root is captured during preparation; fallback Mkdir uses its
+anchored descriptor and checks path identity, privacy and ownership before/after.
+Replaced Tmp paths refuse admission and cannot redirect host fallback writes.
+
+Start failures after launch return a settled handle together with the error.
+Result retains bounded diagnostics and the settled error; callers must inspect
+non-nil handles even on failure. Pre-launch refusals retain nil handles.
+Compatibility propagation is assigned to LAH-30. See the command design for
+actual execution results and unrun checks.

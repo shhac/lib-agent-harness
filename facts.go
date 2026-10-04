@@ -71,6 +71,8 @@ type Facts struct {
 	// Phase says how far things had got, where that is the operative
 	// distinction.
 	Phase string `json:"phase,omitempty"`
+	// ProofStep names a fixed pre-launch sandbox verification step, when known.
+	ProofStep string `json:"proof_step,omitempty"`
 	// Code is the specific fixed code: a capability or preflight code, a
 	// process code, an HTTP status code, or a provider's enumerated result.
 	Code     string `json:"code,omitempty"`

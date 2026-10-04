@@ -18,6 +18,12 @@ import (
 )
 
 func proveWorkbench(ctx context.Context, o Options) (Proof, error) {
+	return proveWorkbenchUsing(ctx, o, probeWorkbench)
+}
+
+// The public path always supplies the real probe. Injection is internal to
+// synthetic tests of cleanup, cache publication and command admission.
+func proveWorkbenchUsing(ctx context.Context, o Options, probe func(context.Context, Options, []string) error) (Proof, error) {
 	if _, err := os.Stat("/usr/bin/sandbox-exec"); err != nil {
 		e := workbenchCapability(CapabilitySandboxToolMissing)
 		e.Tools = []string{"sandbox-exec"}
@@ -41,14 +47,22 @@ func proveWorkbench(ctx context.Context, o Options) (Proof, error) {
 	if err != nil {
 		return Proof{}, workbenchCapability(CapabilitySandboxUnavailable)
 	}
+	if ctx.Err() != nil {
+		return Proof{}, executionProofError(ctx, "", ctx.Err())
+	}
 	if verified.holds(key) {
 		return Proof{system: system, binary: "/usr/bin/sandbox-exec", identity: identity, options: o}, nil
 	}
-	if err = probeWorkbench(ctx, o, system); err != nil {
+	if err = probe(ctx, o, system); err != nil {
 		if ctx.Err() != nil {
-			return Proof{}, workbenchCapability(CapabilityProbeTimeout)
+			return Proof{}, executionProofError(ctx, "", err)
 		}
 		return Proof{}, err
+	}
+	// A successful observation is not evidence if deferred cleanup or the
+	// final observation delay consumed the caller's deadline.
+	if ctx.Err() != nil {
+		return Proof{}, executionProofError(ctx, "", ctx.Err())
 	}
 	verified.record(key)
 	return Proof{system: system, binary: "/usr/bin/sandbox-exec", identity: identity, options: o}, nil
@@ -86,10 +100,23 @@ func probeWorkbench(ctx context.Context, o Options, system []string) error {
 	// Test launch first. Nested Seatbelt refusal must not trigger any network
 	// witness or touch the real session's runtime state.
 	if _, err = runWorkbenchProbe(ctx, l, "echo canary-ran", false, workbenchInboundProbe{}); err != nil {
-		if ctx.Err() != nil {
-			return workbenchCapability(CapabilityProbeTimeout)
-		}
-		return unavailable
+		return executionProofError(ctx, ProofStepLaunch, err)
+	}
+	if err := proveWorkbenchExecution(ctx, l, filepath.Join(root, "private"), func(ctx context.Context, l workbenchLayout, s string) (string, error) {
+		return runWorkbenchProbe(ctx, l, s, false, workbenchInboundProbe{})
+	}); err != nil {
+		return err
+	}
+	nativeLayout, nativeScript, err := workbenchNativeCanary(ctx, l)
+	if err != nil {
+		return err
+	}
+	nativeOut, err := runWorkbenchProbe(ctx, nativeLayout, nativeScript, false, workbenchInboundProbe{})
+	if err != nil {
+		return executionProofError(ctx, ProofStepLaunch, err)
+	}
+	if err := judgeWorkbenchNative(nativeOut); err != nil {
+		return executionProofError(ctx, ProofStepJudgment, err)
 	}
 	// Prove group inspection positively as well: an empty scan must not let
 	// the reaper kill a real background job or retain every empty supervisor.
@@ -488,4 +515,37 @@ func workbenchReadWitnesses(root, home string) string {
 		}
 	}
 	return s
+}
+
+// Use the installed native tool at its original signed path. A separate
+// disposable read policy excludes /bin/echo while retaining the interpreter
+// as a file-only grant. Script-read denial is not native-execution evidence.
+func workbenchNativeCanary(ctx context.Context, l workbenchLayout) (workbenchLayout, string, error) {
+	cmd, child, err := process.Command(ctx, "/bin/echo", "outside-native-control")
+	if err != nil {
+		return l, "", executionProofError(ctx, ProofStepOutside, err)
+	}
+	out := &workbenchOutput{limit: 1024}
+	cmd.Stdout, cmd.Stderr = out, io.Discard
+	cmd.Env = workbenchProbeEnvironment(l)
+	cmd.WaitDelay = time.Second
+	err = child.Run()
+	child.Close()
+	if e := workbenchOutsideResult(ctx, out.text(), "outside-native-control", err); e != nil {
+		return l, "", e
+	}
+	native := l
+	native.System = nil
+	for _, p := range l.System {
+		if p != "/bin" {
+			native.System = append(native.System, p)
+		}
+	}
+	native.Read = []string{"/bin/sh", "/bin/bash", "/bin/dash", "/bin/zsh"}
+	if native.readsDirectory("/bin/echo") {
+		return l, "", executionProofError(ctx, ProofStepFixture, nil)
+	}
+	q := workbenchShellQuote
+	s := "export LC_ALL=C\n/bin/sh -c 'echo native-positive'\n/bin/echo outside-native-started 2>" + q(filepath.Join(l.Tmp, "native-error")) + "\nstatus=$?\n[ \"$status\" = 126 ] && /usr/bin/grep -Eq 'Operation not permitted|Permission denied' " + q(filepath.Join(l.Tmp, "native-error")) + " && echo native-execution-refused\necho native-canary-ran\n"
+	return native, s, nil
 }

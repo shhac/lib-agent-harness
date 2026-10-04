@@ -14,7 +14,7 @@ import (
 )
 
 // Frozen stage-A payload: never update this to accommodate a new key.
-func legacyworkbenchLinuxProbeKey(o Options, binary, version string, w workbenchLinuxWitness) (string, error) {
+func legacyworkbenchLinuxProbeKey(o Options, binary, version string, w workbenchLinuxWitness, revision ...string) (string, error) {
 	info, e := os.Stat(binary)
 	if e != nil {
 		return "", e
@@ -65,7 +65,12 @@ func legacyworkbenchLinuxProbeKey(o Options, binary, version string, w workbench
 	for _, p := range o.Read {
 		shapes = append(shapes, legacyLinuxShape(p))
 	}
-	payload, _ := json.Marshal([]any{"workbench-linux", "bwrap-workbench-v2", binary, info.Size(), info.ModTime(), binaryHash, version, template, system, shapes, o.Write, o.Read, o.Env, o.Loopback, o.Background, struct{ Network, Localhost, Socket string }{w.Network, w.Localhost, w.Socket}})
+	values := []any{"workbench-linux", "bwrap-workbench-v2", binary, info.Size(), info.ModTime(), binaryHash, version, template, system, shapes, o.Write, o.Read, o.Env, o.Loopback, o.Background, struct{ Network, Localhost, Socket string }{w.Network, w.Localhost, w.Socket}}
+	if len(revision) > 0 {
+		// Draft 4 used one concatenated revision element, not two elements.
+		values[1] = revision[0] + ":readable-path-v1"
+	}
+	payload, _ := json.Marshal(values)
 	hash := sha256.Sum256(payload)
 	return hex.EncodeToString(hash[:]), nil
 }
@@ -84,8 +89,16 @@ func TestWorkbenchProofKeyLegacyPayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != want {
-		t.Fatalf("proof key changed: %s != %s", got, want)
+	if got == want {
+		t.Fatal("old proof certifies changed policy")
+	}
+	v3, err := legacyworkbenchLinuxProbeKey(o, binary, "0.8.0", w, "bwrap-workbench-v3")
+	if err != nil || got == v3 {
+		t.Fatalf("draft-4 proof reused: %v", err)
+	}
+	again, err := workbenchLinuxProbeKey(o, binary, "0.8.0", w)
+	if err != nil || got != again {
+		t.Fatalf("unstable proof: %s %s %v", got, again, err)
 	}
 }
 

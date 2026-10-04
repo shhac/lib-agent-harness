@@ -21,7 +21,12 @@ import (
 
 func requireWorkbenchSeatbelt(t *testing.T) {
 	t.Helper()
-	testenv.RequireLoopback(t) // Real command proofs need network witnesses.
+	testenv.RequireLoopback(t) // Full command proofs need network witnesses.
+	requireWorkbenchSeatbeltExecution(t)
+}
+
+func requireWorkbenchSeatbeltExecution(t *testing.T) {
+	t.Helper()
 	testenv.RequireProcessGroup(t)
 	testenv.RequireNestedSandbox(t)
 	profile := seatbeltProfile(workbenchLayout{Work: t.TempDir(), Home: t.TempDir(), Tmp: t.TempDir(), System: workbenchSystemDirs(), Write: true})
@@ -131,7 +136,7 @@ func TestWorkbenchSeatbeltProfile(t *testing.T) {
 			l := workbenchLayout{Work: "/workspace", Home: "/runtime/home", Tmp: "/runtime/tmp", Read: []string{"/readset"}, System: []string{"/System", "/usr"}, Write: write, Loopback: loop}
 			profile := seatbeltProfile(l)
 			gitDeny := "(require-all (regex #\"(^|/)[.][gG][iI][tT][ .]*(/|$)\") (require-not (subpath \"/runtime/tmp\")))"
-			for _, required := range []string{"(deny default)", "(require-not (subpath \"/System/Volumes/Data\"))", "(allow process-exec)", "(allow process-fork)", "(target same-sandbox)", "(deny file-link", "(deny file-write*", "(subpath \"/readset\")", "(literal \"/private/etc/passwd\")", "(allow file-read-data (literal \"/\"))", "(allow file-read-metadata (literal \"/var\"))", "(sysctl-name \"kern.version\") (sysctl-name \"kern.hostname\")"} {
+			for _, required := range []string{"(deny default)", "(require-not (subpath \"/System/Volumes/Data\"))", "(allow process-exec (subpath", "(allow process-fork)", "(target same-sandbox)", "(deny file-link", "(deny file-write*", "(subpath \"/readset\")", "(literal \"/private/etc/passwd\")", "(allow file-read-data (literal \"/\"))", "(allow file-read-metadata (literal \"/var\"))", "(sysctl-name \"kern.version\") (sysctl-name \"kern.hostname\")"} {
 				// Public etc entries use subpath so an optional directory (ssl/certs)
 				// and regular files share one pinned list.
 				if required == "(literal \"/private/etc/passwd\")" {

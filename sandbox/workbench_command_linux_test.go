@@ -58,7 +58,7 @@ func TestWorkbenchLinuxRealCanary(t *testing.T) {
 }
 
 func TestWorkbenchLinuxStructuralProof(t *testing.T) {
-	binary, _ := requireWorkbenchBwrap(t)
+	binary, _ := requireWorkbenchBwrapExecution(t)
 	l := linuxTestLayout(t)
 	namespace, e := os.Readlink("/proc/self/ns/net")
 	if e != nil {
@@ -91,7 +91,7 @@ func TestWorkbenchLinuxStructuralProof(t *testing.T) {
 }
 
 func TestWorkbenchLinuxWidenedSandbox(t *testing.T) {
-	binary, _ := requireWorkbenchBwrap(t)
+	binary, _ := requireWorkbenchBwrapExecution(t)
 	l := linuxTestLayout(t)
 	read := t.TempDir()
 	l.Read = []string{read}
@@ -360,7 +360,7 @@ func TestWorkbenchLinuxBackgroundPriority(t *testing.T) {
 }
 
 func TestWorkbenchLinuxBackgroundInheritedPriority(t *testing.T) {
-	binary, _ := requireWorkbenchBwrap(t)
+	binary, _ := requireWorkbenchBwrapExecution(t)
 	l := linuxTestLayout(t)
 	for _, initial := range []int{5, 10} {
 		t.Run(strconv.Itoa(initial), func(t *testing.T) {
@@ -389,7 +389,7 @@ func TestWorkbenchLinuxBackgroundInheritedPriority(t *testing.T) {
 }
 
 func TestWorkbenchLinuxKillingBwrapKillsSandbox(t *testing.T) {
-	binary, _ := requireWorkbenchBwrap(t)
+	binary, _ := requireWorkbenchBwrapExecution(t)
 	l := linuxTestLayout(t)
 	args, e := bwrapArgs(l)
 	if e != nil {

@@ -74,6 +74,100 @@ func TestCommandSandboxLifecycle(t *testing.T) {
 	requireCommandCode(t, err, CommandSandboxClosed)
 }
 
+func TestStartFailureRetainsSettledDiagnostics(t *testing.T) {
+	for _, cause := range []string{"cancel", "close"} {
+		t.Run(cause, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			entered := make(chan struct{})
+			want := CommandResult{ExitCode: -1, Stderr: "[harness PATH: dropped unreadable]\n", Truncated: true}
+			s := fakeCommandSandbox(t, func(runCtx context.Context, _, _ string, _ time.Duration, onStart func()) (CommandResult, error) {
+				close(entered)
+				if cause == "cancel" {
+					cancel()
+				} else {
+					<-runCtx.Done() // Close is already cancelling admitted work.
+				}
+				notifyCommandLaunch(onStart) // Launch raced with cancellation.
+				return want, commandError(CommandOutcomeUnknown)
+			})
+			closed := make(chan error, 1)
+			if cause == "close" {
+				go func() { <-entered; closed <- s.Close() }()
+			}
+			h, err := s.Start(ctx, CommandRequest{Command: "wait"})
+			if h == nil || err == nil {
+				t.Fatalf("lost post-launch handle: %v %v", h, err)
+			}
+			if cause == "cancel" {
+				if !errors.Is(err, context.Canceled) {
+					t.Fatal(err)
+				}
+			} else {
+				requireCommandCode(t, err, CommandSandboxClosed)
+				if err := <-closed; err != nil {
+					t.Fatal(err)
+				}
+			}
+			for range 2 {
+				got, resultErr := h.Result()
+				if got != want || resultErr == nil {
+					t.Fatalf("%+v %v", got, resultErr)
+				}
+			}
+			h.Stop()
+		})
+	}
+}
+
+func TestStartSettledFailureLaunchContract(t *testing.T) {
+	for _, launched := range []bool{false, true} {
+		t.Run(map[bool]string{false: "pre-launch", true: "post-launch"}[launched], func(t *testing.T) {
+			failure := commandError(CommandOutcomeUnknown)
+			want := CommandResult{Stderr: "[harness PATH: dropped unreadable]\n"}
+			h := &StartedCommand{cancel: func() {}, done: make(chan struct{}), launched: make(chan struct{}), result: want, err: failure}
+			if launched {
+				close(h.launched)
+			}
+			close(h.done)
+			got, err := startFailure(h, failure)
+			if err != failure || (got != nil) != launched {
+				t.Fatalf("%v %v", got, err)
+			}
+			if got != nil {
+				r, e := got.Result()
+				if r != want || e != failure {
+					t.Fatalf("%+v %v", r, e)
+				}
+			}
+		})
+	}
+}
+
+func TestStartExecutionFailureRetainsDiagnostics(t *testing.T) {
+	want := CommandResult{ExitCode: -1, Stderr: "[harness PATH: dropped unreadable]\n", Truncated: true}
+	s := fakeCommandSandbox(t, func(_ context.Context, _, _ string, _ time.Duration, onStart func()) (CommandResult, error) {
+		notifyCommandLaunch(onStart)
+		return want, commandError(CommandOutcomeUnknown)
+	})
+	h, err := s.Start(context.Background(), CommandRequest{Command: "fail"})
+	if h == nil {
+		t.Fatalf("lost launched handle: %v", err)
+	}
+	// Start may observe launch or settlement first; both retain the same handle.
+	if err != nil {
+		requireCommandCode(t, err, CommandOutcomeUnknown)
+	}
+	for range 2 {
+		got, err := h.Result()
+		if got != want {
+			t.Fatal(got)
+		}
+		requireCommandCode(t, err, CommandOutcomeUnknown)
+	}
+	h.Stop()
+}
+
 func TestCommandSandboxParallelClose(t *testing.T) {
 	launched := make(chan struct{}, 64)
 	s := fakeCommandSandbox(t, func(ctx context.Context, command, dir string, timeout time.Duration, onStart func()) (CommandResult, error) {

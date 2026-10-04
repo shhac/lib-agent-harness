@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -26,6 +27,21 @@ type workbenchToken struct {
 // Counts actual canary runs, so tests can distinguish evidence reuse from a
 // second proof without replacing any verification mechanism.
 var workbenchCanaryRuns atomic.Uint64
+
+// Notification proves setup completed; cmd.Process proves Start itself
+// succeeded. A setup refusal can happen between those observations. Call only
+// after Run settles, when exec.Cmd is no longer being mutated.
+func settledCommandLaunch(cmd *exec.Cmd, notified bool, onStart func()) bool {
+	if !notified && cmd.Process != nil {
+		notifyCommandLaunch(onStart)
+		return true
+	}
+	return notified
+}
+
+func commandSetupFailed(cmd *exec.Cmd, notified bool, runErr error) bool {
+	return !notified && cmd.Process != nil && runErr != nil
+}
 
 func prepareWorkbenchCommands(o Options, proof Proof, dir string) (layout workbenchLayout, env []string, token workbenchToken, scratch string, err error) {
 	tokenPath := filepath.Join(dir, "workbench-token.json")
@@ -100,6 +116,10 @@ func prepareWorkbenchCommands(o Options, proof Proof, dir string) (layout workbe
 		return layout, nil, token, scratch, stateError(StateUnusable)
 	}
 	env = process.TokenEnvironment(env, token.Token)
+	if err = layout.anchorScratch(); err != nil {
+		os.RemoveAll(scratch)
+		return layout, nil, token, scratch, err
+	}
 	return layout, env, token, scratch, nil
 }
 

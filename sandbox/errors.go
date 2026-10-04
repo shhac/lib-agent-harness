@@ -61,10 +61,26 @@ func refusal(operation, code, reason string) *RefusalError {
 type ProofError struct {
 	Code  string
 	Tools []string
+	Step  string
+}
+
+const (
+	ProofStepFixture  = "fixture_preparation"
+	ProofStepOutside  = "outside_control"
+	ProofStepLaunch   = "sandbox_launch"
+	ProofStepJudgment = "execution_judgment"
+)
+
+func proofStep(step string) string {
+	switch step {
+	case ProofStepFixture, ProofStepOutside, ProofStepLaunch, ProofStepJudgment:
+		return step
+	}
+	return ""
 }
 
 func (e *ProofError) HarnessFacts() harness.Facts {
-	return harness.Facts{Engine: harness.OpenAICompatible, Operation: harness.Session, Family: harness.FailureCapability, Phase: "before_launch", Code: e.Code}
+	return harness.Facts{Engine: harness.OpenAICompatible, Operation: harness.Session, Family: harness.FailureCapability, Phase: "before_launch", Code: e.Code, ProofStep: proofStep(e.Step)}
 }
 func (e *ProofError) Error() string {
 	message := map[string]string{
@@ -73,6 +89,11 @@ func (e *ProofError) Error() string {
 		CapabilitySandboxUnavailable: "the installed harness could not be run under the requested sandbox",
 		CapabilitySandboxNotEnforced: "the installed harness's sandbox allowed writes or network access the session must not have",
 	}[e.Code]
+	// Keep the legacy no-step wording for existing compatibility translations;
+	// new execution proofs carry their specific step and expanded explanation.
+	if e.Code == CapabilitySandboxNotEnforced && proofStep(e.Step) != "" {
+		message = "the installed harness's sandbox allowed reads, execution, writes or network access the session must not have"
+	}
 	if len(e.Tools) == 1 && e.Tools[0] == "bwrap" {
 		switch e.Code {
 		case CapabilitySandboxToolMissing:
@@ -89,6 +110,9 @@ func (e *ProofError) Error() string {
 	out := string(harness.OpenAICompatible) + ": " + message
 	if len(e.Tools) > 0 {
 		out += " (" + strings.Join(e.Tools, ", ") + ")"
+	}
+	if step := proofStep(e.Step); step != "" {
+		out += "; proof step: " + step
 	}
 	return out + "; no session was started"
 }

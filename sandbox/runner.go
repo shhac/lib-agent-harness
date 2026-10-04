@@ -3,10 +3,13 @@ package sandbox
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"time"
+
+	"github.com/shhac/lib-agent-harness/process"
 )
 
 // Proof is successful pre-launch evidence for one frozen configuration.
@@ -27,11 +30,18 @@ func (p Proof) Identity() string { return p.identity }
 
 // Prove checks normalized options with disposable canaries before credentialed work.
 func Prove(ctx context.Context, o Options) (Proof, error) {
+	return proveOptions(ctx, o, proveWorkbench)
+}
+
+func proveOptions(ctx context.Context, o Options, prove func(context.Context, Options) (Proof, error)) (Proof, error) {
 	n, err := normalize(o, true)
 	if err != nil {
 		return Proof{}, err
 	}
-	p, err := proveWorkbench(ctx, n)
+	p, err := prove(ctx, n)
+	if err == nil && ctx.Err() != nil {
+		return Proof{}, &ProofError{Code: CapabilityProbeTimeout}
+	}
 	if err == nil {
 		p = p.withRequest(o)
 	}
@@ -53,6 +63,9 @@ type Runner struct {
 }
 type commandSandbox = Runner
 type commandConfig struct {
+	statusRead   func(int, bool)
+	command      func(context.Context, string, ...string) (*exec.Cmd, *process.Process, error)
+	run          func(*process.Process) error
 	options      Options
 	proof        Proof
 	stateDir     string
@@ -98,3 +111,18 @@ func (r *Runner) Execute(ctx context.Context, command, rel string, timeout time.
 }
 func (r *Runner) Close() error           { return r.close() }
 func (r *Runner) Timeout() time.Duration { return r.timeout }
+
+// Internal per-runner injection exercises settlement with synthetic transports;
+// public constructors always use the real containment launch.
+func (c commandConfig) startCommand(ctx context.Context, name string, args ...string) (*exec.Cmd, *process.Process, error) {
+	if c.command != nil {
+		return c.command(ctx, name, args...)
+	}
+	return process.Command(ctx, name, args...)
+}
+func (c commandConfig) runCommand(p *process.Process) error {
+	if c.run != nil {
+		return c.run(p)
+	}
+	return p.Run()
+}
