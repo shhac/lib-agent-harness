@@ -17,6 +17,27 @@ import (
 	"github.com/shhac/lib-agent-harness/internal/rawjson"
 )
 
+// authenticate reads the bridge's first line within 30 seconds and accepts
+// the connection only when it carries the channel credential.
+func (h *toolHost) authenticate(conn net.Conn, scanner *bufio.Scanner) bool {
+	if err := conn.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		return false
+	}
+	if !scanner.Scan() {
+		return false
+	}
+	var hello struct {
+		Secret string `json:"secret"`
+	}
+	if json.Unmarshal(scanner.Bytes(), &hello) != nil {
+		return false
+	}
+	if subtle.ConstantTimeCompare([]byte(hello.Secret), h.secret) != 1 {
+		return false
+	}
+	return conn.SetReadDeadline(time.Time{}) == nil
+}
+
 // serve reads the bridge's authentication line, then the protocol stream. A
 // connection that cannot prove it holds the channel credential is dropped
 // without a reply.
@@ -32,22 +53,7 @@ func (h *toolHost) serve(conn net.Conn) {
 	reader := bufio.NewReaderSize(conn, 4096)
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 4096), MaxToolRequestBytes)
-	if err := conn.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
-		return
-	}
-	if !scanner.Scan() {
-		return
-	}
-	var hello struct {
-		Secret string `json:"secret"`
-	}
-	if json.Unmarshal(scanner.Bytes(), &hello) != nil {
-		return
-	}
-	if subtle.ConstantTimeCompare([]byte(hello.Secret), h.secret) != 1 {
-		return
-	}
-	if err := conn.SetReadDeadline(time.Time{}); err != nil {
+	if !h.authenticate(conn, scanner) {
 		return
 	}
 	writeMu := sync.Mutex{}
