@@ -61,6 +61,12 @@ type engineEntry struct {
 	// starting another turn, for the reason composedSteer gives.
 	steer         func(s *Session, ctx context.Context, t *Turn, expected string, in Input) (SteerResult, error)
 	composedSteer string
+	// account, quota and context are the engine's native telemetry reads;
+	// accountFromStart serves the account its start-up handshake reported.
+	account          *accountRead
+	accountFromStart bool
+	quota            *quotaRead
+	context          *contextRead
 }
 
 // engines is filled in init: its entries refer to functions that themselves
@@ -76,6 +82,7 @@ func init() {
 			initialize: (*Session).initializeCodex, event: (*Session).codexEvent,
 			bufferStart: true, startTurn: (*Session).startCodexTurnSynced,
 			interrupt: (*Session).interruptCodex, steer: (*Session).steerCodex,
+			account: codexAccountRead, quota: codexQuotaRead,
 		},
 		harness.Claude: {
 			dialect: claudeDialect, binary: "claude",
@@ -83,7 +90,8 @@ func init() {
 			normalizePolicy: normalizeClaudePolicy, overrides: claudeOverrides,
 			initialize: (*Session).initializeClaude, sessionNotice: (*Session).observeClaudeInit, event: (*Session).claudeEvent,
 			startTurn: (*Session).startClaudeTurn, interrupt: (*Session).interruptClaude,
-			composedSteer: "Claude steering interrupts and starts another turn",
+			composedSteer:    "Claude steering interrupts and starts another turn",
+			accountFromStart: true, quota: claudeQuotaRead, context: claudeContextRead,
 		},
 		harness.Grok: {
 			dialect: grokDialect, binary: "grok",
@@ -93,6 +101,7 @@ func init() {
 			initialize: (*Session).initializeGrok, event: (*Session).grokEvent,
 			startTurn: (*Session).startGrokTurn, interrupt: (*Session).interruptACP,
 			composedSteer: "Grok steering cancels the running prompt and sends another",
+			account:       grokAccountRead,
 		},
 		harness.CommandCode: {
 			dialect: commandCodeDialect, binary: "cmd", resolveHome: commandCodeHome,

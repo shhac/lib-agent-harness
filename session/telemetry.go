@@ -99,23 +99,20 @@ func (s *Session) ReadAccount(ctx context.Context) (harness.AccountSnapshot, err
 	if err := s.telemetryOpen(); err != nil {
 		return s.Telemetry().Account, err
 	}
-	if s.api != nil || s.options.Provider.Engine == harness.CommandCode {
-		return s.Telemetry().Account, s.notOffered("account", func(c Capabilities) harness.Capability { return c.Account })
+	entry := engines[s.options.Provider.Engine]
+	if entry.accountFromStart {
+		return s.Telemetry().Account, nil
 	}
-	if s.options.Provider.Engine == harness.Claude {
-		a := s.Telemetry().Account
-		return a, nil
+	read := entry.account
+	if read == nil {
+		return s.Telemetry().Account, s.notOffered("account", func(c Capabilities) harness.Capability { return c.Account })
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	method, params, parse := "account/read", map[string]any{"refreshToken": false}, parseCodexAccount
-	if s.options.Provider.Engine == harness.Grok {
-		method, params, parse = grokAccountMethod, map[string]any{}, parseGrokAccount
-	}
-	raw, err := s.transport.request(ctx, method, params)
+	raw, err := s.transport.request(ctx, read.method, read.params())
 	var a harness.AccountSnapshot
 	if err == nil {
-		a, err = parse(raw)
+		a, err = read.parse(raw)
 	}
 	s.mu.Lock()
 	if err == nil {
@@ -144,33 +141,19 @@ func (s *Session) ReadQuota(ctx context.Context) (harness.QuotaSnapshot, error) 
 	if err := s.telemetryOpen(); err != nil {
 		return s.Telemetry().Quota, err
 	}
-	if s.api != nil || s.options.Provider.Engine == harness.CommandCode {
+	read := engines[s.options.Provider.Engine].quota
+	if read == nil {
 		return s.Telemetry().Quota, s.notOffered("quota", func(c Capabilities) harness.Capability { return c.Quota })
-	}
-	if s.options.Provider.Engine == harness.Grok {
-		s.mu.Lock()
-		c := s.caps.Quota
-		s.mu.Unlock()
-		return s.Telemetry().Quota, &UnsupportedError{Engine: harness.Grok, Operation: "quota", Code: RefusedNotOffered, Capability: c}
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	method, params := "account/rateLimits/read", map[string]any{}
-	if s.options.Provider.Engine == harness.Claude {
-		method = "get_usage"
-		params["skip_behaviors"] = true
-	}
-	raw, err := s.transport.request(ctx, method, params)
+	raw, err := s.transport.request(ctx, read.method, read.params())
 	var q harness.QuotaSnapshot
 	var c harness.CreditSnapshot
 	creditErr := err
 	if err == nil {
-		parseQuota, parseCredits := parseCodexQuota, parseCodexCredits
-		if s.options.Provider.Engine == harness.Claude {
-			parseQuota, parseCredits = parseClaudeQuota, parseClaudeCredits
-		}
-		q, err = parseQuota(raw)
-		c, creditErr = parseCredits(raw)
+		q, err = read.parseQuota(raw)
+		c, creditErr = read.parseCredits(raw)
 	}
 	s.mu.Lock()
 	if err == nil {
@@ -209,15 +192,16 @@ func (s *Session) ReadContext(ctx context.Context) (ContextSnapshot, error) {
 	if err := s.telemetryOpen(); err != nil {
 		return s.Telemetry().Context, err
 	}
-	if s.options.Provider.Engine != harness.Claude {
+	read := engines[s.options.Provider.Engine].context
+	if read == nil {
 		return s.Telemetry().Context, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	raw, err := s.transport.request(ctx, "get_context_usage", map[string]any{"detail": "summary"})
+	raw, err := s.transport.request(ctx, read.method, read.params())
 	var c ContextSnapshot
 	if err == nil {
-		c, err = parseClaudeContext(raw)
+		c, err = read.parse(raw)
 	}
 	s.mu.Lock()
 	if err == nil {
@@ -317,3 +301,34 @@ func cloneQuota(q harness.QuotaSnapshot) harness.QuotaSnapshot {
 	}
 	return q
 }
+
+// accountRead, quotaRead and contextRead are the native requests an engine
+// answers a telemetry read with. An engine without one does not offer that
+// read, or, for context, serves its latest streamed observation.
+type accountRead struct {
+	method string
+	params func() map[string]any
+	parse  func(json.RawMessage) (harness.AccountSnapshot, error)
+}
+
+type quotaRead struct {
+	method       string
+	params       func() map[string]any
+	parseQuota   func(json.RawMessage) (harness.QuotaSnapshot, error)
+	parseCredits func(json.RawMessage) (harness.CreditSnapshot, error)
+}
+
+type contextRead struct {
+	method string
+	params func() map[string]any
+	parse  func(json.RawMessage) (ContextSnapshot, error)
+}
+
+var (
+	codexAccountRead = &accountRead{"account/read", func() map[string]any { return map[string]any{"refreshToken": false} }, parseCodexAccount}
+	grokAccountRead  = &accountRead{grokAccountMethod, func() map[string]any { return map[string]any{} }, parseGrokAccount}
+	codexQuotaRead   = &quotaRead{"account/rateLimits/read", func() map[string]any { return map[string]any{} }, parseCodexQuota, parseCodexCredits}
+	// Claude's get_usage skips its local transcript and behaviour scan.
+	claudeQuotaRead   = &quotaRead{"get_usage", func() map[string]any { return map[string]any{"skip_behaviors": true} }, parseClaudeQuota, parseClaudeCredits}
+	claudeContextRead = &contextRead{"get_context_usage", func() map[string]any { return map[string]any{"detail": "summary"} }, parseClaudeContext}
+)
