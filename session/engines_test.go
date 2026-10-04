@@ -30,3 +30,20 @@ func TestEngineRegistryIsComplete(t *testing.T) {
 		}
 	}
 }
+
+// An engine with no sandbox support is refused by name before anything looks
+// for how to sandbox it.
+func TestSandboxOnAnEngineWithoutOneIsRefused(t *testing.T) {
+	for _, e := range []harness.Engine{harness.Grok, harness.CommandCode} {
+		if engines[e].sandbox != nil {
+			continue
+		}
+		o := Options{Provider: harness.Provider{Engine: e}, WorkDir: t.TempDir(), Sandbox: &Sandbox{}}
+		if e == harness.Grok {
+			o.Policy.GrokPermission = GrokDenyWhenAsked
+		}
+		if err := VerifySandbox(t.Context(), o); err == nil {
+			t.Errorf("%s: a sandbox was verified", e)
+		}
+	}
+}

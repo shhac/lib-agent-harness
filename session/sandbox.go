@@ -193,16 +193,6 @@ var sandboxDisabledFeatures = []string{"apps", "plugins", "remote_plugin", "hook
 
 // sandboxArgs are the arguments that describe a sandboxed session's sandbox,
 // and are what its check proves.
-func sandboxArgs(o Options) []string {
-	if o.Provider.Engine == harness.Codex {
-		args := codexSandboxArgs(*o.Sandbox)
-		if o.Browser {
-			args = append(args, nativecli.CodexBrowserArgs()...)
-		}
-		return args
-	}
-	return claudeSandboxArgs(o)
-}
 
 // prepareSandbox assembles a sandboxed launch and proves its sandbox against
 // the installed harness before a credentialed process exists. A session that
@@ -210,27 +200,13 @@ func sandboxArgs(o Options) []string {
 // lease, which the launch owns from here.
 func prepareSandbox(ctx context.Context, o Options, lease *os.File) (*launch, error) {
 	refuse := func(err error) (*launch, error) { _ = lease.Close(); return nil, err }
-	l := &launch{extra: sandboxArgs(o)}
-	if o.Provider.Engine == harness.Codex {
-		if o.Browser {
-			bridge, err := readCodexBrowserBridge(ctx, o)
-			if err != nil {
-				return refuse(err)
-			}
-			l.browser = bridge
-		}
-		home := codexRuntime(o.Provider.CLI.Home, o.RuntimeHome)
-		if l.browser != nil {
-			config, err := l.browser.config(o.RuntimeHome)
-			if err != nil {
-				return refuse(err)
-			}
-			home.Files[codexConfigFile] = config
-		}
-		if err := home.Prepare(); err != nil {
-			return refuse(runtimeFailure(err))
-		}
-		if err := syncRuntimeSkills(o); err != nil {
+	support := engines[o.Provider.Engine].sandbox
+	if support == nil {
+		return refuse(&UnsupportedError{Engine: o.Provider.Engine, Operation: "sandbox", Code: RefusedNotOffered, Capability: harness.Support(o.Provider.Engine, harness.Session, harness.Sandbox)})
+	}
+	l := &launch{extra: support.args(o)}
+	if support.prepare != nil {
+		if err := support.prepare(ctx, o, l); err != nil {
 			return refuse(err)
 		}
 	}
@@ -246,17 +222,94 @@ func prepareSandbox(ctx context.Context, o Options, lease *os.File) (*launch, er
 		return nil, err
 	}
 	l.host = host
-	if o.Provider.Engine == harness.Claude {
-		l.extra = append(l.extra, claudeMCPConfig(host), claudeHostedAllowed(host))
-		return l, nil
-	}
-	server, err := codexHostedServer(host)
+	hosted, err := support.hostTools(host)
 	if err != nil {
 		host.close()
 		return nil, err
 	}
-	l.extra = append(l.extra, codexOverrides(server)...)
+	l.extra = append(l.extra, hosted...)
 	return l, nil
+}
+
+// sandboxArgs are the arguments that put the engine's CLI in its sandbox.
+func sandboxArgs(o Options) []string { return engines[o.Provider.Engine].sandbox.args(o) }
+
+// sandboxSupport is how one engine runs sandboxed. prepareSandbox owns the
+// order: arguments, preparation, proof, and only after the proof the tool
+// channel.
+type sandboxSupport struct {
+	args func(Options) []string
+	// prepare readies what the sandboxed CLI reads before it is proved, such
+	// as Codex's runtime home and browser bridge.
+	prepare func(context.Context, Options, *launch) error
+	// probe proves the sandbox the arguments describe, with a disposable
+	// login and no inference.
+	probe func(context.Context, Options, *launch) error
+	// hostTools are the arguments that give the session the open tool
+	// channel.
+	hostTools func(*toolHost) ([]string, error)
+}
+
+var (
+	codexSandbox = &sandboxSupport{
+		args: func(o Options) []string {
+			args := codexSandboxArgs(*o.Sandbox)
+			if o.Browser {
+				args = append(args, nativecli.CodexBrowserArgs()...)
+			}
+			return args
+		},
+		prepare: prepareCodexSandbox,
+		probe: func(ctx context.Context, o Options, l *launch) error {
+			if err := probeCodexSandbox(ctx, o); err != nil || !o.Browser {
+				return err
+			}
+			return probeCodexBrowserSandbox(ctx, o, l)
+		},
+		hostTools: func(host *toolHost) ([]string, error) {
+			server, err := codexHostedServer(host)
+			if err != nil {
+				return nil, err
+			}
+			return codexOverrides(server), nil
+		},
+	}
+	claudeSandbox = &sandboxSupport{
+		args: claudeSandboxArgs,
+		probe: func(ctx context.Context, o Options, l *launch) error {
+			if err := probeClaudeSandbox(ctx, o); err != nil || !o.Sandbox.Loopback {
+				return err
+			}
+			return probeClaudeLoopback(ctx, o, l)
+		},
+		hostTools: func(host *toolHost) ([]string, error) {
+			return []string{claudeMCPConfig(host), claudeHostedAllowed(host)}, nil
+		},
+	}
+)
+
+// prepareCodexSandbox readies the runtime home a sandboxed Codex session runs
+// in, with the browser bridge's configuration when the session has a browser.
+func prepareCodexSandbox(ctx context.Context, o Options, l *launch) error {
+	if o.Browser {
+		bridge, err := readCodexBrowserBridge(ctx, o)
+		if err != nil {
+			return err
+		}
+		l.browser = bridge
+	}
+	home := codexRuntime(o.Provider.CLI.Home, o.RuntimeHome)
+	if l.browser != nil {
+		config, err := l.browser.config(o.RuntimeHome)
+		if err != nil {
+			return err
+		}
+		home.Files[codexConfigFile] = config
+	}
+	if err := home.Prepare(); err != nil {
+		return runtimeFailure(err)
+	}
+	return syncRuntimeSkills(o)
 }
 
 // VerifySandbox proves, without inference, that the installed harness can run

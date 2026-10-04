@@ -32,18 +32,7 @@ func verifySandbox(ctx context.Context, o Options, l *launch) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, sandboxProbeTimeout)
 	defer cancel()
-	if o.Provider.Engine == harness.Codex {
-		err = probeCodexSandbox(ctx, o)
-		if err == nil && o.Browser {
-			err = probeCodexBrowserSandbox(ctx, o, l)
-		}
-	} else {
-		err = probeClaudeSandbox(ctx, o)
-		if err == nil && o.Sandbox.Loopback {
-			err = probeClaudeLoopback(ctx, o, l)
-		}
-	}
-	if err != nil {
+	if err = engines[o.Provider.Engine].sandbox.probe(ctx, o, l); err != nil {
 		return err
 	}
 	verified.record(key)
