@@ -57,6 +57,8 @@ type Sandbox struct {
 	// port 53. Other platforms have no native enforcement proof (see
 	// harness.Support).
 	Loopback bool
+	// LoopbackPorts is reserved for selected-port policies; native engines refuse it before launch.
+	LoopbackPorts []int
 	// Tools adds the caller's tools beside the session's own, served through
 	// the same bridge and tool channel a restricted session uses, with the same
 	// lease, launch record and reclamation. Its Dir must lie outside WorkDir.

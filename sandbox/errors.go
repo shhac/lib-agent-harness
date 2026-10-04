@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/sandboxprobe"
 )
 
 // ErrUnsupported identifies a refused sandbox operation.
@@ -59,28 +60,42 @@ func refusal(operation, code, reason string) *RefusalError {
 
 // ProofError reports a failed pre-launch OS sandbox proof, without runtime output.
 type ProofError struct {
-	Code  string
-	Tools []string
-	Step  string
+	Code                       string
+	Tools                      []string
+	Step                       string
+	ControlAddr, ControlSource string
 }
 
 const (
-	ProofStepFixture  = "fixture_preparation"
-	ProofStepOutside  = "outside_control"
-	ProofStepLaunch   = "sandbox_launch"
-	ProofStepJudgment = "execution_judgment"
+	ProofStepFixture                     = "fixture_preparation"
+	ProofStepOutside                     = "outside_control"
+	ProofStepLaunch                      = "sandbox_launch"
+	ProofStepJudgment                    = "execution_judgment"
+	ProofStepNetwork                     = "selected_port_network"
+	ProofStepNoOffMachineResolver        = sandboxprobe.NoOffMachineResolver
+	ProofStepControlOnThisMachine        = sandboxprobe.ControlOnThisMachine
+	ProofStepControlInvalidIP            = sandboxprobe.ControlInvalidIP
+	ProofStepControlInterfaceUnavailable = sandboxprobe.ControlInterfaceUnavailable
+	ProofStepUDPUnanswered               = sandboxprobe.UDPUnanswered
+	ProofStepTCPUnanswered               = sandboxprobe.TCPUnanswered
+	ProofStepControlDeadline             = sandboxprobe.ControlDeadline
+	ProofStepPortClientUnavailable       = sandboxprobe.PortClientUnavailable
+	ProofStepIPv6ControlUnavailable      = sandboxprobe.IPv6ControlUnavailable
 )
 
-func proofStep(step string) string {
+// ValidProofStep preserves only the shared structural proof vocabulary.
+func ValidProofStep(step string) string {
 	switch step {
-	case ProofStepFixture, ProofStepOutside, ProofStepLaunch, ProofStepJudgment:
+	case ProofStepFixture, ProofStepOutside, ProofStepLaunch, ProofStepJudgment, ProofStepNetwork,
+		ProofStepNoOffMachineResolver, ProofStepControlOnThisMachine, ProofStepControlInvalidIP, ProofStepControlInterfaceUnavailable, ProofStepUDPUnanswered, ProofStepTCPUnanswered, ProofStepControlDeadline, ProofStepPortClientUnavailable, ProofStepIPv6ControlUnavailable:
 		return step
 	}
 	return ""
 }
 
 func (e *ProofError) HarnessFacts() harness.Facts {
-	return harness.Facts{Engine: harness.OpenAICompatible, Operation: harness.Session, Family: harness.FailureCapability, Phase: "before_launch", Code: e.Code, ProofStep: proofStep(e.Step)}
+	control := sandboxprobe.SanitizeControl(sandboxprobe.ControlTarget{Addr: e.ControlAddr, Source: e.ControlSource})
+	return harness.Facts{Engine: harness.OpenAICompatible, Operation: harness.Session, Family: harness.FailureCapability, Phase: "before_launch", Code: e.Code, ProofStep: ValidProofStep(e.Step), NetworkControlAddr: control.Addr, NetworkControlSource: control.Source}
 }
 func (e *ProofError) Error() string {
 	message := map[string]string{
@@ -91,7 +106,7 @@ func (e *ProofError) Error() string {
 	}[e.Code]
 	// Keep the legacy no-step wording for existing compatibility translations;
 	// new execution proofs carry their specific step and expanded explanation.
-	if e.Code == CapabilitySandboxNotEnforced && proofStep(e.Step) != "" {
+	if e.Code == CapabilitySandboxNotEnforced && ValidProofStep(e.Step) != "" {
 		message = "the installed harness's sandbox allowed reads, execution, writes or network access the session must not have"
 	}
 	if len(e.Tools) == 1 && e.Tools[0] == "bwrap" {
@@ -111,7 +126,7 @@ func (e *ProofError) Error() string {
 	if len(e.Tools) > 0 {
 		out += " (" + strings.Join(e.Tools, ", ") + ")"
 	}
-	if step := proofStep(e.Step); step != "" {
+	if step := ValidProofStep(e.Step); step != "" {
 		out += "; proof step: " + step
 	}
 	return out + "; no session was started"

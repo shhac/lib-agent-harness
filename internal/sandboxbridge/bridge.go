@@ -11,6 +11,7 @@ import (
 )
 
 var NormalizeWorkbench func(any) (any, error)
+var NormalizeNetwork func(any) (any, error)
 var ProveWorkbench func(context.Context, any) (any, error)
 var PrivateStateDir func(fs.FileInfo) bool
 var LockState func(string) (*os.File, error)

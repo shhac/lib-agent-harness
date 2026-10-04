@@ -134,6 +134,17 @@ func RequireLoopback(t testing.TB) {
 	require(t, "a loopback listener", loopback.result())
 }
 
+// RequireExplicitLoopback checks the nonzero bind the socket helper will use.
+// Some outer sandboxes permit ephemeral binds but refuse explicit ports.
+func RequireExplicitLoopback(t testing.TB, port int) {
+	t.Helper()
+	l, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", fmt.Sprint(port)))
+	if err == nil {
+		err = l.Close()
+	}
+	SkipIfRefused(t, "an explicit-port loopback bind", err)
+}
+
 // Listen checks an actual test listener; unexpected errors still fail loudly.
 func Listen(t testing.TB, network, addr string) net.Listener {
 	t.Helper()

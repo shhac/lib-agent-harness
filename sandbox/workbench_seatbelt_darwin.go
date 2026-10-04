@@ -79,6 +79,13 @@ func seatbeltProfile(l workbenchLayout) string {
 		fmt.Fprintf(&b, "(deny %s (regex #\"%s\"))\n", op, temporary)
 	}
 	if l.Loopback {
+		if l.LoopbackPorts != nil {
+			b.WriteString("; Selected localhost ports only.\n")
+			for _, port := range l.LoopbackPorts {
+				fmt.Fprintf(&b, "(allow network-bind (local ip \"localhost:%d\"))\n(allow network-inbound (local ip \"localhost:%d\"))\n(allow network-outbound (remote ip \"localhost:%d\"))\n", port, port, port)
+			}
+			return b.String()
+		}
 		b.WriteString("; Local development servers only, never Unix-domain or off-machine sockets.\n(allow network-bind (local ip \"localhost:*\"))\n(allow network-inbound (local ip \"localhost:*\"))\n(allow network-outbound (remote ip \"localhost:*\"))\n")
 	}
 	return b.String()
@@ -163,6 +170,15 @@ func workbenchProbeEvidence(o Options, system []string) (string, string, error) 
 		Read, System, Env                     []string
 		Background                            bool
 	}{"workbench", workbenchSeatbeltVersion + ":" + workbenchPathVersion + ":" + hex.EncodeToString(templateHash[:]), o.WorkDir, o.RuntimeHome, hex.EncodeToString(binaryHash[:]), info.Size(), info.ModTime(), o.Write, o.Loopback, o.Read, system, o.Env, o.Background})
+	if o.LoopbackPorts != nil {
+		portTemplate := sha256.Sum256([]byte(seatbeltProfile(workbenchLayout{Work: "/workspace", Home: "/home", Tmp: "/tmp", Read: []string{"/read"}, System: workbenchSystemDirs(), Write: true, Loopback: true, LoopbackPorts: []int{12345, 23456}}) + selectedPortCanaryVersion))
+		payload, _ = json.Marshal(struct {
+			Base         json.RawMessage
+			Ports        []int  `json:",omitempty"`
+			Control      string `json:",omitempty"`
+			PortTemplate string
+		}{payload, o.LoopbackPorts, o.LoopbackControl, hex.EncodeToString(portTemplate[:])})
+	}
 	sum := sha256.Sum256(payload)
 	identityPayload, _ := json.Marshal([]any{"/usr/bin/sandbox-exec", info.Size(), info.ModTime(), info.Mode(), binaryHash})
 	identity := sha256.Sum256(identityPayload)

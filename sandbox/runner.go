@@ -9,6 +9,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/shhac/lib-agent-harness/internal/sandboxprobe"
 	"github.com/shhac/lib-agent-harness/process"
 )
 
@@ -19,10 +20,16 @@ type Proof struct {
 	binary, identity string
 	options          Options
 	request          *Options
+	networkControl   sandboxprobe.ControlTarget
 }
 
 func (p Proof) SystemDirs() []string { return append([]string(nil), p.system...) }
 func (p Proof) Binary() string       { return p.binary }
+
+// NetworkControl returns the successful outside DNS control address and source, never query contents.
+func (p Proof) NetworkControl() (address, source string) {
+	return p.networkControl.Addr, p.networkControl.Source
+}
 
 // Identity fingerprints the proved executable. On macOS it is informational;
 // the Seatbelt cache key pins the executable. Linux rechecks it before launch.
@@ -40,7 +47,7 @@ func proveOptions(ctx context.Context, o Options, prove func(context.Context, Op
 	}
 	p, err := prove(ctx, n)
 	if err == nil && ctx.Err() != nil {
-		return Proof{}, &ProofError{Code: CapabilityProbeTimeout}
+		return Proof{}, &ProofError{Code: CapabilityProbeTimeout, ControlAddr: p.networkControl.Addr, ControlSource: p.networkControl.Source}
 	}
 	if err == nil {
 		p = p.withRequest(o)
@@ -50,6 +57,7 @@ func proveOptions(ctx context.Context, o Options, prove func(context.Context, Op
 
 func (p Proof) withRequest(o Options) Proof {
 	o.Read, o.Env = slices.Clone(o.Read), slices.Clone(o.Env)
+	o.LoopbackPorts = slices.Clone(o.LoopbackPorts)
 	p.request = &o
 	return p
 }

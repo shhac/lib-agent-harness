@@ -150,7 +150,8 @@ func executionProofError(ctx context.Context, step string, err error) *ProofErro
 	if errors.As(err, &old) {
 		p.Code = old.Code
 		p.Tools = append([]string(nil), old.Tools...)
-		if proofStep(old.Step) != "" {
+		p.ControlAddr, p.ControlSource = old.ControlAddr, old.ControlSource
+		if ValidProofStep(old.Step) != "" {
 			p.Step = old.Step
 		}
 	}

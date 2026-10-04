@@ -24,6 +24,12 @@ func proveWorkbench(ctx context.Context, o Options) (Proof, error) {
 // The public path always supplies the real probe. Injection is internal to
 // synthetic tests of cleanup, cache publication and command admission.
 func proveWorkbenchUsing(ctx context.Context, o Options, probe func(context.Context, Options, []string) error) (Proof, error) {
+	return proveWorkbenchStages(ctx, o, probe, proveSelectedPorts)
+}
+
+// Private stage injection tests settlement/cache publication without a network
+// or a sandbox launch. Public constructors always supply both real probes.
+func proveWorkbenchStages(ctx context.Context, o Options, probe func(context.Context, Options, []string) error, ports func(context.Context, Options, []string) (networkControl, error)) (Proof, error) {
 	if _, err := os.Stat("/usr/bin/sandbox-exec"); err != nil {
 		e := workbenchCapability(CapabilitySandboxToolMissing)
 		e.Tools = []string{"sandbox-exec"}
@@ -50,22 +56,44 @@ func proveWorkbenchUsing(ctx context.Context, o Options, probe func(context.Cont
 	if ctx.Err() != nil {
 		return Proof{}, executionProofError(ctx, "", ctx.Err())
 	}
-	if verified.holds(key) {
+	var control networkControl
+	if o.LoopbackPorts != nil {
+		if cached, ok := verified.control(key); ok {
+			return Proof{system: system, binary: "/usr/bin/sandbox-exec", identity: identity, options: o, networkControl: cached}, nil
+		}
+	} else if verified.holds(key) {
 		return Proof{system: system, binary: "/usr/bin/sandbox-exec", identity: identity, options: o}, nil
 	}
-	if err = probe(ctx, o, system); err != nil {
+	// Preserve the existing execution and filesystem proof unchanged. Its
+	// disposable unlimited-loopback profile is followed by the stricter proof;
+	// no command is admitted unless both stages pass.
+	base := o
+	base.LoopbackPorts, base.LoopbackControl = nil, ""
+	if err = probe(ctx, base, system); err != nil {
 		if ctx.Err() != nil {
 			return Proof{}, executionProofError(ctx, "", err)
 		}
 		return Proof{}, err
 	}
+	if o.LoopbackPorts != nil {
+		control, err = ports(ctx, o, system)
+		if err != nil {
+			return Proof{}, err
+		}
+	}
 	// A successful observation is not evidence if deferred cleanup or the
 	// final observation delay consumed the caller's deadline.
 	if ctx.Err() != nil {
-		return Proof{}, executionProofError(ctx, "", ctx.Err())
+		failure := executionProofError(ctx, "", ctx.Err())
+		failure.ControlAddr, failure.ControlSource = control.Addr, control.Source
+		return Proof{}, failure
 	}
-	verified.record(key)
-	return Proof{system: system, binary: "/usr/bin/sandbox-exec", identity: identity, options: o}, nil
+	if o.LoopbackPorts != nil {
+		verified.recordControl(key, control)
+	} else {
+		verified.record(key)
+	}
+	return Proof{system: system, binary: "/usr/bin/sandbox-exec", identity: identity, options: o, networkControl: control}, nil
 }
 
 func probeWorkbench(ctx context.Context, o Options, system []string) error {
@@ -340,8 +368,9 @@ func probeWorkbench(ctx context.Context, o Options, system []string) error {
 }
 
 type workbenchInboundProbe struct {
-	Port  int
-	Nonce string
+	Port    int
+	Nonce   string
+	Message string
 }
 
 func runWorkbenchProbe(ctx context.Context, l workbenchLayout, script string, expectBackground bool, inbound workbenchInboundProbe) (string, error) {
@@ -392,6 +421,10 @@ func runWorkbenchProbe(ctx context.Context, l workbenchLayout, script string, ex
 			for {
 				conn, e := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(inbound.Port)), 100*time.Millisecond)
 				if e == nil {
+					if inbound.Message != "" {
+						_ = conn.SetWriteDeadline(time.Now().Add(200 * time.Millisecond))
+						_, _ = conn.Write([]byte(inbound.Message))
+					}
 					_ = conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
 					line, readErr := bufio.NewReader(io.LimitReader(conn, 64)).ReadString('\n')
 					conn.Close()

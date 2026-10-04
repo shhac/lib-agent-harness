@@ -11,6 +11,7 @@ type workbenchLayout struct {
 	Work, Home, Tmp string
 	Read, System    []string
 	Write, Loopback bool
+	LoopbackPorts   []int
 	scratch         *os.Root
 	scratchIdentity os.FileInfo
 }

@@ -33,7 +33,7 @@ The root package `harness` defines what every execution mode shares:
   comparing engine names. It returns `native`, `composed`, `unsupported` or
   `unknown` with a reason, for the operations `Complete`, `Run`, `Session`,
   `Models` and `Account` and features such as `Effort`, `StructuredOutput`,
-  `Resume`, `Steer`, `Compact`, `RestrictTools`, `CostReport` and `Quota`.
+  `Resume`, `Steer`, `Compact`, `RestrictTools`, `LoopbackPorts`, `CostReport` and `Quota`.
 - `Usage` and `Cost`: token accounting in one shape. `Input` counts every prompt
   token, cached or not, and the cache figures are parts of it that are split out
   only when the provider reported them (`CacheKnown`). `Known` false means
@@ -530,6 +530,19 @@ credentials, and refuse a failed proof. Windows Commands remain unsupported.
 launch), `Background` as `Composed`, and `Loopback` as `Unknown` on macOS
 and `Unsupported` on Linux.
 
+`Commands.LoopbackPorts` optionally restricts macOS commands to selected
+localhost ports. For example:
+
+```go
+Commands: &session.Commands{Loopback: true, LoopbackPorts: []int{3000, 8080}},
+```
+
+The list is frozen before proof and participates in resume identity. Adding,
+removing or changing it makes an existing reference incompatible. An optional
+`LoopbackControl` IP literal pins the off-machine DNS control; changing only
+that address preserves the reference but requires a different proof.
+The existing file-tool refusals remain in force; commands do not restore them.
+
 Linux requires `bwrap` on the library process's PATH. Install it with
 `apt install bubblewrap`, `dnf install bubblewrap` or `pacman -S bubblewrap`.
 Ubuntu 22.04's 0.6.1 is too old; install a newer build. Ubuntu 24.04+ also
@@ -557,6 +570,61 @@ it starts ends with that command, including background servers.
 and request its own server in its private namespace.
 
 ### Command sandbox
+
+Optional selected ports use the existing command sandbox, with no extra network
+subsystem:
+
+```go
+opts := sandbox.Options{
+    WorkDir: workspace, RuntimeHome: state,
+    Loopback: true, LoopbackPorts: []int{3000, 8080},
+    // LoopbackControl: "10.20.30.53", // optional: your off-machine DNS server
+}
+proof, err := sandbox.Prove(ctx, opts)
+if err != nil { return err }
+address, source := proof.NetworkControl() // destination metadata, no DNS contents
+_, _ = address, source
+```
+
+`Open` proves the same policy before creating state. A nil list preserves
+existing behavior, profiles, proof keys and references. A supplied list requires
+`Loopback`, contains 1–32 entries in 1–65535, and is cloned, sorted and
+deduplicated. An empty supplied list is refused. `LoopbackControl` requires a
+list and an off-machine IP literal; local interface, loopback, unspecified,
+multicast and link-local addresses are refused. Private remote resolvers are
+allowed. A busy selected port does not widen the policy.
+
+macOS proof requires selected-port bind, reach and inbound receipt; IPv4,
+IPv6, mapped IPv4 and localhost checks; immediate permission denial on excluded
+ports (including 8340 when excluded), wildcard/interface addresses, off-machine
+TCP 443 and direct TCP/UDP 53. The DNS control destination is caller-selected
+first, otherwise from `scutil --dns` (configured candidates are tried in order
+within the same deadline; caller controls never fall back). There is no fixed public resolver. It must
+answer UDP DNS and accept TCP 53 outside the sandbox within three seconds;
+timeouts and silence inside the sandbox are never denial evidence. Missing
+controls or incomplete probes explicitly refuse launch, and publish no proof.
+The installed `/usr/bin/python3` socket helper must also work under the unchanged
+read/execute profile, or selected ports are unavailable. Developer tools are
+checked before invoking Apple's Python shim, so proof cannot prompt installation.
+API sessions expose the same destination metadata through `s.NetworkControl()`.
+After a control is selected, failed proof facts expose `NetworkControlAddr` and
+`NetworkControlSource`, alongside the fixed `ProofStep` reason; DNS contents are
+never recorded.
+
+| Selected-port surface (`harness.LoopbackPorts`) | macOS | Linux | Windows / other |
+| --- | --- | --- | --- |
+| Standalone `sandbox` and deprecated command wrapper | Proved before launch, otherwise explicit refusal | Unsupported | Unsupported |
+| OpenAI-compatible `Workbench.Commands` (Session) | Unknown until Seatbelt proof | Unsupported: private per-command loopback has no per-port filter | Unsupported |
+| Claude native Session | Unsupported: yes/no local binding only | Unsupported | Unsupported |
+| Codex native Session | Unsupported: native loopback unproved | Unsupported | Unsupported |
+| Grok / Command Code Session | Unsupported: no proved OS sandbox | Unsupported | Unsupported |
+| Run, every engine | Unsupported | Unsupported | Unsupported |
+
+Linux retains its private per-command loopback, with no host-network forwarding,
+privileged firewall changes or socket-filtering subsystem. Hosted tools, browser
+channels and Unix-domain sockets are outside this port policy. See the
+[selected-port design](design-docs/2026-10-04-selected-loopback-ports.md) for
+proof stages, fixed refusal reasons and verification limits.
 
 `sandbox.Open` opens the same proved command boundary without a
 model session, provider credentials, or inference. `RuntimeHome` is required:
@@ -1107,6 +1175,12 @@ fetched URL can carry data out. A reference records whether a sandbox had
 reference digest.
 
 ### Loopback networking
+
+Selected ports are available only through a proved macOS command profile,
+using `sandbox.Options.LoopbackPorts` or `session.Commands.LoopbackPorts`.
+`session.Sandbox.LoopbackPorts` explicitly refuses every native engine before
+login preparation, including Start, Resume and VerifySandbox. This adds no
+native-loopback permission; see the selected-port matrix above.
 
 API workbench sessions use `Workbench.Commands.Loopback`; see the Workbench
 section for their separately proved macOS sandbox.

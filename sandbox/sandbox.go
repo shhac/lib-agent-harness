@@ -60,6 +60,10 @@ func openWithProof(ctx context.Context, opts Options, prove func(context.Context
 		return nil, err
 	}
 	if err = ctx.Err(); err != nil {
+		if o.LoopbackPorts != nil {
+			addr, source := proof.NetworkControl()
+			return nil, &ProofError{Code: CapabilityProbeTimeout, Step: ProofStepNetwork, ControlAddr: addr, ControlSource: source}
+		}
 		return nil, err
 	}
 	w, err := OpenWorkspace(Config{Root: o.WorkDir, SessionID: newID()})
