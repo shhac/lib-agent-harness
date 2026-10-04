@@ -15,13 +15,13 @@ import (
 )
 
 // A versioned template is shared by commands and the disposable canary.
-const workbenchSeatbeltVersion = "seatbelt-workbench-v6"
+const workbenchSeatbeltVersion = "seatbelt-workbench-v7"
 
 func seatbeltProfile(l workbenchLayout) string {
 	var b strings.Builder
 	b.WriteString("(version 1)\n(deny default)\n")
 	b.WriteString("; Shells and their children execute within this sandbox.\n(allow process-exec)\n(allow process-fork)\n(allow signal (target same-sandbox))\n")
-	b.WriteString("; Hardware and OS version queries needed by runtimes, excluding process arguments.\n(allow sysctl-read (sysctl-name-regex #\"^(hw[.]|kern[.]os|kern[.]max|machdep[.]cpu[.])\") (sysctl-name \"kern.argmax\"))\n; Minimal command-line runtime services, excluding keychains.\n(allow mach-lookup (global-name \"com.apple.system.logger\") (global-name \"com.apple.system.notification_center\"))\n")
+	b.WriteString("; Hardware and OS version queries needed by runtimes, excluding process arguments.\n(allow sysctl-read (sysctl-name-regex #\"^(hw[.]|kern[.]os|kern[.]max|machdep[.]cpu[.])\") (sysctl-name \"kern.argmax\"))\n; uname(3), which Node reads as it loads its os module.\n(allow sysctl-read (sysctl-name \"kern.version\") (sysctl-name \"kern.hostname\"))\n; Minimal command-line runtime services, excluding keychains.\n(allow mach-lookup (global-name \"com.apple.system.logger\") (global-name \"com.apple.system.notification_center\"))\n")
 	for _, p := range []string{"/private", "/private/etc", "/private/var", "/etc", "/var", "/dev"} {
 		fmt.Fprintf(&b, "; Resolve public runtime configuration without directory listings.\n(allow file-read-metadata (literal %s))\n", strconv.Quote(p))
 	}

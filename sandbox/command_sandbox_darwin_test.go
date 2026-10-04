@@ -95,3 +95,15 @@ func TestDeveloperBundle(t *testing.T) {
 		}
 	}
 }
+
+// Node reads uname(3) as it loads its os module and aborts when refused.
+func TestCommandSandboxAnswersUname(t *testing.T) {
+	s := openTestCommandSandbox(t, commandSandboxOptions(t, false))
+	r, err := s.Run(context.Background(), CommandRequest{Command: "uname -a >/dev/null && echo named"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.ExitCode != 0 || !strings.Contains(r.Stdout, "named") {
+		t.Fatalf("uname refused: %+v", r)
+	}
+}

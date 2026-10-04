@@ -30,7 +30,7 @@ func legacyworkbenchProbeKey(o Options, system []string) (string, error) {
 		Write, Loopback                       bool
 		Read, System, Env                     []string
 		Background                            bool
-	}{"workbench", "seatbelt-workbench-v6" + ":" + legacySeatbeltTemplateDigest, o.WorkDir, o.RuntimeHome, hex.EncodeToString(binaryHash[:]), info.Size(), info.ModTime(), o.Write, o.Loopback, o.Read, system, o.Env, o.Background})
+	}{"workbench", "seatbelt-workbench-v7" + ":" + legacySeatbeltTemplateDigest, o.WorkDir, o.RuntimeHome, hex.EncodeToString(binaryHash[:]), info.Size(), info.ModTime(), o.Write, o.Loopback, o.Read, system, o.Env, o.Background})
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:]), nil
 }
@@ -52,7 +52,7 @@ func TestWorkbenchProofKeyLegacyPayload(t *testing.T) {
 
 // The profile bytes for this fixed layout are part of the cache key. Regenerate
 // this digest only together with a version bump.
-const legacySeatbeltTemplateDigest = "b3f262971159ddc62a23327ab383f678da006d7cfe33b2e35e04fd2065f341f3"
+const legacySeatbeltTemplateDigest = "88cb94d215ea86a2f47fbbbb4ccf909836fa1cf8ec5798517af6dae3565b8dad"
 
 func TestWorkbenchSeatbeltTemplatePinned(t *testing.T) {
 	system := []string{"/System", "/usr", "/bin", "/sbin", "/Library/Developer/CommandLineTools", "/opt/homebrew"}
