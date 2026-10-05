@@ -1152,7 +1152,9 @@ optional relative path, "timeout_seconds": optional}`.
   is kept for the session's life and removed at `Close`. Caches such as Go's
   build cache then land in a writable place that is not the workspace.
 - **Timeout:** `Commands.Timeout` defaults to 2 minutes and may be at most 10
-  minutes (`skills.MaxTimeout`). The model may ask for less, never more. A
+  minutes (`sandbox.MaxSessionTimeout`, equal to `skills.MaxTimeout`). The model
+  may ask for less, never more. Standalone callers have a separate ceiling; see
+  [command timeout ceilings](2026-10-03-command-sandbox.md#command-timeout-ceilings). A
   timeout returns an output with `timed_out: true`, not an error.
 - **Output:** exit code, stdout and stderr, each bounded at 64 KiB
   (`skills.MaxOutputBytes`, with a truncation note). `Cmd.WaitDelay` closes the

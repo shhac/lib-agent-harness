@@ -10,7 +10,8 @@ import (
 )
 
 // CommandRequest runs a shell command in a relative workspace directory.
-// Timeout defaults to the sandbox's bound and may only shorten it for Run.
+// Timeout defaults to Options.Timeout (two minutes when unset) and may only
+// shorten it for Run. The standalone ceiling is MaxStandaloneTimeout.
 // Start has no timeout and refuses a nonzero Timeout.
 type CommandRequest struct {
 	Command, Dir string

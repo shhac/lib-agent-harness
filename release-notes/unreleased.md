@@ -1,5 +1,10 @@
 # Unreleased
 
+- Standalone command sandboxes accept caller-selected Timeout up to
+  `sandbox.MaxStandaloneTimeout` (two hours). Sessions and hosted runners retain
+  `sandbox.MaxSessionTimeout` (ten minutes); the two-minute default and Start
+  without a timeout are unchanged. Proofs and capability claims are unchanged.
+
 - Command sandbox cleanup now reclaims nested read-only scratch directories
   before removal, using anchored no-follow directory handles. File modes and
   outside symlink targets are untouched; cleanup failures still report and

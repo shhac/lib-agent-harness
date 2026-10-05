@@ -86,7 +86,8 @@ type commandConfig struct {
 }
 
 // NewRunner prepares durable recovery state. A zero outputBudget selects the
-// standalone per-stream bound; hosted callers pass their tool result budget.
+// standalone per-stream bound and MaxStandaloneTimeout ceiling; hosted callers
+// pass their tool result budget and retain the MaxSessionTimeout ceiling.
 // Options must match the original Prove request or its frozen normalized value.
 // Preparation does not repeat option normalization or system discovery.
 func NewRunner(o Options, p Proof, stateDir string, outputBudget int) (*Runner, error) {
@@ -103,6 +104,9 @@ func NewRunner(o Options, p Proof, stateDir string, outputBudget int) (*Runner, 
 		return nil, stateError(StateUnusable)
 	}
 	n := p.options
+	if outputBudget != 0 && n.Timeout > MaxSessionTimeout {
+		return nil, refusal("commands", RefusedLimit, "hosted command timeout must be between zero and ten minutes")
+	}
 	if outputBudget != 0 && (outputBudget < MinResult || outputBudget > MaxResult) {
 		return nil, refusal("commands", RefusedLimit, "command output budget must be zero or between 4096 and 65536 bytes")
 	}

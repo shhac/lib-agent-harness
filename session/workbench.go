@@ -51,8 +51,10 @@ type Commands struct {
 	// It requires LoopbackPorts; no proof is currently offered.
 	LoopbackControl string
 
-	Read    []string
-	Env     []string
+	Read []string
+	Env  []string
+	// Timeout defaults to two minutes and is capped at sandbox.MaxSessionTimeout
+	// (ten minutes). The model may request a shorter timeout.
 	Timeout time.Duration
 }
 

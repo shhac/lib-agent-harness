@@ -54,7 +54,13 @@ func TestDeprecatedCommandSandboxOpenRefusals(t *testing.T) {
 					_, hostedErr = normalizeWorkbench(hosted)
 				}
 			}
-			if !reflect.DeepEqual(hostedErr, err) {
+			if kind == "timeout" && (runtime.GOOS == "darwin" || runtime.GOOS == "linux") {
+				// Both paths refuse, but name their distinct timeout ceilings.
+				if workbenchRefusal(t, hostedErr) != RefusedLimit || workbenchRefusal(t, err) != RefusedLimit ||
+					!strings.Contains(hostedErr.Error(), "ten minutes") || !strings.Contains(err.Error(), "two hours") {
+					t.Fatalf("wrong timeout ceilings: %v / %v", hostedErr, err)
+				}
+			} else if !reflect.DeepEqual(hostedErr, err) {
 				t.Fatalf("hosted/standalone refusal drift: %v / %v", hostedErr, err)
 			}
 			want, wok := harness.ErrorFacts(raw)

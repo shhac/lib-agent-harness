@@ -10,10 +10,12 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
 	"testing"
+	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/completion"
@@ -23,6 +25,35 @@ import (
 )
 
 var finishTool = ToolDefinition{Name: "finish", Description: "Report the work.", Schema: map[string]any{"type": "object"}, Closing: true}
+
+func TestWorkbenchCommandTimeoutLimit(t *testing.T) {
+	for _, timeout := range []time.Duration{0, 10 * time.Minute, 11 * time.Minute, 45 * time.Minute} {
+		t.Run(timeout.String(), func(t *testing.T) {
+			o := workbenchOptions(t, nopHandler())
+			o.Workbench.Commands = &Commands{Timeout: timeout}
+			n, err := normalize(o)
+			if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+				if workbenchRefusal(t, err) != RefusedNotOffered {
+					t.Fatal(err)
+				}
+				return
+			}
+			if timeout > 10*time.Minute {
+				if workbenchRefusal(t, err) != RefusedLimit || !strings.Contains(err.Error(), "ten minutes") {
+					t.Fatal(err)
+				}
+				return
+			}
+			want := timeout
+			if want == 0 {
+				want = 2 * time.Minute
+			}
+			if err != nil || n.Workbench.Commands.Timeout != want {
+				t.Fatalf("%+v %v", n.Workbench, err)
+			}
+		})
+	}
+}
 
 // workbenchOptions is an API session with a read-only workbench on a fresh
 // workspace beside its runtime home, and the caller's finish tool.

@@ -404,7 +404,7 @@ func TestWorkbenchCommandsNormalize(t *testing.T) {
 		name string
 		edit func(*testOptions)
 	}{
-		{"timeout", func(o *testOptions) { o.Workbench.Commands.Timeout = 11 * time.Minute }},
+		{"timeout", func(o *testOptions) { o.Workbench.Commands.Timeout = MaxStandaloneTimeout + time.Nanosecond }},
 		{"environment", func(o *testOptions) { o.Workbench.Commands.Env = []string{"API_KEY=secret"} }},
 		{"scratch environment", func(o *testOptions) { o.Workbench.Commands.Env = []string{"HOME=/elsewhere"} }},
 		{"loader environment", func(o *testOptions) { o.Workbench.Commands.Env = []string{"DYLD_INSERT_LIBRARIES=/tmp/x.dylib"} }},

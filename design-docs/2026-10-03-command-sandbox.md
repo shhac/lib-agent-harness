@@ -617,3 +617,20 @@ refusal or Linux 0.9/0.8.0 enforcement and do not establish Windows runtime resu
 The owner supplies outside-sandbox platform results under note 20; earlier
 snapshots and environmental refusals remain historical and cannot certify this
 revision. No hosted/compatibility work was reintroduced from LAH-30.
+
+## Command timeout ceilings
+
+Standalone Open and Prove/NewRunner with a zero output budget accept Timeout up
+to sandbox.MaxStandaloneTimeout (two hours). The caller supervises this work;
+no model is waiting on a tool result. Sessions and nonzero-output-budget hosted
+runners retain sandbox.MaxSessionTimeout (ten minutes). Both default to two
+minutes; Run requests may shorten the configured bound. Start has no timeout.
+Invalid options return RefusedLimit naming the applicable ceiling before proof
+or launch; the hosted NewRunner guard runs after proof but before state setup.
+
+Timeout is only normalized Options and in-memory Runner state, not persisted
+recovery data or proof-cache evidence. Interrupted preparation adds no new record;
+process identity, settlement and startup reclaim do not use a ten-minute stale
+threshold. Cancellation, Close and timeout settlement remain unchanged. Each
+Sandbox has its own timeout; the unchanged 64-command admission limit means long
+commands occupy slots longer. Proof keys and harness.Support claims are unchanged.

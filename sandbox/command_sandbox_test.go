@@ -37,6 +37,34 @@ func requireCommandCode(t *testing.T, err error, code string) {
 	}
 }
 
+func TestCommandSandboxRequestTimeoutBound(t *testing.T) {
+	for _, limit := range []time.Duration{2 * time.Minute, 45 * time.Minute} {
+		t.Run(limit.String(), func(t *testing.T) {
+			s := fakeCommandSandbox(t, func(_ context.Context, _, _ string, timeout time.Duration, onStart func()) (CommandResult, error) {
+				notifyCommandLaunch(onStart)
+				return CommandResult{Stdout: timeout.String()}, nil
+			})
+			s.commands.timeout = limit
+			short := time.Minute
+			if limit == 45*time.Minute {
+				short = 30 * time.Minute
+			}
+			for _, timeout := range []time.Duration{0, short, limit} {
+				got, err := s.Run(context.Background(), CommandRequest{Command: "fixture", Timeout: timeout})
+				want := timeout
+				if want == 0 {
+					want = limit
+				}
+				if err != nil || got.Stdout != want.String() {
+					t.Fatalf("%+v %v", got, err)
+				}
+			}
+			_, err := s.Run(context.Background(), CommandRequest{Command: "fixture", Timeout: limit + time.Minute})
+			requireCommandCode(t, err, ArgumentsInvalid)
+		})
+	}
+}
+
 func TestCommandSandboxLifecycle(t *testing.T) {
 	s := fakeCommandSandbox(t, func(ctx context.Context, command, dir string, timeout time.Duration, onStart func()) (CommandResult, error) {
 		notifyCommandLaunch(onStart)

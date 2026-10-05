@@ -633,8 +633,11 @@ defer server.Stop()
 // server.Done() closes on settlement; server.Result() waits for it.
 ```
 
-Run defaults to two minutes, at most ten minutes; a request can shorten that
-bound. Timeout returns exit -1 with `TimedOut=true`. Caller context cancellation
+Run defaults to two minutes. Options.Timeout may raise the bound up to
+`sandbox.MaxStandaloneTimeout` (two hours), including caller-supervised 45-minute
+project checks; a request can shorten that bound. Sessions and hosted runners with
+a nonzero output budget retain `sandbox.MaxSessionTimeout` (ten minutes). Timeout
+returns exit -1 with `TimedOut=true`. Caller context cancellation
 stops and settles the tree before returning the context error. Close cancelling
 an in-flight Run or Start returns `CommandSandboxClosed` when the caller's
 context is still live; caller cancellation retains the caller's context error.

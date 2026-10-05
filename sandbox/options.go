@@ -13,6 +13,12 @@ import (
 	"github.com/shhac/lib-agent-harness/internal/skills"
 )
 
+// MaxStandaloneTimeout is the maximum Run timeout for standalone command sandboxes.
+const MaxStandaloneTimeout = 2 * time.Hour
+
+// MaxSessionTimeout is the maximum command timeout for sessions and hosted runners.
+const MaxSessionTimeout = skills.MaxTimeout
+
 // Options selects a proved OS command boundary for standalone or hosted work.
 // RuntimeHome must be an existing private directory outside WorkDir.
 type Options struct {
@@ -30,6 +36,8 @@ type Options struct {
 	// It requires LoopbackPorts; no proof is currently offered.
 	LoopbackControl string
 
+	// Timeout defaults to two minutes. Standalone commands allow up to
+	// MaxStandaloneTimeout; sessions and hosted runners allow MaxSessionTimeout.
 	Timeout    time.Duration
 	Background bool
 	// ProcessInspection requires proof of inspection within each command's own tree.
@@ -117,8 +125,12 @@ func normalizeWorkbenchCommands(o Options, standalone bool) (Options, error) {
 	if c.Timeout == 0 {
 		c.Timeout = 2 * time.Minute
 	}
-	if c.Timeout < 0 || c.Timeout > skills.MaxTimeout {
-		return o, refusal("commands", RefusedLimit, "command timeout must be between zero and ten minutes")
+	limit, reason := MaxSessionTimeout, "command timeout must be between zero and ten minutes"
+	if standalone {
+		limit, reason = MaxStandaloneTimeout, "command timeout must be between zero and two hours"
+	}
+	if c.Timeout < 0 || c.Timeout > limit {
+		return o, refusal("commands", RefusedLimit, reason)
 	}
 	home, _ := os.UserHomeDir()
 	if resolved, e := filepath.EvalSymlinks(home); e == nil {

@@ -3,12 +3,74 @@
 package sandbox
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
+
+func TestStandaloneRunnerTimeout(t *testing.T) {
+	for _, timeout := range []time.Duration{0, 11 * time.Minute, 45 * time.Minute, MaxStandaloneTimeout} {
+		t.Run(timeout.String(), func(t *testing.T) {
+			o := commandSandboxOptions(t, false)
+			o.Timeout = timeout
+			proof, err := proveOptions(context.Background(), o, func(_ context.Context, n Options) (Proof, error) {
+				return Proof{system: n.system, options: n, binary: "unlaunched-fixture"}, nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			dir := filepath.Join(proof.options.RuntimeHome, "runner")
+			if err := os.Mkdir(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			r, err := NewRunner(o, proof, dir, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := r.Close(); err != nil {
+					requireCommandCode(t, err, "command_cleanup_unknown")
+				}
+			})
+			want := timeout
+			if want == 0 {
+				want = 2 * time.Minute
+			}
+			if r.Timeout() != want {
+				t.Fatalf("timeout %v, want %v", r.Timeout(), want)
+			}
+		})
+	}
+}
+
+func TestOpenedSandboxLongRequestTimeout(t *testing.T) {
+	o := commandSandboxOptions(t, false)
+	o.Timeout = 45 * time.Minute
+	s, err := openWithProof(context.Background(), o, func(_ context.Context, n Options) (Proof, error) {
+		return Proof{system: n.system, options: n, binary: "unlaunched-fixture"}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			requireCommandCode(t, err, "command_cleanup_unknown")
+		}
+	})
+	s.commands.execute = func(_ context.Context, _, _ string, timeout time.Duration, onStart func()) (CommandResult, error) {
+		notifyCommandLaunch(onStart)
+		return CommandResult{Stdout: timeout.String()}, nil
+	}
+	got, err := s.Run(context.Background(), CommandRequest{Command: "fixture", Timeout: 30 * time.Minute})
+	if err != nil || got.Stdout != (30*time.Minute).String() {
+		t.Fatalf("%+v %v", got, err)
+	}
+	_, err = s.Run(context.Background(), CommandRequest{Command: "fixture", Timeout: 46 * time.Minute})
+	requireCommandCode(t, err, ArgumentsInvalid)
+}
 
 func TestRunnerFreezesSelectedPorts(t *testing.T) {
 	o := Options{Loopback: true, LoopbackPorts: []int{3000}}
