@@ -18,6 +18,8 @@ var ErrClosed = errors.New("harness session closed")
 var ErrCommandFailed = errors.New("harness turn failed")
 
 const (
+	// RefusedLoopbackPortsUnenforceable: Seatbelt cannot confine selected-port binds to loopback.
+	RefusedLoopbackPortsUnenforceable = "loopback_ports_unenforceable"
 	// CapabilityLoopbackClaimChanged: installed Seatbelt no longer matches the
 	// advertised all-interface bind exposure; re-audit before claiming support.
 	CapabilityLoopbackClaimChanged = "loopback_interface_claim_changed"
@@ -53,7 +55,7 @@ func (e *RefusalError) Error() string { return e.Operation + ": " + e.Capability
 func (e *RefusalError) Unwrap() error { return ErrUnsupported }
 func (e *RefusalError) HarnessFacts() harness.Facts {
 	family := harness.FailurePreflight
-	if e.Code == RefusedNotOffered || e.Code == RefusedConflict || e.Code == RefusedLoopbackNotLocal {
+	if e.Code == RefusedNotOffered || e.Code == RefusedConflict || e.Code == RefusedLoopbackNotLocal || e.Code == RefusedLoopbackPortsUnenforceable {
 		family = harness.FailureCapability
 	}
 	return harness.Facts{Engine: harness.OpenAICompatible, Operation: harness.Session, Family: family, Code: e.Code}

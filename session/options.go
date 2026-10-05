@@ -14,6 +14,9 @@ import (
 // normalize resolves a caller's options into the ones a session runs with,
 // refusing any it cannot honour. Its stages run in order.
 func normalize(o Options) (Options, error) {
+	if err := refuseSelectedPorts(o); err != nil {
+		return o, err
+	}
 	if err := supported(o); err != nil {
 		return o, err
 	}

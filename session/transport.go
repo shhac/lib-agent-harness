@@ -183,7 +183,12 @@ func (w *streamWire) endOfStream() error {
 	}
 	return ErrTransport
 }
-func (w *streamWire) send(ctx context.Context, msg map[string]any) error {
+func (w *streamWire) send(ctx context.Context, msg map[string]any) (err error) {
+	defer func() {
+		if err != nil && ctx.Err() != nil {
+			err = ctx.Err()
+		}
+	}()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -215,7 +220,7 @@ func (w *streamWire) send(ctx context.Context, msg map[string]any) error {
 		case <-w.done:
 		}
 	}()
-	err := json.NewEncoder(w.stdin).Encode(msg)
+	err = json.NewEncoder(w.stdin).Encode(msg)
 	close(completed)
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -230,7 +235,14 @@ func (w *streamWire) send(ctx context.Context, msg map[string]any) error {
 	}
 	return nil
 }
-func (w *streamWire) request(ctx context.Context, method string, params map[string]any) (json.RawMessage, error) {
+func (w *streamWire) request(ctx context.Context, method string, params map[string]any) (body json.RawMessage, err error) {
+	// Cancellation can also terminate the child and close the wire. Preserve
+	// the caller's cancellation regardless of which ready select case wins.
+	defer func() {
+		if err != nil && ctx.Err() != nil {
+			err = ctx.Err()
+		}
+	}()
 	ch, forget, err := w.call(ctx, method, params)
 	if err != nil {
 		return nil, err

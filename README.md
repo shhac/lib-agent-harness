@@ -33,7 +33,8 @@ The root package `harness` defines what every execution mode shares:
   comparing engine names. It returns `native`, `composed`, `unsupported` or
   `unknown` with a reason, for the operations `Complete`, `Run`, `Session`,
   `Models` and `Account` and features such as `Effort`, `StructuredOutput`,
-  `Resume`, `Steer`, `Compact`, `RestrictTools`, `CostReport` and `Quota`.
+  `Resume`, `Steer`, `Compact`, `RestrictTools`, `CostReport`, `Quota` and
+  `LoopbackPorts` (selected ports, Unsupported everywhere).
 - `Usage` and `Cost`: token accounting in one shape. `Input` counts every prompt
   token, cached or not, and the cache figures are parts of it that are split out
   only when the provider reported them (`CacheKnown`). `Known` false means
@@ -1132,6 +1133,59 @@ fetched URL can carry data out. A reference records whether a sandbox had
 `Web`, so a resume cannot change it; a sandbox without it keeps its earlier
 reference digest.
 
+### Selected loopback ports
+
+`harness.Support(engine, operation, harness.LoopbackPorts)` reports
+`Unsupported` everywhere, with a reason and the nearest alternative:
+plain `Loopback` via a separate `sandbox.Open` command sandbox on macOS
+or Linux for servers started inside the command. Errors also state that
+command sandboxing is unavailable on Windows and other platforms. This
+alternative does not grant networking to the requested native engine.
+Support never reports Unknown for selected ports.
+
+`LoopbackPorts []int` and `LoopbackControl string` are available on
+`sandbox.Options`, `session.Commands`, native `session.Sandbox` and
+deprecated `session.CommandSandboxOptions`. A nil list and empty control
+leave existing behavior, profiles, proof keys and resume digests unchanged.
+
+For valid command-sandbox and Session selected-port requests:
+
+| Platform | Selected-port request | Nearest command capability |
+| --- | --- | --- |
+| macOS | Refused: `loopback_ports_unenforceable`, `harness.LoopbackPortsSeatbeltReason` | Loopback: all-interface binds/inbound, outbound on-machine only |
+| Linux | Refused: `not_offered`; reason depends on the engine, including the private-command no-per-port-filter limitation | Loopback: start and request the server inside one command; no host/sibling reach |
+| Windows / other | Refused: `not_offered`; no proved selected-port enforcement | Command sandbox unavailable |
+
+Claude Linux's selected-port capability reason names
+`harness.ClaudeLinuxHostLoopbackReason`
+(`claude_linux_host_loopback_unavailable`). Claude macOS has only yes/no
+allowLocalBinding and the same Seatbelt limitation. On macOS, every engine’s
+Session reason includes `harness.LoopbackPortsSeatbeltReason` alongside its
+own limitation: Codex native loopback has no proof, and Grok/Command Code
+have no proved OS sandbox. This keeps the reason consistent with the
+`loopback_ports_unenforceable` code without claiming those engines have
+Seatbelt enforcement. Native runs have no per-port sandbox and remain
+Unsupported. None of these refusals claims native Loopback support.
+
+Input checks run before the platform refusal: a non-nil list needs 1–32
+entries, each in 1–65535 (`limit_exceeded` first); ports require Loopback,
+and a control requires ports and an unscoped off-machine IP literal
+(`conflicting_options` next). Loopback, mapped loopback, link-local,
+multicast, unspecified addresses and hostnames cannot be controls.
+Normalization clones, sorts and deduplicates valid ports. It performs no
+interface or resolver discovery: even a valid control literal is refused.
+Start, Resume, VerifySandbox and OpenCommandSandbox refuse before any state
+write, login preparation, probe, cache entry or launch.
+
+The owner's Darwin 27 evidence and LAH-39 found no Seatbelt rule form that
+confines TCP/UDP binds to loopback. Linux retains reverted LAH-24's truthful
+refusal, whose strict PASS covered refusal tests. The owner-approved part B
+(LAH-43) restores the test-only selected-port canary and interface escape
+attempts; no production support is enabled here. The macOS public refusal
+tests never skip, including under NO_SKIP and sandboxcheck.
+See the [design record](design-docs/2026-10-04-selected-loopback-ports.md)
+and [release notes](release-notes/selected-loopback-ports.md).
+
 ### Loopback networking
 
 Callers requiring strict local-only networking set both `Loopback: true` and
@@ -1270,7 +1324,8 @@ the network restriction. Production refuses host-shared scope with
 sockets and a new nonce. The post-landing owner rerun checks this report-only runner.
 
 `harness.ClaudeLinuxHostLoopbackReason` names the host-reachability refusal
-for LAH-40's future selected-host-port request. LoopbackPorts is not added here.
+for selected-host-port requests. `LoopbackPorts` now refuses those requests
+before discovery or launch; use plain Loopback for in-command servers.
 The [design record](design-docs/2026-10-04-loopback-networking.md) attributes the
 owner evidence and separates the proved base scope from unmeasured interface
 confinement. In-command callers retain Loopback; no host-port bridge is introduced.
@@ -1289,8 +1344,8 @@ for the four attributed owner experiments, binary identity, team sandbox
 limitations and the owner's decision: no further team experiment is needed
 for this refusal delivery. These macOS results do not prove Linux or Windows
 behavior or every possible configuration unsafe. Command-sandbox loopback
-claims now disclose macOS all-interface binds; caller-selected port restrictions
-are tracked by LAH-40.
+claims now disclose macOS all-interface binds; selected-port requests are
+refused on every platform (see [Selected loopback ports](#selected-loopback-ports)).
 
 A process the agent starts in the background, such as that server, is
 stopped when the session closes (see Process containment below).

@@ -42,9 +42,16 @@ type Commands struct {
 	Loopback bool
 	// LoopbackLocalOnly requires Loopback; unsupported for workbench sessions.
 	LoopbackLocalOnly bool
-	Read              []string
-	Env               []string
-	Timeout           time.Duration
+	// LoopbackPorts requests 1–32 selected ports (1–65535); nil leaves Loopback unchanged.
+	// Selected-port confinement is refused before discovery or launch on every platform.
+	LoopbackPorts []int
+	// LoopbackControl is an off-machine IP literal for a selected-port proof.
+	// It requires LoopbackPorts; no proof is currently offered.
+	LoopbackControl string
+
+	Read    []string
+	Env     []string
+	Timeout time.Duration
 }
 
 // The workbench's tool names. All six are reserved whenever a workbench is
@@ -88,6 +95,9 @@ func refuseCLIWorkbench(o Options) error {
 // RuntimeHome and the reserved tool names. It runs after RuntimeHome and
 // the caller's tools are normalized.
 func normalizeWorkbench(o Options) (Options, error) {
+	if err := refuseSelectedPorts(o); err != nil {
+		return o, err
+	}
 	if o.Workbench == nil {
 		return o, nil
 	}

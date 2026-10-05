@@ -53,6 +53,13 @@ type Sandbox struct {
 	Loopback bool
 	// LoopbackLocalOnly requires Loopback and refuses unproved local-only binds.
 	LoopbackLocalOnly bool
+	// LoopbackPorts requests 1–32 selected ports (1–65535); nil leaves Loopback unchanged.
+	// Selected-port confinement is refused before discovery or launch on every platform.
+	LoopbackPorts []int
+	// LoopbackControl is an off-machine IP literal for a selected-port proof.
+	// It requires LoopbackPorts; no proof is currently offered.
+	LoopbackControl string
+
 	// Tools adds the caller's tools beside the session's own, served through
 	// the same bridge and tool channel a restricted session uses, with the same
 	// lease, launch record and reclamation. Its Dir must lie outside WorkDir.
@@ -94,6 +101,9 @@ func sandboxReadDirs(dirs []string) ([]string, string) { return sandboxbridge.Re
 // sandbox would otherwise have to silently override. o.Policy is the caller's,
 // before defaults are applied.
 func normalizeSandbox(o Options) (Options, error) {
+	if err := refuseSelectedPorts(o); err != nil {
+		return o, err
+	}
 	if o.Sandbox.LoopbackLocalOnly {
 		if !o.Sandbox.Loopback {
 			return o, refuse(o, "loopback", RefusedConflict, "LoopbackLocalOnly requires Loopback")
@@ -320,6 +330,9 @@ func prepareCodexSandbox(ctx context.Context, o Options, l *launch) error {
 // a session with this sandbox. Start and Resume run the same check; this lets
 // a caller report readiness before any work is asked for.
 func VerifySandbox(ctx context.Context, o Options) error {
+	if err := refuseSelectedPorts(o); err != nil {
+		return err
+	}
 	if o.Sandbox == nil {
 		return refuse(o, "sandbox", RefusedNotConfigured, "options carry no sandbox to verify")
 	}

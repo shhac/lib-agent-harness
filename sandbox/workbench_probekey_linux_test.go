@@ -93,7 +93,11 @@ func TestWorkbenchProofKeyLegacyPayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := workbenchLinuxProbeKey(o, binary, "0.8.0", w)
+	normalized, err := normalizeNetwork(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := workbenchLinuxProbeKey(normalized, binary, "0.8.0", w)
 	if err != nil {
 		t.Fatal(err)
 	}

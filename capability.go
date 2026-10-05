@@ -98,6 +98,8 @@ const (
 	// Standalone Linux sandbox.Open proves private namespace loopback; native
 	// and workbench sessions do not offer this stricter request.
 	LoopbackLocalOnly Feature = "loopback_local_only"
+	// LoopbackPorts requests selected-port loopback confinement; unsupported everywhere.
+	LoopbackPorts Feature = "loopback_ports"
 	// Browser: the browser integration the harness itself ships, switched on
 	// for this invocation. Off unless asked for.
 	Browser Feature = "browser"
@@ -123,6 +125,9 @@ type supportKey struct {
 // promoted only by evidence from the installed harness; nothing promotes past
 // this table. A caller asks it instead of comparing engine names.
 func Support(e Engine, op Operation, f Feature) Capability {
+	if f == LoopbackPorts {
+		return loopbackPortsSupport(e, op, runtime.GOOS)
+	}
 	if e.Transport() == "" {
 		return Capability{Unsupported, "unrecognized engine"}
 	}
@@ -438,7 +443,52 @@ const LoopbackLocalOnlySeatbeltReason = "loopback_local_only_unenforceable: Seat
 const claudeLoopbackExposureReason = "macOS Claude Loopback is proved at launch by localhost reach and bind plus outbound off-machine refusal; LAH-39 real-Seatbelt evidence shows allowLocalBinding (local ip *:*) admits binds and inbound connections on every local interface, so 0.0.0.0 and LAN listeners may be reachable from other machines; no local-only claim; interface-address TCP bind, UDP bind and UDP send diagnostics record observations or unavailable measurements without gating the base proof"
 
 // ClaudeLinuxHostLoopbackReason names requests outside the owner-observed
-// per-command contract. LAH-40 owns selected-host-port refusal when it is added.
+// per-command contract, including selected host-port requests.
 const ClaudeLinuxHostLoopbackReason = "claude_linux_host_loopback_unavailable: Claude Linux sessions offer per-command loopback; the host's and other commands' servers are outside this contract"
 
 const claudeLinuxLoopbackReason = "Claude Linux offers per-command loopback: a command can reach servers it starts itself; the host's and other commands' servers are outside this contract; owner-observed Ubuntu 24.04.5 / bubblewrap 0.9.0 / Claude Code 2.1.289 proved in-command reach and bind with host localhost unreachable and outbound off-machine traffic refused; proved before launch, host-shared scope refused; host-interface bind confinement remains unproved, no local-only claim; socat is required"
+
+// LoopbackPortsSeatbeltReason names the unproved macOS selected-port boundary.
+const LoopbackPortsSeatbeltReason = "loopback_ports_unenforceable: Seatbelt per-port rules can name only localhost, which admits TCP/UDP binds on every local interface (owner-run Darwin 27 evidence, LAH-39); selected ports cannot be confined to loopback on macOS; " + loopbackPortsAlternative
+
+const loopbackPortsAlternative = "use Loopback via a separate sandbox.Open command sandbox on macOS or Linux for servers started inside the command; command sandboxing is unavailable on Windows and other platforms"
+
+const loopbackPortsPrivateNamespaceReason = "private per-command loopback has no per-port filter; " + loopbackPortsAlternative
+
+func loopbackPortsSupport(e Engine, op Operation, goos string) Capability {
+	reason := "selected loopback ports are not proved for this engine, operation and platform"
+	if op == Run {
+		reason = "native runs have no proved per-port sandbox"
+	} else if op == Session {
+		switch e {
+		case OpenAICompatible:
+			switch goos {
+			case "darwin":
+				return Capability{Unsupported, LoopbackPortsSeatbeltReason}
+			case "linux":
+				return Capability{Unsupported, loopbackPortsPrivateNamespaceReason}
+			default:
+				reason = "selected loopback ports require proved OS enforcement"
+			}
+		case Claude:
+			switch goos {
+			case "linux":
+				reason = ClaudeLinuxHostLoopbackReason
+			default:
+				reason = "Claude Code offers only yes/no allowLocalBinding"
+			}
+		case Codex:
+			reason = "Codex native loopback is unsupported; no per-port enforcement proof"
+		case Grok:
+			reason = "Grok sessions have no proven OS sandbox"
+		case CommandCode:
+			reason = "Command Code sessions have no proven OS sandbox"
+		}
+	}
+	if goos == "darwin" && op == Session {
+		// Preserve each engine's limitation while explaining the common macOS
+		// refusal code. No native engine gains a Seatbelt enforcement claim.
+		return Capability{Unsupported, reason + "; " + LoopbackPortsSeatbeltReason}
+	}
+	return Capability{Unsupported, reason + "; " + loopbackPortsAlternative}
+}

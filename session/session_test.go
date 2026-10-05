@@ -68,7 +68,9 @@ func notify(s *Session, text string) {
 }
 func testContext(t *testing.T) context.Context {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	// This bounds hung fixtures, rather than asserting startup performance.
+	// A scenario may launch several race-instrumented children sequentially.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancel)
 	return ctx
 }

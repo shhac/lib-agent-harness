@@ -238,6 +238,8 @@ func TestInspectCancellationTerminatesCLI(t *testing.T) {
 				}
 			}
 			cancel()
+			// Cancellation also kills the child: its signal/EOF notification
+			// may race the request's context case, but must not replace it.
 			select {
 			case err := <-done:
 				if !errors.Is(err, context.Canceled) {

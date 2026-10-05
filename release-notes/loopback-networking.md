@@ -18,7 +18,8 @@ the four owner experiments from the team's refused sandbox prerequisite and
 records missing app-server readback and untested platforms. The owner directs
 retaining the refusal and states: "No further team experiment is needed."
 No claim is made about every possible configuration or untested platforms.
-Selected-port restrictions are tracked by LAH-40; after-landing native experiments stay
+Selected-port requests are refused everywhere by LAH-40 (see
+[selected-port release notes](selected-loopback-ports.md)); native experiments stay
 in the owner's checklist.
 
 
@@ -51,7 +52,7 @@ the Linux proof key and session power digest.
 crew-assistant follow-up: check_loopback and CA-79 must show the all-interface
 macOS wording and allow a per-project choice of local-only (refused on macOS)
 or all-interfaces. Reference the field, Feature and refusal above.
-LAH-40 must retain the macOS selected-port refusal. No release tag or consumer-app change is made here.
+LAH-40 retains the named macOS selected-port refusal; LAH-43 owns the kept test-only canary. No release tag or consumer-app change is made here.
 
 The macOS interface client uses base-system /usr/bin/perl; it does not invoke
 the Xcode python3 shim or require developer tools. Interface witnesses try
@@ -119,8 +120,8 @@ Named refusals:
 - `sandbox_not_enforced` with reason `session.ClaudeLinuxLoopbackScopeWiderThanClaimed`
   when a proof observes host-shared loopback.
 - `harness.ClaudeLinuxHostLoopbackReason` exports
-  `claude_linux_host_loopback_unavailable` for LAH-40's future host-port request;
-  this change does not add LoopbackPorts.
+  `claude_linux_host_loopback_unavailable` for selected host-port requests;
+  the additive LAH-40 API refuses LoopbackPorts before discovery or launch.
 
 This is not breaking for in-command Loopback callers: the earlier production
 host-reach rule could not pass the owner's per-command runtime. No host-reach

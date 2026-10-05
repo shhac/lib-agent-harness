@@ -106,7 +106,7 @@ const (
 func refusalFamily(code string) harness.Family {
 	switch code {
 	case RefusedEngine, RefusedOtherEnginePolicy, RefusedEnvManaged, RefusedConflict, RefusedModelRequired,
-		RefusedModelWithoutTools, RefusedSandboxTool, RefusedNotNative, RefusedMethodMissing, RefusedNotOffered, RefusedLoopbackNotLocal:
+		RefusedModelWithoutTools, RefusedSandboxTool, RefusedNotNative, RefusedMethodMissing, RefusedNotOffered, RefusedLoopbackNotLocal, RefusedLoopbackPortsUnenforceable:
 		return harness.FailureCapability
 	}
 	return harness.FailurePreflight
@@ -382,3 +382,6 @@ func capabilityProofStep(step string) string {
 
 // RefusedLoopbackNotLocal identifies unprovable local-only loopback.
 const RefusedLoopbackNotLocal = "loopback_local_only_unenforceable"
+
+// RefusedLoopbackPortsUnenforceable identifies unprovable selected-port loopback binds.
+const RefusedLoopbackPortsUnenforceable = "loopback_ports_unenforceable"

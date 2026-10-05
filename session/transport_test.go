@@ -164,8 +164,7 @@ func TestNativePipeStartResumeAndPermissionDenial(t *testing.T) {
 func TestMalformedProcessOutputStopsStartup(t *testing.T) {
 	t.Setenv("LIB_HARNESS_SESSION_FIXTURE", "1")
 	t.Setenv("LIB_HARNESS_SESSION_MODE", "bad-json")
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
+	ctx := testContext(t)
 	s, err := Start(ctx, Options{Provider: harness.Provider{Engine: harness.Codex, CLI: harness.CLI{Binary: os.Args[0], Home: t.TempDir()}}, WorkDir: t.TempDir()})
 	if s != nil {
 		s.Close()

@@ -21,8 +21,15 @@ type CommandSandboxOptions struct {
 	Loopback bool
 	// LoopbackLocalOnly requires Loopback and proves private loopback networking.
 	LoopbackLocalOnly bool
-	Timeout           time.Duration
-	Background        bool
+	// LoopbackPorts requests 1–32 selected ports (1–65535); nil leaves Loopback unchanged.
+	// Selected-port confinement is refused before discovery or launch on every platform.
+	LoopbackPorts []int
+	// LoopbackControl is an off-machine IP literal for a selected-port proof.
+	// It requires LoopbackPorts; no proof is currently offered.
+	LoopbackControl string
+
+	Timeout    time.Duration
+	Background bool
 }
 
 // CommandRequest selects a shell command.
@@ -73,7 +80,7 @@ var commandSandboxTranslation = Options{Provider: harness.Provider{Engine: harne
 //
 // Deprecated: use sandbox.Open.
 func OpenCommandSandbox(ctx context.Context, o CommandSandboxOptions) (*CommandSandbox, error) {
-	s, err := sandbox.Open(ctx, sandbox.Options{WorkDir: o.WorkDir, RuntimeHome: o.RuntimeHome, Write: o.Write, Read: o.Read, Env: o.Env, Loopback: o.Loopback, LoopbackLocalOnly: o.LoopbackLocalOnly, Timeout: o.Timeout, Background: o.Background})
+	s, err := sandbox.Open(ctx, sandbox.Options{WorkDir: o.WorkDir, RuntimeHome: o.RuntimeHome, Write: o.Write, Read: o.Read, Env: o.Env, Loopback: o.Loopback, LoopbackLocalOnly: o.LoopbackLocalOnly, LoopbackPorts: o.LoopbackPorts, LoopbackControl: o.LoopbackControl, Timeout: o.Timeout, Background: o.Background})
 	if err != nil {
 		return nil, fromSandbox(err, commandSandboxTranslation)
 	}

@@ -18,7 +18,8 @@ Existing closed-network sessions, their filesystem restrictions, native tools,
 login reconciliation and browser confinement are unchanged. Command-sandbox
 loopback availability is unchanged: macOS all-interface bind/inbound access and
 Linux per-command private loopback remain separate contracts (see LAH-39 below).
-Selected ports now belong to LAH-40 (re-landing reverted LAH-24);
+Selected-port requests are now refused everywhere by LAH-40
+([contract](2026-10-04-selected-loopback-ports.md)); LAH-43 restores the test-only canary;
 read allow-lists and access requests belong to LAH-21/LAH-22. LAH-18 and LAH-23
 are recorded as landed; no ordering decision or additional split is needed.
 
@@ -195,8 +196,8 @@ used as sufficient evidence for future loopback. Cancellation and incomplete
 observations must not publish success. Retain private-login, process-identity,
 recovery and browser safeguards.
 
-LAH-40 can use these address semantics and port-53 proof requirements, but must
-not assume native loopback is established. Strict native validation on macOS,
+LAH-43 uses these address semantics and port-53 proof requirements for its
+test-only canary; native loopback is not established by them. Strict native validation on macOS,
 both Linux bubblewrap versions and Windows remains separate from sandboxed
 test skips and cross-compilation.
 
@@ -307,7 +308,7 @@ for Claude allowLocalBinding (*:*). Runtime observations take precedence.
 | Workbench run_command | Affected; same profile/proof, corrected Support and docs |
 | Native Codex loopback, LAH-19 | Not affected; already Unsupported, no enabled rule |
 | Claude Sandbox.Loopback | allowLocalBinding uses *:*; offered after the base nc proof; all-interface exposure from LAH-39; optional interface measurements may be unavailable |
-| Selected ports, LAH-40 | No proved local-only Seatbelt form; retain named macOS refusal |
+| Selected ports, LAH-40 | Refused: `loopback_ports_unenforceable`; no proved local-only Seatbelt form |
 
 ### Strict requests and proof settlement
 
@@ -331,17 +332,20 @@ Shared implementation: loopback_interfaces.go enumerates non-loopback
 addresses (including scoped IPv6 link-local, excluding loopback interfaces), builds interfaceAttempt lists,
 and judges structured results. loopback_interfaces_unix.go hosts the
 errno-reporting base-system Perl client on macOS and Python client on Linux. interfaceLoopbackOnly rejects any non-denied,
-available attempt (including errno 65), for LAH-40 reuse;
+available attempt (including errno 65), for LAH-43 test-only reuse;
 interfaceAllLocal records the allowed macOS exposure;
 interfacePrivateNamespace requires EADDRNOTAVAIL for Linux host binds.
 Only EPERM and EACCES count as authorization denials.
 
-LAH-40 handoff: no tested Seatbelt form confines binds to loopback on Darwin
-27; retain the named macOS selected-port refusal. Reuse
+LAH-40 applies the finding: no tested Seatbelt form confines binds to
+loopback on Darwin 27, so macOS selected ports are refused before discovery
+or launch with `loopback_ports_unenforceable`. Linux retains the private
+per-command no-per-port-filter refusal; Windows is also unsupported.
+Every reason points to plain Loopback for in-command servers where offered.
+LAH-43 restores the selected-port test-only canary using
 `interfaceAttemptsAtPort`, `judgeInterfaceAttempts` with `interfaceLoopbackOnly`,
-and the Perl `interfaceCanary`. This record is the repository handoff; the
-available task-note API writes only LAH-39, so copying it into LAH-40's own
-notes remains an owner/team action after landing.
+and the Perl `interfaceCanary`. See the
+[selected-port record](2026-10-04-selected-loopback-ports.md) for the agreed split.
 
 The macOS general canary includes wildcard and interface TCP bind+listen,
 UDP bind and UDP-send attempts, plus the prior loopback/off-machine witnesses.
@@ -483,7 +487,7 @@ host-shared scope so a future re-audit sees the actual behavior. A command can
 start a server and call it itself, including a test runner using httptest.
 The host's and other commands' servers are outside this contract; no host-port
 bridge is added. `harness.ClaudeLinuxHostLoopbackReason` exports the stable named
-host-reachability reason for LAH-40's future LoopbackPorts refusal. Native
+host-reachability reason for the LoopbackPorts refusal. Native
 LoopbackLocalOnly remains Unsupported: private command evidence is not proof
 of native host-interface bind confinement.
 

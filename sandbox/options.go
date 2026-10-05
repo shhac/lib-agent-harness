@@ -23,9 +23,16 @@ type Options struct {
 	Loopback bool
 	// LoopbackLocalOnly requires Loopback and proves private loopback networking.
 	LoopbackLocalOnly bool
-	Timeout           time.Duration
-	Background        bool
-	system            []string
+	// LoopbackPorts requests 1–32 selected ports (1–65535); nil leaves Loopback unchanged.
+	// Selected-port confinement is refused before discovery or launch on every platform.
+	LoopbackPorts []int
+	// LoopbackControl is an off-machine IP literal for a selected-port proof.
+	// It requires LoopbackPorts; no proof is currently offered.
+	LoopbackControl string
+
+	Timeout    time.Duration
+	Background bool
+	system     []string
 }
 
 func platformRefusal() error {
@@ -33,6 +40,10 @@ func platformRefusal() error {
 }
 
 func normalize(o Options, standalone bool) (Options, error) {
+	var networkErr error
+	if o, networkErr = normalizeNetwork(o); networkErr != nil {
+		return o, networkErr
+	}
 	if o.LoopbackLocalOnly {
 		if !o.Loopback {
 			return o, refusal("loopback", RefusedConflict, "LoopbackLocalOnly requires Loopback")
