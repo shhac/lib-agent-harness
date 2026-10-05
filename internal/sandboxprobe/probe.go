@@ -67,7 +67,11 @@ func OffMachineWitness(ctx context.Context) (string, bool) {
 
 // CountingListener accepts and closes connections, recording that one came.
 func CountingListener(address string) (net.Listener, *sync.WaitGroup, func() bool, error) {
-	listener, err := net.Listen("tcp", address)
+	return CountingListenerNetwork("tcp", address)
+}
+
+func CountingListenerNetwork(network, address string) (net.Listener, *sync.WaitGroup, func() bool, error) {
+	listener, err := net.Listen(network, address)
 	if err != nil {
 		return nil, nil, nil, err
 	}

@@ -61,6 +61,7 @@ func proveOptions(ctx context.Context, o Options, prove func(context.Context, Op
 
 func (p Proof) withRequest(o Options) Proof {
 	o.Read, o.Env = slices.Clone(o.Read), slices.Clone(o.Env)
+	o.LoopbackPorts = slices.Clone(o.LoopbackPorts)
 	p.request = &o
 	return p
 }

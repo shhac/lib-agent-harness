@@ -64,8 +64,8 @@ Validation is pure and ordered identically on every platform:
 
 No interface or resolver discovery is performed. A syntactically valid control
 is still refused; whether that literal belongs to this machine is irrelevant
-until an enforcement proof is offered. LAH-43 owns control discovery and its
-off-machine witness. No caller-controlled hostname is resolved.
+until an enforcement proof is offered. The test-only LAH-43 canary owns control
+discovery and its off-machine witness. No caller-controlled hostname is resolved.
 
 The clone does not share the caller's backing array or global state. Mutations
 after normalization cannot change the evaluated list. As with any Go slice,
@@ -85,9 +85,14 @@ platforms; nothing needs cleanup after refusal.
 
 No proof, reference or cache entry is produced for selected ports. With nil
 ports and an empty control, existing profiles, proof-key payloads and resume
-digests remain byte-identical. No selected-port key or digest wrapper is added
-in part A. Normal callers need no migration; this is an additive release with
-no consumer-app updates, release tag or publication.
+digests remain byte-identical. Part B restores wrappers only for non-nil ports,
+separating evidence by ports, control and a versioned per-port template. The
+runner freezes a ports clone and refuses mutated requests before preparing state.
+Callers using keyed error literals need no migration. Adding private control
+metadata to the exported `sandbox.ProofError` breaks external unkeyed literals;
+use keyed literals instead. A release containing this change must identify that
+source-compatibility break. This task makes no consumer-app updates, release tag
+or publication.
 
 ## Verification and follow-up
 
@@ -105,15 +110,58 @@ harness invocation or login files.
 expect the named macOS refusal without prerequisites and never skip, including
 under `AGENT_HARNESS_TEST_NO_SKIP=1` and inside sandboxcheck.
 
-LAH-43 (part B) re-lands the selected-port Stage A/B canary, off-machine control,
-DNS checks, interface/wildcard attempts, loopbackcontrol helper, CI control pin,
-proof-key/digest wrappers and strict expect-escape test. It uses the existing
-`interfaceAttemptsAtPort`, `interfaceCanary` and
-`judgeInterfaceAttempts(interfaceLoopbackOnly)` helpers. These are deliberately
-outside this landing, as agreed by the owner. A future enablement requires
+LAH-43 (part B) retains the selected-port Stage A/B canary from `4b7e9d6` in a
+Darwin `sandbox/loopback_ports_canary_darwin_test.go` file, rather than a
+production `loopback_ports_darwin.go`. Production normalization refuses before discovery; the
+production proof entry supplies no selected-port stage and also refuses non-nil
+ports. Tests inject the retained stage directly. There are no new exported API
+members or `harness.Support` changes; network-control metadata stays private,
+with the error-literal source-compatibility caveat above.
+
+Stage A checks disposable selected-port bind/reach and host inbound receipts,
+unselected ports including 8340, a proved off-machine DNS control and TCP witness.
+Stage B keeps the exact requested list and never contacts an occupied selected
+port. The socket helpers retain their `xcode-select` guard. Interface and wildcard
+binds, UDP binds and sends run separately through shared `InterfaceAttemptsAtPort`,
+`interfaceCanary` and `judgeInterfaceAttempts(interfaceLoopbackOnly)`.
+An `interfaceAllLocal` parse preserves observations even when the restriction
+judge returns an escape with no observations. TCP interface connects retain
+their host witness and target only concrete interface addresses. Unspecified
+destinations (`0.0.0.0` and `::`) are omitted from TCP reach attempts because the
+kernel redirects them to permitted loopback, which would falsely report escape.
+Wildcard bind attempts remain in the shared interface stage. Shared Perl/Python
+clients and pinned bytes are unchanged.
+
+`proveWorkbenchStages` clears ports/control for the base proof, serializes only
+identical keys, then publishes network evidence once after both stages settle
+and the context remains live. Control metadata is private on `networkEvidence`
+and `ProofError`, never in `HarnessFacts`. Cancellation gives `probe_timed_out`;
+a missing control gives `control_deadline` or `no_off_machine_resolver`, and
+missing developer tools/Python readiness gives `port_client_unavailable`.
+No failure publishes evidence; listeners and disposable scratch settle through
+defers. Cache entries are process-local only, and reset clears network evidence
+as well as keys. Selected ports and controls cannot share evidence.
+
+macOS CI pins `AGENT_HARNESS_TEST_LOOPBACK_CONTROL` using
+`go run ./internal/cmd/loopbackcontrol`: it proves a configured resolver with a
+matching UDP DNS reply and TCP connection, with no fixed public fallback.
+`TestSelectedPortCanaryStillEscapes` uses real Seatbelt and requires
+`sandbox_not_enforced / selected_port_network` with interface observations.
+A successful canary or a different failure produces a **re-audit** failure.
+Missing prerequisites may skip only outside `AGENT_HARNESS_TEST_NO_SKIP=1`.
+The existing public refusal test remains unconditional.
+
+A future enablement requires
 positive selected-port availability and denial of unselected ports, interface
 binds, interface UDP sends and off-machine traffic; it must first pass real
 installed-runtime proof. No refusal can be promoted by skips or fixture echoes.
+
+The task note identifies the exact draft revision for the owner's unsandboxed
+macOS and Ubuntu 24.04 / bubblewrap 0.9.0 runs:
+`AGENT_HARNESS_TEST_NO_SKIP=1 go test -race -count=1 ./...` and
+`go run ./internal/cmd/sandboxcheck --no-skip`, with the macOS control pinned as
+above. Exit codes and verbatim canary/escape outcomes remain distinct runtime
+evidence from CI and do not replace team-runnable checks.
 
 Validation commands: `go vet ./...`, `go test -race ./...`, CGO-free Linux and
 Windows vet/test cross-compilation, and the project's daemon check. CI runs

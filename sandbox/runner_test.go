@@ -10,6 +10,19 @@ import (
 	"time"
 )
 
+func TestRunnerFreezesSelectedPorts(t *testing.T) {
+	o := Options{Loopback: true, LoopbackPorts: []int{3000}}
+	frozen := o
+	frozen.LoopbackPorts = []int{3000}
+	p := (Proof{system: []string{"/system"}, options: frozen}).withRequest(o)
+	o.LoopbackPorts[0] = 8080
+	_, err := NewRunner(o, p, t.TempDir(), 0)
+	var failure *StateError
+	if !errors.As(err, &failure) || failure.Code != StateUnusable || p.request.LoopbackPorts[0] != 3000 {
+		t.Fatal("mutated ports admitted", err)
+	}
+}
+
 func TestRunnerRequiresMatchingProofBeforeState(t *testing.T) {
 	opts := commandSandboxOptions(t, false)
 	o, err := normalize(opts, true)

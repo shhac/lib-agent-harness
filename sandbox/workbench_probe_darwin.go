@@ -4,16 +4,19 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/process"
 )
 
@@ -30,6 +33,19 @@ func proveWorkbenchUsing(ctx context.Context, o Options, probe func(context.Cont
 	return proveWorkbenchWithEvidence(ctx, o, probe, &networkEvidence{})
 }
 func proveWorkbenchWithEvidence(ctx context.Context, o Options, probe func(context.Context, Options, []string) error, evidence *networkEvidence) (Proof, error) {
+	return proveWorkbenchStagesObserved(ctx, o, probe, nil, evidence)
+}
+
+// Selected-port stages are injected only by package tests. Production has no
+// selected-port client and refuses non-nil ports before system discovery.
+func proveWorkbenchStages(ctx context.Context, o Options, probe func(context.Context, Options, []string) error, ports func(context.Context, Options, []string) (selectedPortEvidence, error)) (Proof, error) {
+	return proveWorkbenchStagesObserved(ctx, o, probe, ports, &networkEvidence{})
+}
+func proveWorkbenchStagesObserved(ctx context.Context, o Options, probe func(context.Context, Options, []string) error, ports func(context.Context, Options, []string) (selectedPortEvidence, error), evidence *networkEvidence) (Proof, error) {
+	if o.LoopbackPorts != nil && ports == nil {
+		return Proof{}, refusal("loopback_ports", RefusedLoopbackPortsUnenforceable, harness.LoopbackPortsSeatbeltReason)
+	}
+	o.LoopbackPorts = slices.Clone(o.LoopbackPorts)
 	if _, err := os.Stat("/usr/bin/sandbox-exec"); err != nil {
 		e := workbenchCapability(CapabilitySandboxToolMissing)
 		e.Tools = []string{"sandbox-exec"}
@@ -64,15 +80,40 @@ func proveWorkbenchWithEvidence(ctx context.Context, o Options, probe func(conte
 	if e, ok := verified.settledNetwork(key); ok {
 		return Proof{system: system, binary: "/usr/bin/sandbox-exec", identity: identity, options: o, key: key, networkObservations: e.Observations, networkDetail: e.Detail}, nil
 	}
-	if err = probe(ctx, o, system); err != nil {
+	base := o
+	base.LoopbackPorts, base.LoopbackControl = nil, ""
+	if err = probe(ctx, base, system); err != nil {
 		if ctx.Err() != nil {
 			return Proof{}, executionProofError(ctx, "", err)
 		}
 		return Proof{}, err
 	}
+	if o.LoopbackPorts != nil && ctx.Err() != nil {
+		return Proof{}, &ProofError{Code: CapabilityProbeTimeout, Step: proofStepSelectedPortNetwork}
+	}
+	if o.LoopbackPorts != nil {
+		selected, stageErr := ports(ctx, o, system)
+		evidence.control, evidence.Observations = selected.control, selected.observations
+		if ctx.Err() != nil {
+			stageErr = &ProofError{Code: CapabilityProbeTimeout, Step: proofStepSelectedPortNetwork}
+		}
+		if stageErr != nil {
+			var failure *ProofError
+			if errors.As(stageErr, &failure) {
+				failure.controlAddr, failure.controlSource = selected.control.Addr, selected.control.Source
+				if failure.Step == "" {
+					failure.Step = proofStepSelectedPortNetwork
+				}
+			}
+			return Proof{}, stageErr
+		}
+	}
 	// A successful observation is not evidence if deferred cleanup or the
 	// final observation delay consumed the caller's deadline.
 	if ctx.Err() != nil {
+		if o.LoopbackPorts != nil {
+			return Proof{}, &ProofError{Code: CapabilityProbeTimeout, Step: proofStepSelectedPortNetwork, controlAddr: evidence.control.Addr, controlSource: evidence.control.Source}
+		}
 		return Proof{}, executionProofError(ctx, "", ctx.Err())
 	}
 	verified.recordWithNetwork(key, *evidence)
@@ -406,9 +447,10 @@ func probeWorkbenchObserved(ctx context.Context, o Options, system []string, evi
 }
 
 type workbenchInboundProbe struct {
-	Host  string
-	Port  int
-	Nonce string
+	Host    string
+	Port    int
+	Nonce   string
+	Message string
 }
 
 func runWorkbenchProbe(ctx context.Context, l workbenchLayout, script string, expectBackground bool, inbound workbenchInboundProbe) (string, error) {
@@ -459,7 +501,10 @@ func runWorkbenchProbe(ctx context.Context, l workbenchLayout, script string, ex
 			for {
 				conn, e := net.DialTimeout("tcp", net.JoinHostPort(inbound.host(), strconv.Itoa(inbound.Port)), 100*time.Millisecond)
 				if e == nil {
-					_ = conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+					_ = conn.SetDeadline(time.Now().Add(200 * time.Millisecond))
+					if inbound.Message != "" {
+						_, _ = io.WriteString(conn, inbound.Message)
+					}
 					line, readErr := bufio.NewReader(io.LimitReader(conn, 64)).ReadString('\n')
 					conn.Close()
 					if readErr == nil && line == inbound.Nonce+"\n" {

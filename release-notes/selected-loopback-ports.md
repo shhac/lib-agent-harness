@@ -1,4 +1,4 @@
-# Selected loopback port requests (unreleased; additive)
+# Selected loopback port requests (unreleased; source compatibility note)
 
 Adds Feature `harness.LoopbackPorts` (`"loopback_ports"`) and fields
 `LoopbackPorts []int` / `LoopbackControl string` on `sandbox.Options`,
@@ -26,9 +26,15 @@ command and cannot reach host ports. No enforcement or existing Loopback behavio
 changes. Invalid requests have deterministic limit/conflict errors everywhere.
 
 Nil-port profiles, proof keys and resume digests are unchanged. No consumer
-migration, consumer-app change, release tag or publication is required here.
-The owner-approved follow-up LAH-43 restores the test-only selected-port canary
+migration for keyed error literals, consumer-app change, release tag or publication
+is required here.
+LAH-43 restores the test-only selected-port canary
 and interface escape attempts; it cannot enable production support.
+The retained macOS escape canary adds no exported API. Private control metadata
+fields added to `sandbox.ProofError` do change source compatibility: external
+unkeyed literals no longer compile. Use keyed literals such as
+`&sandbox.ProofError{Code: code, Step: step}`. Any release containing this change
+must identify that source break; no release is tagged or published by this task.
 See the [design record](../design-docs/2026-10-04-selected-loopback-ports.md)
 for the complete reason matrix, validation order and proof requirements.
 

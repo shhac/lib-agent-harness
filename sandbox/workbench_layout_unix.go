@@ -9,6 +9,7 @@ import (
 )
 
 type workbenchLayout struct {
+	LoopbackPorts   []int
 	Work, Home, Tmp string
 	Read, System    []string
 	Write, Loopback bool

@@ -124,3 +124,17 @@ func TestNilSelectedPortsDigestUnchanged(t *testing.T) {
 		t.Fatalf("nil ports changed legacy digest: %s %v", digest, err)
 	}
 }
+
+func TestSelectedPortsDigestWrapper(t *testing.T) {
+	o := Options{WorkDir: "/work", Workbench: &Workbench{Commands: &Commands{Loopback: true, LoopbackPorts: []int{3000}}}}
+	first, err := json.Marshal(workbenchDigest(o))
+	const golden = `{"Base":{"WorkDir":"/work","Write":false,"Commands":true,"Loopback":true,"Read":null},"LoopbackPorts":[3000]}`
+	if err != nil || string(first) != golden {
+		t.Fatalf("selected wrapper: %s %v", first, err)
+	}
+	o.Workbench.Commands.LoopbackPorts[0] = 8080
+	second, err := json.Marshal(workbenchDigest(o))
+	if err != nil || string(first) == string(second) {
+		t.Fatal("selected ports share digest", err)
+	}
+}

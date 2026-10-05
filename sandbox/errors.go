@@ -66,9 +66,10 @@ func refusal(operation, code, reason string) *RefusalError {
 
 // ProofError reports a failed pre-launch OS sandbox proof, without runtime output.
 type ProofError struct {
-	Code  string
-	Tools []string
-	Step  string
+	controlAddr, controlSource string
+	Code                       string
+	Tools                      []string
+	Step                       string
 }
 
 const (
@@ -78,9 +79,26 @@ const (
 	ProofStepJudgment = "execution_judgment"
 )
 
+const (
+	proofStepSelectedPortNetwork         = "selected_port_network"
+	proofStepPortClientUnavailable       = "port_client_unavailable"
+	proofStepIPv6ControlUnavailable      = "ipv6_control_unavailable"
+	proofStepControlDeadline             = "control_deadline"
+	proofStepControlOnThisMachine        = "control_on_this_machine"
+	proofStepControlInvalidIP            = "control_invalid_ip"
+	proofStepControlInterfaceUnavailable = "control_interface_unavailable"
+	proofStepNoOffMachineResolver        = "no_off_machine_resolver"
+	proofStepUDPUnanswered               = "udp_unanswered"
+	proofStepTCPUnanswered               = "tcp_unanswered"
+)
+
 func proofStep(step string) string {
 	switch step {
-	case ProofStepFixture, ProofStepOutside, ProofStepLaunch, ProofStepJudgment:
+	case ProofStepFixture, ProofStepOutside, ProofStepLaunch, ProofStepJudgment,
+		proofStepSelectedPortNetwork, proofStepPortClientUnavailable, proofStepIPv6ControlUnavailable,
+		proofStepControlDeadline, proofStepControlOnThisMachine, proofStepControlInvalidIP,
+		proofStepControlInterfaceUnavailable, proofStepNoOffMachineResolver,
+		proofStepUDPUnanswered, proofStepTCPUnanswered:
 		return step
 	}
 	return ""

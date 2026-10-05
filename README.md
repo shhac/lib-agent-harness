@@ -1179,10 +1179,35 @@ write, login preparation, probe, cache entry or launch.
 
 The owner's Darwin 27 evidence and LAH-39 found no Seatbelt rule form that
 confines TCP/UDP binds to loopback. Linux retains reverted LAH-24's truthful
-refusal, whose strict PASS covered refusal tests. The owner-approved part B
-(LAH-43) restores the test-only selected-port canary and interface escape
-attempts; no production support is enabled here. The macOS public refusal
-tests never skip, including under NO_SKIP and sandboxcheck.
+refusal, whose strict PASS covered refusal tests. LAH-43 retains the macOS
+Stage A/B canary from `4b7e9d6` as test-only code: disposable selected ports,
+the exact requested list, inbound receipts, unselected ports and a proved
+off-machine DNS/TCP control. Interface and wildcard binds and UDP sends use
+the shared `InterfaceAttemptsAtPort`, `interfaceCanary` and
+`judgeInterfaceAttempts(interfaceLoopbackOnly)` helpers. Errno 65 is an escape,
+never a permission denial. The Python bind/reach/inbound helpers keep their
+`xcode-select` guard. Production cannot invoke the canary.
+TCP interface reach attempts exclude unspecified destinations (`0.0.0.0` and
+`::`), which the kernel redirects to loopback; wildcard binds remain tested.
+
+`TestSelectedPortCanaryStillEscapes` requires real Seatbelt to report
+`selected_port_network / sandbox_not_enforced` with interface observations.
+A successful canary fails with a **re-audit** message; only missing prerequisites
+can skip, and `AGENT_HARNESS_TEST_NO_SKIP=1` turns those into failures.
+Public refusal tests never skip, including inside sandboxcheck. macOS CI pins
+`AGENT_HARNESS_TEST_LOOPBACK_CONTROL` from `go run ./internal/cmd/loopbackcontrol`,
+which proves a responding configured resolver without choosing a public default.
+Failed or interrupted proofs publish no cache entry. Control address/source
+remain private diagnostics. Selected-port keys and resume digests have distinct
+wrappers; nil-port bytes remain pinned and unchanged.
+Private control fields on `sandbox.ProofError` break external unkeyed literals;
+use keyed literals such as `&sandbox.ProofError{Code: code, Step: step}`.
+
+Enabling selected ports requires positive selected-port bind, reach and inbound
+availability plus denial of unselected ports, interface binds, interface UDP
+sends and off-machine traffic under the installed runtime. CI alone does not
+replace the owner's unsandboxed strict-suite and sandboxcheck runs on macOS and
+Ubuntu; the task note identifies the exact draft revision to run.
 See the [design record](design-docs/2026-10-04-selected-loopback-ports.md)
 and [release notes](release-notes/selected-loopback-ports.md).
 

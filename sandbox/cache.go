@@ -3,6 +3,8 @@ package sandbox
 import (
 	"context"
 	"sync"
+
+	"github.com/shhac/lib-agent-harness/internal/sandboxprobe"
 )
 
 // verified remembers capability checks for this process only. Nothing is
@@ -72,7 +74,13 @@ func (c *verificationCache) recordWithNetwork(key string, evidence networkEviden
 	c.seen[key] = true
 }
 
+type selectedPortEvidence struct {
+	control      sandboxprobe.ControlTarget
+	observations []InterfaceObservation
+}
+
 type networkEvidence struct {
+	control      sandboxprobe.ControlTarget
 	Observations []InterfaceObservation
 	Detail       string
 }

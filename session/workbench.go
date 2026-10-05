@@ -175,6 +175,12 @@ func workbenchDigest(o Options) any {
 			LoopbackLocalOnly bool
 		}{base, true}
 	}
+	if c := o.Workbench.Commands; c != nil && c.LoopbackPorts != nil {
+		powers = struct {
+			Base          any
+			LoopbackPorts []int
+		}{powers, c.LoopbackPorts}
+	}
 	if !o.Workbench.Write {
 		return powers
 	}

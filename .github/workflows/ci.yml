@@ -22,6 +22,12 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Pin selected-port off-machine control
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          control="$(go run ./internal/cmd/loopbackcontrol)"
+          echo "AGENT_HARNESS_TEST_LOOPBACK_CONTROL=$control" >> "$GITHUB_ENV"
       - run: go vet ./...
       - name: Install Linux command sandbox
         if: runner.os == 'Linux'
