@@ -154,7 +154,8 @@ func executionProofError(ctx context.Context, step string, err error) *ProofErro
 			p.Step = old.Step
 		}
 	}
-	if ctx.Err() != nil {
+	// Preserve an observed enforcement breach through outer proof translation.
+	if ctx.Err() != nil && p.Code != CapabilitySandboxNotEnforced {
 		p.Code = CapabilityProbeTimeout
 	}
 	return p

@@ -18,6 +18,12 @@ var ErrClosed = errors.New("harness session closed")
 var ErrCommandFailed = errors.New("harness turn failed")
 
 const (
+	// RefusedProcessInspectionUnenforceable: the platform has no proved target boundary.
+	RefusedProcessInspectionUnenforceable = "process_inspection_unenforceable"
+	// CapabilityProcessInspectionUnavailable: positive process metadata could not be proved.
+	CapabilityProcessInspectionUnavailable = "process_inspection_unavailable"
+	// ProofStepProcessInspection identifies the opt-in own-tree inspection proof.
+	ProofStepProcessInspection = "process_inspection"
 	// RefusedLoopbackPortsUnenforceable: Seatbelt cannot confine selected-port binds to loopback.
 	RefusedLoopbackPortsUnenforceable = "loopback_ports_unenforceable"
 	// CapabilityLoopbackClaimChanged: installed Seatbelt no longer matches the
@@ -55,7 +61,7 @@ func (e *RefusalError) Error() string { return e.Operation + ": " + e.Capability
 func (e *RefusalError) Unwrap() error { return ErrUnsupported }
 func (e *RefusalError) HarnessFacts() harness.Facts {
 	family := harness.FailurePreflight
-	if e.Code == RefusedNotOffered || e.Code == RefusedConflict || e.Code == RefusedLoopbackNotLocal || e.Code == RefusedLoopbackPortsUnenforceable {
+	if e.Code == RefusedNotOffered || e.Code == RefusedConflict || e.Code == RefusedLoopbackNotLocal || e.Code == RefusedLoopbackPortsUnenforceable || e.Code == RefusedProcessInspectionUnenforceable {
 		family = harness.FailureCapability
 	}
 	return harness.Facts{Engine: harness.OpenAICompatible, Operation: harness.Session, Family: family, Code: e.Code}
@@ -94,7 +100,7 @@ const (
 
 func proofStep(step string) string {
 	switch step {
-	case ProofStepFixture, ProofStepOutside, ProofStepLaunch, ProofStepJudgment,
+	case ProofStepProcessInspection, ProofStepFixture, ProofStepOutside, ProofStepLaunch, ProofStepJudgment,
 		proofStepSelectedPortNetwork, proofStepPortClientUnavailable, proofStepIPv6ControlUnavailable,
 		proofStepControlDeadline, proofStepControlOnThisMachine, proofStepControlInvalidIP,
 		proofStepControlInterfaceUnavailable, proofStepNoOffMachineResolver,
@@ -109,16 +115,20 @@ func (e *ProofError) HarnessFacts() harness.Facts {
 }
 func (e *ProofError) Error() string {
 	message := map[string]string{
-		CapabilityLoopbackClaimChanged: "Seatbelt interface bind observations no longer match the all-interface Loopback claim; re-audit the installed runtime",
-		CapabilitySandboxToolMissing:   "the required OS sandbox tool is missing; install a supported runtime",
-		CapabilityProbeTimeout:         "the capability check did not finish in time",
-		CapabilitySandboxUnavailable:   "the installed harness could not be run under the requested sandbox",
-		CapabilitySandboxNotEnforced:   "the installed harness's sandbox allowed writes or network access the session must not have",
+		CapabilityProcessInspectionUnavailable: "the command's own process metadata could not be proved; process inspection is unavailable",
+		CapabilityLoopbackClaimChanged:         "Seatbelt interface bind observations no longer match the all-interface Loopback claim; re-audit the installed runtime",
+		CapabilitySandboxToolMissing:           "the required OS sandbox tool is missing; install a supported runtime",
+		CapabilityProbeTimeout:                 "the capability check did not finish in time",
+		CapabilitySandboxUnavailable:           "the installed harness could not be run under the requested sandbox",
+		CapabilitySandboxNotEnforced:           "the installed harness's sandbox allowed writes or network access the session must not have",
 	}[e.Code]
 	// Keep the legacy no-step wording for existing compatibility translations;
 	// new execution proofs carry their specific step and expanded explanation.
 	if e.Code == CapabilitySandboxNotEnforced && proofStep(e.Step) != "" {
 		message = "the installed harness's sandbox allowed reads, execution, writes or network access the session must not have"
+	}
+	if e.Code == CapabilitySandboxNotEnforced && e.Step == ProofStepProcessInspection {
+		message = "process inspection could see processes outside the command's own tree"
 	}
 	if len(e.Tools) == 1 && e.Tools[0] == "bwrap" {
 		switch e.Code {

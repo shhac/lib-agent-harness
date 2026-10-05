@@ -1,5 +1,9 @@
 ## Standalone command sandbox
 
+Opt-in [process inspection](2026-10-05-process-inspection.md) adds a separate
+pre-launch proof on Linux; macOS currently refuses the request. It grants no
+additional filesystem, execution or network permission.
+
 The sandbox package exposes Open without a model session. Its
 options are WorkDir, RuntimeHome, Write, Read, Env, Loopback, Timeout and
 Background. Run takes CommandRequest{Command, Dir, Timeout} and returns a

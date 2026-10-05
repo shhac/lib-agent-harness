@@ -557,6 +557,54 @@ it starts ends with that command, including background servers.
 `Commands.Loopback` is refused on Linux; a single command may still start
 and request its own server in its private namespace.
 
+### Command process inspection
+
+`sandbox.Options.ProcessInspection` and `session.Commands.ProcessInspection`
+are opt-in requirements. Ask `harness.Support(engine, operation,
+harness.ProcessInspection)` before requesting them:
+
+| Platform / operation | Availability | Boundary / reason |
+| --- | --- | --- |
+| Linux shared runner (OpenAI-compatible Session) | Unknown until proof | Each Run/Start's own tree in its private PID namespace and private `/proc`; separate commands are outside it, even under one Open. |
+| macOS shared runner | Unsupported | `process_inspection_unenforceable`: no same-sandbox process-info/sysctl boundary has been proved. |
+| Windows and other platforms | Unsupported | Process inspection unavailable on this platform. |
+| Native engines, runs and other operations | Unsupported | Shared command evidence does not prove native inspection. |
+
+```go
+c := harness.Support(harness.OpenAICompatible, harness.Session, harness.ProcessInspection)
+if !c.Usable() {
+    return fmt.Errorf("inspection unavailable: %s", c.Reason)
+}
+commands, err := sandbox.Open(ctx, sandbox.Options{
+    WorkDir: workspace, RuntimeHome: privateHome, ProcessInspection: true,
+})
+if err != nil { return err } // Unknown permits an attempt; Open must prove it.
+defer commands.Close()
+result, err := commands.Run(ctx, sandbox.CommandRequest{
+    Command: "sleep 5 & child=$!; ps -o pid,pgid,nice,stat,lstart,command -p $child; wait $child",
+})
+```
+
+The installed `ps` and Linux `/proc` expose PID, PGID, nice, state, start/birth
+identity and command for the command's own tree. Unrelated same-user host
+processes and other command sandboxes remain outside that boundary, including
+their arguments, environment and open files. No filesystem, execution or
+network grant is widened. A disposable pre-launch canary checks a live child
+and an outside fixture carrying random argv, environment and open-file markers.
+The shell namespace must differ from the outside fixture, and its rooted proc
+view must report exactly one NSpid identity. Together these controls establish
+that every visible proc entry belongs to that namespace or its descendants. An
+absent host PID is invisible; a visible numeric collision belongs to this private
+view. Per-entry status checks are sanity checks, not independent isolation proof.
+
+Refusals use `process_inspection_unenforceable`. Proof failures report
+`process_inspection_unavailable`, `sandbox_not_enforced`, or `probe_timed_out`
+with `harness.ErrorFacts(err).ProofStep == "process_inspection"`. Failure never
+downgrades the request or prepares command state. Non-inspection profiles and
+keys are unchanged; inspection adds `bwrap-workbench-v5-process-inspection-v3`
+to Linux proof keys, with fresh proof per Open. See the
+[inspection design and pending evidence](design-docs/2026-10-05-process-inspection.md).
+
 ### Command sandbox
 
 `sandbox.Open` opens the same proved command boundary without a

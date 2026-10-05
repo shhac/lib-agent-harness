@@ -125,6 +125,9 @@ type supportKey struct {
 // promoted only by evidence from the installed harness; nothing promotes past
 // this table. A caller asks it instead of comparing engine names.
 func Support(e Engine, op Operation, f Feature) Capability {
+	if f == ProcessInspection {
+		return processInspectionSupport(e, op, runtime.GOOS)
+	}
 	if f == LoopbackPorts {
 		return loopbackPortsSupport(e, op, runtime.GOOS)
 	}

@@ -1,5 +1,8 @@
 ## The sandbox package
 
+See [process inspection](2026-10-05-process-inspection.md) for the opt-in
+own-command-tree requirement, capability/refusal matrix and evidence inventory.
+
 ## Containment contract, 2026-10-04
 
 On Linux and macOS, `read_file`, `search_files` and `edit_file` are

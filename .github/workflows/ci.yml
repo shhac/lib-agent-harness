@@ -92,6 +92,14 @@ jobs:
           go test -race -count=200 -v ./sandbox -run '^TestWorkbenchHardLinkAndConcurrentSwaps$'
           go test -race -count=1 -v ./sandbox -run '^TestContentToolsRefuseBeforeIO$'
           go test -race -count=1 -v ./session -run '^TestWorkbench(DisabledContentSessionLifecycle|HistoricalContentRecovery)$'
+      - name: Linux process inspection enforcement evidence
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          git rev-parse HEAD
+          uname -a
+          bwrap --version
+          AGENT_HARNESS_TEST_NO_SKIP=1 go test -race -count=1 -v ./sandbox ./session . -run ProcessInspection
       - run: go test -race ./...
       - name: Check the full suite inside the OS command sandbox
         if: runner.os != 'Windows'
@@ -164,4 +172,8 @@ jobs:
           touch "$witness/work/parent/filemount"
           sudo mount --bind "$witness/source" "$witness/work/parent/mount"
           sudo mount --bind "$witness/source/marker" "$witness/work/parent/filemount"
+          git rev-parse HEAD
+          uname -a
+          bwrap --version
+          AGENT_HARNESS_TEST_BIND_MOUNT="$witness/work" AGENT_HARNESS_TEST_NO_SKIP=1 go test -race -count=1 -v ./sandbox ./session . -run ProcessInspection
           AGENT_HARNESS_TEST_BIND_MOUNT="$witness/work" go test -race ./...

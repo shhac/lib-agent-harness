@@ -38,6 +38,8 @@ type Workbench struct {
 
 // Commands configures sandboxed shell execution.
 type Commands struct {
+	// ProcessInspection requires the shared runner's own-tree inspection proof.
+	ProcessInspection bool
 	// Loopback on macOS permits binds and inbound on every local interface.
 	Loopback bool
 	// LoopbackLocalOnly requires Loopback; unsupported for workbench sessions.
@@ -100,6 +102,9 @@ func normalizeWorkbench(o Options) (Options, error) {
 	}
 	if o.Workbench == nil {
 		return o, nil
+	}
+	if c := o.Workbench.Commands; c != nil && c.ProcessInspection && runtime.GOOS != "linux" {
+		return o, &UnsupportedError{Engine: o.Provider.Engine, Operation: "process_inspection", Code: sandbox.RefusedProcessInspectionUnenforceable, Capability: harness.Support(harness.OpenAICompatible, harness.Session, harness.ProcessInspection)}
 	}
 	if o.Workbench.Commands != nil && runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
 		return o, &UnsupportedError{Engine: o.Provider.Engine, Operation: "sandbox", Code: RefusedNotOffered, Capability: harness.Support(o.Provider.Engine, harness.Session, harness.Sandbox)}
@@ -169,11 +174,17 @@ func workbenchDigest(o Options) any {
 		base.Read = c.Read
 	}
 	var powers any = base
+	if c := o.Workbench.Commands; c != nil && c.ProcessInspection {
+		powers = struct {
+			Base              any
+			ProcessInspection bool
+		}{powers, true}
+	}
 	if c := o.Workbench.Commands; c != nil && c.LoopbackLocalOnly {
 		powers = struct {
 			Base              any
 			LoopbackLocalOnly bool
-		}{base, true}
+		}{powers, true}
 	}
 	if c := o.Workbench.Commands; c != nil && c.LoopbackPorts != nil {
 		powers = struct {

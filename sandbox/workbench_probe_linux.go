@@ -28,6 +28,10 @@ type workbenchLinuxProof struct {
 }
 
 func proveWorkbench(ctx context.Context, o Options) (Proof, error) {
+	return proveWorkbenchDiagnosed(ctx, o, nil)
+}
+
+func proveWorkbenchDiagnosed(ctx context.Context, o Options, diagnose func(string, string)) (Proof, error) {
 	ctx, cancel := context.WithTimeout(ctx, sandboxProbeTimeout)
 	defer cancel()
 	// The trial uses disposable paths, before any session state exists.
@@ -59,7 +63,7 @@ func proveWorkbench(ctx context.Context, o Options) (Proof, error) {
 			return Proof{}, refusal("work_dir", RefusedWorkDir, "Linux writable command workspaces require an existing non-symlink .git for the read-only overlay")
 		}
 	}
-	proof, e := probeWorkbenchLinux(ctx, o, binary, version)
+	proof, e := probeWorkbenchLinuxDiagnosed(ctx, o, binary, version, diagnose)
 	if ctx.Err() != nil {
 		return Proof{}, executionProofError(ctx, "", e)
 	}
@@ -146,6 +150,9 @@ func workbenchLinuxProbeKey(o Options, binary, version string, w workbenchLinuxW
 	keyParts := []any{"workbench-linux", workbenchBwrapVersion + ":" + workbenchPathVersion, binary, info.Size(), info.ModTime(), binaryHash, version, template, system, shapes, o.Write, o.Read, o.Env, o.Loopback, o.Background, w}
 	if o.LoopbackLocalOnly {
 		keyParts = append(keyParts, "loopback-local-only-v1")
+	}
+	if o.ProcessInspection {
+		keyParts = append(keyParts, processInspectionProofVersion)
 	}
 	payload, _ := json.Marshal(keyParts)
 	hash := sha256.Sum256(payload)
@@ -257,6 +264,10 @@ func linuxSocketWitness(ctx context.Context, command string, observed <-chan str
 }
 
 func probeWorkbenchLinux(ctx context.Context, o Options, binary, version string) (result workbenchLinuxProof, err error) {
+	return probeWorkbenchLinuxDiagnosed(ctx, o, binary, version, nil)
+}
+
+func probeWorkbenchLinuxDiagnosed(ctx context.Context, o Options, binary, version string, diagnose func(string, string)) (result workbenchLinuxProof, err error) {
 	unavailable := workbenchCapability(CapabilitySandboxUnavailable)
 	if o.Loopback {
 		found := false
@@ -358,6 +369,11 @@ func probeWorkbenchLinux(ctx context.Context, o Options, binary, version string)
 		return runLinuxProbe(ctx, binary, l, s, o.Background)
 	}); err != nil {
 		return result, err
+	}
+	if o.ProcessInspection {
+		if err := proveProcessInspectionDiagnosed(ctx, o, l, binary, runInspectionProbe, nil, diagnose); err != nil {
+			return result, err
+		}
 	}
 	namespace, e := os.Readlink("/proc/self/ns/net")
 	if e != nil {

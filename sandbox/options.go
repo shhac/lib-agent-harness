@@ -32,7 +32,10 @@ type Options struct {
 
 	Timeout    time.Duration
 	Background bool
-	system     []string
+	// ProcessInspection requires proof of inspection within each command's own tree.
+	// Linux uses a private PID namespace. Other platforms refuse the request.
+	ProcessInspection bool
+	system            []string
 }
 
 func platformRefusal() error {
@@ -40,6 +43,9 @@ func platformRefusal() error {
 }
 
 func normalize(o Options, standalone bool) (Options, error) {
+	if o.ProcessInspection && runtime.GOOS != "linux" {
+		return o, refusal("process_inspection", RefusedProcessInspectionUnenforceable, harness.Support(harness.OpenAICompatible, harness.Session, harness.ProcessInspection).Reason)
+	}
 	var networkErr error
 	if o, networkErr = normalizeNetwork(o); networkErr != nil {
 		return o, networkErr
