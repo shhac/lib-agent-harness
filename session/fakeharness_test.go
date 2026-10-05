@@ -58,7 +58,11 @@ const (
 	// fakeToolSearch is Claude 2.1.283 on a first-party endpoint: tool search
 	// is on unless the launch's settings turn it off, and then every request
 	// carries a DeferredToolPlaceholder beside the hosted tools.
-	fakeToolSearch = "tool-search"
+	fakeToolSearch         = "tool-search"
+	fakeLoopbackFixture    = "loopback-result"
+	fakeLoopbackOutputEnv  = "AGENT_HARNESS_TEST_LOOPBACK_OUTPUT"
+	fakeLoopbackWitnessEnv = "AGENT_HARNESS_TEST_LOOPBACK_WITNESSES"
+	fakeLoopbackWaitEnv    = "AGENT_HARNESS_TEST_LOOPBACK_WAIT"
 )
 
 // fakeHarness writes an executable standing in for an installed CLI and returns
@@ -172,6 +176,9 @@ func fakeClaude(scenario string, args []string) int {
 		var frame struct{ Type string }
 		if !input.Scan() || json.Unmarshal(input.Bytes(), &frame) != nil || frame.Type != "user" {
 			return 2
+		}
+		if scenario == fakeLoopbackFixture {
+			return fakeClaudeLoopbackResult(base)
 		}
 		tools := []map[string]any{}
 		names := hosted

@@ -94,6 +94,8 @@ func TestLoopbackCanaryUnsandboxedIsCaught(t *testing.T) {
 // It does NOT approximate dontAsk approval: the old check accepted Perl -e,
 // which the owner-run CLI refused. Only owner evidence proves auto-allow.
 func flatCanary(script string) bool {
+	// The shared Python generator quotes its absolute executable too.
+	script = strings.ReplaceAll(script, "'/usr/bin/python3'", "/usr/bin/python3")
 	var outside strings.Builder
 	quoted := false
 	for i := 0; i < len(script); i++ {
@@ -139,6 +141,10 @@ func flatCanary(script string) bool {
 		}
 		switch words[0] {
 		case "nc", "echo", "sleep":
+		case "/usr/bin/python3":
+			if len(words) < 3 || words[1] != "-I" || words[2] != "-c" {
+				return false
+			}
 		case "command":
 			if len(words) < 3 || words[1] != "-v" || words[2] != "nc" {
 				return false
@@ -161,6 +167,14 @@ func TestLoopbackCanaryIsFlat(t *testing.T) {
 	}
 	if !flatCanary("echo '( ) { } exit $(id) `id`'") {
 		t.Fatal("quoted shell syntax rejected")
+	}
+}
+
+func TestClaudeLinuxPythonCandidateIsFlat(t *testing.T) {
+	witnesses := []*ncInterfaceWitness{{address: "192.0.2.1", destination: "127.0.0.1", port: 1234, operation: "bind"}, {address: "fe80::1%eth0", destination: "::1", port: 1235, operation: "udp-bind"}, {address: "0.0.0.0", destination: "0.0.0.0", port: 1236, operation: "udp"}}
+	script := claudeLinuxInterfaceCanary(sandboxprobe.InterfaceAttempts([]string{"192.0.2.1", "fe80::1%eth0"}, true, true), witnesses, "interface-canary-fixed\n")
+	if !flatCanary(script) || strings.Contains(script, "'\\''") {
+		t.Fatal("Python candidate contains nested shell syntax")
 	}
 }
 

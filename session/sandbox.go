@@ -47,6 +47,9 @@ type Sandbox struct {
 	// must pass before launch. On macOS allowLocalBinding permits binds and
 	// inbound connections on every local interface, not local-only binds.
 	// Optional interface diagnostics do not gate that base capability.
+	// Linux offers per-command loopback: a command can reach its own server,
+	// but the host's and other commands' servers are outside the contract.
+	// Host-shared scope refuses proof; host-interface confinement is unproved.
 	Loopback bool
 	// LoopbackLocalOnly requires Loopback and refuses unproved local-only binds.
 	LoopbackLocalOnly bool

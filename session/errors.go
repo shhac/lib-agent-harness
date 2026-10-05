@@ -203,7 +203,8 @@ type CapabilityError struct {
 	Code      string
 	Phase     string
 	Tools     []string
-	// Reason is a fixed Bridge* value for browser_bridge_unavailable.
+	// Reason is a fixed structural refusal, never raw CLI output. Browser
+	// failures use Bridge* values; loopback failures name the failed contract.
 	Reason string
 }
 
@@ -257,6 +258,15 @@ func (e *CapabilityError) Error() string {
 	}
 	if message == "" {
 		message = "the restricted session configuration could not be established"
+	}
+	if e.Code == CapabilitySandboxUnavailable && e.Reason == claudeLinuxInCommandLoopbackReason {
+		message = claudeLinuxInCommandLoopbackReason
+	}
+	if e.Code == CapabilitySandboxUnavailable && e.Reason == ClaudeLinuxSandboxRequiresSocat {
+		message = "claude_linux_sandbox_requires_socat: Claude Code's Linux sandbox requires socat; install it with apt install socat, dnf install socat or pacman -S socat"
+	}
+	if e.Code == CapabilitySandboxNotEnforced && e.Reason == claudeLinuxWiderScopeReason {
+		message = ClaudeLinuxLoopbackScopeWiderThanClaimed + ": Claude Linux must not reach the host's localhost under the per-command contract"
 	}
 	if e.Code == CapabilityBrowserToolsMissing {
 		message = "the installed harness did not advertise the browser tools"

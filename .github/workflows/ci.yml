@@ -28,7 +28,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y bubblewrap netcat-openbsd python3
+          sudo apt-get install -y bubblewrap netcat-openbsd python3 socat
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Verify Ubuntu 24.04 and bubblewrap 0.9
         if: runner.os == 'Linux'
@@ -106,7 +106,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y netcat-openbsd python3 meson ninja-build pkg-config libcap-dev libselinux1-dev libglib2.0-dev xsltproc docbook-xsl debian-archive-keyring
+          sudo apt-get install -y netcat-openbsd python3 socat meson ninja-build pkg-config libcap-dev libselinux1-dev libglib2.0-dev xsltproc docbook-xsl debian-archive-keyring
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           # Debian 12 preserves the upstream 0.8.0 tarball. apt authenticates
           # the source index with the Debian archive keyring; then explicitly

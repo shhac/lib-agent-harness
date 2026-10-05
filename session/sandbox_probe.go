@@ -12,7 +12,9 @@ import (
 	"errors"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -24,6 +26,10 @@ import (
 const sandboxProbeTimeout = 60 * time.Second
 
 func verifySandbox(ctx context.Context, o Options, l *launch) error {
+	// Even a cache hit cannot hide a removed native sandbox prerequisite.
+	if err := checkClaudeSandboxPrerequisites(runtime.GOOS, o, exec.LookPath); err != nil {
+		return err
+	}
 	key, err := sandboxKey(o, l)
 	if err != nil {
 		return err
@@ -75,6 +81,10 @@ func sandboxKey(o Options, l *launch) (string, error) {
 			return "", err
 		}
 	}
+	kind := "sandbox"
+	if runtime.GOOS == "linux" && o.Provider.Engine == harness.Claude && o.Sandbox.Loopback {
+		kind = "sandbox-claude-linux-per-command-loopback-v1"
+	}
 	payload, _ := json.Marshal(struct {
 		Kind         string
 		Engine       harness.Engine
@@ -93,7 +103,7 @@ func sandboxKey(o Options, l *launch) (string, error) {
 		Model        string
 		Effort       string
 		Instructions Instructions
-	}{"sandbox", o.Provider.Engine, binary, info.Size(), info.ModTime(), o.Sandbox.Write, o.Sandbox.Read, l.extra, sessionTempDir(), bridge, bridgeHome, o.WorkDir, o.RuntimeHome, o.Env, o.Model, o.Effort, effectiveInstructions(o)})
+	}{kind, o.Provider.Engine, binary, info.Size(), info.ModTime(), o.Sandbox.Write, o.Sandbox.Read, l.extra, sessionTempDir(), bridge, bridgeHome, o.WorkDir, o.RuntimeHome, o.Env, o.Model, o.Effort, effectiveInstructions(o)})
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:]), nil
 }

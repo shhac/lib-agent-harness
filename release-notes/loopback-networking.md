@@ -59,7 +59,7 @@ remaining addresses when one cannot bind. Unavailable interface binds are
 reported as such, never as observed exposure. A changed Seatbelt bind contract
 refuses proof with `loopback_interface_claim_changed`. Cache success and
 observations publish atomically; only identical in-flight keys queue together.
-Existing Linux failure classification is unchanged unless LocalOnly is requested.
+Existing standalone Linux failure classification is unchanged unless LocalOnly is requested.
 
 Owner evidence on Darwin 27 arm64, draft `6ffd2c6`, proves that local
 ip/ip4/ip6/tcp/udp localhost:* forms permit TCP and/or UDP binds on private
@@ -96,5 +96,65 @@ The owner runner prints redacted per-class results without failing solely
 because these optional measurements cannot run.
 
 Shared helpers retain their aliases, Perl byte pin and workbench profile pin.
-Linux canary bytes/reason, Windows refusal and durable formats are unchanged.
+Linux canary bytes, Windows refusal and durable formats are unchanged. Linux
+production admission now uses the per-command scope described below.
 No consumer-app update or release tag is needed for this additive change.
+
+## Claude Linux per-command Loopback
+
+The owner's Ubuntu 24.04.5 / bubblewrap 0.9.0 / Claude Code 2.1.289 run
+on `ce0e0d2001df0eef511af02ab954c71d408654ad` proved in-command loopback
+with host localhost unreachable and off-machine traffic refused.
+Claude Sandbox.Loopback remains offered on Linux as Unknown, proved for the
+installed binary and launch configuration. A command can start and call its
+own server; the host's and other commands' servers are outside the contract.
+The unchanged nc canary now judges in-command success separately from host
+scope, records per-command scope with settled verification evidence, and refuses
+wider host-shared scope before launch.
+
+Named refusals:
+
+- `sandbox_unavailable` with `CapabilityError.Reason = session.ClaudeLinuxInCommandLoopbackFailed`
+  when a completed canary cannot reach its own listener.
+- `sandbox_not_enforced` with reason `session.ClaudeLinuxLoopbackScopeWiderThanClaimed`
+  when a proof observes host-shared loopback.
+- `harness.ClaudeLinuxHostLoopbackReason` exports
+  `claude_linux_host_loopback_unavailable` for LAH-40's future host-port request;
+  this change does not add LoopbackPorts.
+
+This is not breaking for in-command Loopback callers: the earlier production
+host-reach rule could not pass the owner's per-command runtime. No host-reach
+guarantee or bridge is introduced. Unsandboxed sessions, macOS behavior, Windows
+refusal, durable formats and standalone/workbench proof keys are unchanged.
+
+Every sandboxed Claude session on Linux (with or without Loopback) now checks
+for socat before Start, Resume and VerifySandbox, including cached proofs.
+Missing socat returns the existing `sandbox_unavailable` code with named reason
+`claude_linux_sandbox_requires_socat` and installation guidance (`sudo apt install
+socat`, `sudo dnf install socat`, or `sudo pacman -S socat`). This diagnostic
+improvement is non-breaking: Claude's sandbox already required socat. Lookup
+and the disposable proof use the library process's PATH; a session Env PATH
+override must also permit the launched CLI to resolve socat.
+
+The unrelated completion error-classification fixture allows 10 seconds for
+process startup under race instrumentation; its actual timeout branch retains
+the 300ms deadline. This is test-only stabilization.
+
+CA-120 and CA-79 can describe the per-command contract and named refusals;
+consumer adoption and publishing a release remain separate work.
+
+The exported reasons above have stable values `claude_linux_in_command_loopback_failed`
+and `claude_linux_loopback_scope_wider_than_claimed` for callers to match.
+
+The owner's `0c1580c` run on Ubuntu 24.04.5 / bubblewrap 0.9.0 / Claude Code
+2.1.289 / Python 3.12.3, with socat installed, confirmed production VerifySandbox
+success and recorded per-command scope. The corrected double-quoted Python line
+still did not establish dontAsk auto-approval: tool-result=true, socket-results=0,
+canary-ran=false; every interface row unavailable. nc showed no host delivery.
+Host-interface bind confinement remains unproved because the installed client
+could not be auto-allowed, not because binds were denied. LoopbackLocalOnly stays
+Unsupported. The owner waived the interface errno requirement and approved landing
+on production evidence. The runner now reports optional measurements, launch
+refusals and diagnostic host-delivery contradictions without failing; production
+scope assertions and off-machine escape still fail. The owner will rerun this
+report-only test after landing.

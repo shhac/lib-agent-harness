@@ -324,7 +324,7 @@ returning EADDRNOTAVAIL. Linux Start with Loopback remains refused.
 For scoped link-local addresses, the probe uses the same host address bits
 on the namespace's sole proved interface, lo: the host scope name is absent
 there, and a failed name lookup cannot count as bind evidence.
-Existing Linux requests, canaries and key payload bytes are unchanged.
+Existing standalone Linux requests, canaries and key payload bytes are unchanged.
 The stricter Linux proof additionally requires /usr/bin/python3.
 
 Shared implementation: loopback_interfaces.go enumerates non-loopback
@@ -431,5 +431,117 @@ names; installed-runtime evidence is necessary for dontAsk approval.
 The README owner runner passes raw options to VerifySandbox, asserts offered
 Loopback after the base proof, and prints the redacted per-class observations,
 including unavailable measurements without failing the base check. CI never
-requires a commercial CLI or credentials. Linux’s original nc bytes and reason
-and Windows’s refusal are unchanged.
+requires a commercial CLI or credentials. Linux’s original nc bytes and Windows’s refusal are unchanged; the next
+section records the revised Linux scope judge and owner evidence.
+
+## Claude Linux per-command loopback evidence
+
+Source: LAH-42 owner note 7 and attachment `6f64ba2bb2d37652aff8218e`,
+run on draft-1 revision `ce0e0d2001df0eef511af02ab954c71d408654ad`.
+These are attributed owner measurements, not a team rerun or fixture.
+The note reports Ubuntu 24.04.5, bubblewrap 0.9.0, Claude Code 2.1.289,
+Python 3.12.3, dummy credentials and no inference.
+
+| Measurement | Owner observation | Claim |
+| --- | --- | --- |
+| Native sandbox without socat | Every launch unavailable | socat is a named prerequisite |
+| Base canary after installing socat | `scope=per-command outcome=<nil>` | Own listener bind/reach works; host reach absent; off-machine refused |
+| Original production VerifySandbox | `sandbox_unavailable` | Old host-reach completeness rule could not honor per-command loopback |
+| Python interface measurement | Unavailable; no errno table | No host-interface confinement claim |
+| nc interface/wildcard attempts | No host delivery observed; mixed nc fail/ok | Exit status does not prove denial or address unavailability |
+
+The owner also ran revision `0c1580cb1d457d2843cfbc0f4ae9d6bf154ef57b` on
+Ubuntu 24.04.5 / bubblewrap 0.9.0 / Claude Code 2.1.289 / Python 3.12.3,
+with socat installed:
+
+| Measurement | Owner observation | Claim |
+| --- | --- | --- |
+| Production VerifySandbox and base | Both nil; base and cached scope per-command | Production contract confirmed |
+| Corrected double-quoted Python line | tool-result=true; socket-results=0; canary-ran=false | dontAsk auto-approval not established; every row unavailable |
+| nc fallback | No host delivery; mixed fail/ok | No bind errno or confinement evidence |
+
+The owner approved landing on the production evidence and waived the earlier
+requirement for auto-allowed interface errno measurements. Interface confinement
+remains unproved because the installed client could not be auto-allowed, not
+because binds were denied. These results cannot authorize LoopbackLocalOnly or
+selected host ports.
+
+The revised production judge uses the same nc canary bytes. Linux authorizes
+only completed in-command loopback plus off-machine refusal, records
+`per-command` scope, and requires the command's host-reach line and the host
+listener's observation to agree. Neither host signal means per-command; both
+mean host-shared; one signal is unavailable. A missing `bound` result gives
+`sandbox_unavailable` with named `CapabilityError.Reason`
+`session.ClaudeLinuxInCommandLoopbackFailed` (`claude_linux_in_command_loopback_failed`). Missing completion/client evidence is unavailable,
+not an in-command failure assertion. Observed off-machine escape settles first,
+even after cancellation. Cancellation never publishes positive evidence.
+
+The installed owner result selects the per-command contract. Production refuses
+a wider host-shared result with `sandbox_not_enforced` and reason
+`session.ClaudeLinuxLoopbackScopeWiderThanClaimed` (`claude_linux_loopback_scope_wider_than_claimed`); diagnostic measurements still record
+host-shared scope so a future re-audit sees the actual behavior. A command can
+start a server and call it itself, including a test runner using httptest.
+The host's and other commands' servers are outside this contract; no host-port
+bridge is added. `harness.ClaudeLinuxHostLoopbackReason` exports the stable named
+host-reachability reason for LAH-40's future LoopbackPorts refusal. Native
+LoopbackLocalOnly remains Unsupported: private command evidence is not proof
+of native host-interface bind confinement.
+
+Scope and verified success publish together under the process-local cache
+mutex. Identical binary/launch keys retain their normal reuse; Linux Claude
+Loopback's key explicitly names the per-command policy. This is a process-local
+configuration discriminator, not a migration: evidence cannot survive a process
+restart, and the policy cannot change within a running process.
+Standalone/workbench keys and Python socket
+client bytes remain unchanged, with independent retained pre-move generator
+and proof-key oracles. No durable state transition or resume-reference format
+changes. Missing socat refuses before CLI execution or credential preparation,
+including a cache hit; no native login is used by any probe.
+
+### Revised interface evidence runner
+
+The owner rerun uses `TestClaudeLoopbackInterfaceRealProofLinux` from the README.
+Host addresses are enumerated outside the sandbox; every address receives TCP
+bind, UDP bind and UDP send attempts, with namespace lo scope for IPv6 link-local
+addresses and additional wildcard attempts. The explicitly selected
+`/usr/bin/python3` is checked on the host. Its witness tail uses double quotes
+only. The exact generated line, including the tail, is tested for flatness in
+the same package as the real runner and in portable synthetic transport tests.
+Only the installed CLI can establish dontAsk auto-allow.
+
+TCP host witnesses record reach immediately on accepting a matching peer;
+the exact synthetic nonce separately confirms payload delivery. Slow, partial
+or absent TCP payloads cannot hide host reach. UDP witnesses require the nonce.
+A fresh nc fallback
+uses different sockets and a new nonce. Host delivery is recorded for host-shared
+scope, and contradicts per-command scope; base or nc off-machine evidence fails
+the owner check, while interface-judge contradictions are diagnostic only.
+The runner prints the redacted table, marker counts, tool-result presence,
+structurally validated namespace names and summary before production assertions.
+One host bind succeeding records interface exposure; wildcard success and send
+errnos never prove host-address binds. EPERM/EACCES mean denied;
+EADDRNOTAVAIL (Linux 99) means address unavailable. Missing, duplicate or garbled
+results invalidate the whole measurement. An offline host establishes no
+namespace claim; address churn is not confinement evidence.
+
+Each launch gets its own deadline. Interface measurements are attempted after
+base judge or production-verification failure. Optional client, interface
+enumeration, diagnostic listener or transport setup failures are reported as
+unproved. Base setup failures (including an absent off-machine witness) still
+stop the test because production scope cannot be established. Interface measurements, diagnostic launch
+refusals and host-delivery contradictions are report-only, per the owner decision
+on `0c1580c`. The test asserts production VerifySandbox, documented base scope
+and recorded production scope. Off-machine escape in the base or nc output
+remains fatal because it contradicts the network restriction. Portable fixtures
+prove incomplete measurements do not gate a passing production check.
+The post-landing owner check reruns the report-only test; it does not require
+interface errno evidence or promote unavailable rows to denied binds.
+
+Background sources informed the measurement design, not the runtime claim:
+[sandbox-runtime](https://github.com/anthropics/sandbox-runtime),
+[host loopback bridging PR #507](https://github.com/anthropics/sandbox-runtime/pull/507),
+[Claude Code issue #86093](https://github.com/anthropics/claude-code/issues/86093)
+and [Claude Code sandboxing](https://code.claude.com/docs/en/sandboxing).
+Ubuntu AppArmor must permit bubblewrap user namespaces. The team checks use
+synthetic transports, temporary directories and test-owned localhost listeners;
+CI installs socat on both Linux jobs and never requires a commercial CLI.

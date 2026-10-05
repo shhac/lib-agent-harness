@@ -185,7 +185,13 @@ func TestFailedCLIClassificationAndTimeout(t *testing.T) {
 		if wait {
 			env = append(env, "HARNESS_FAILURE_WAIT=1")
 		}
-		data, runErr := runCLI(context.Background(), Config{Timeout: 300 * time.Millisecond}, bin, []string{"-test.run=^TestFailureCLIHelper$"}, t.TempDir(), env, "")
+		// Classification is not a process-start speed test. Race-instrumented
+		// fixtures can take longer than 300ms to start on a busy CI host.
+		timeout := 10 * time.Second
+		if wait {
+			timeout = 300 * time.Millisecond
+		}
+		data, runErr := runCLI(context.Background(), Config{Timeout: timeout}, bin, []string{"-test.run=^TestFailureCLIHelper$"}, t.TempDir(), env, "")
 		if wait {
 			if !errors.Is(runErr, context.DeadlineExceeded) {
 				t.Fatalf("%v", runErr)

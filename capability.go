@@ -91,6 +91,8 @@ const (
 	// Loopback permits on-machine outbound networking, proved before launch.
 	// On macOS binds and inbound are allowed on every local interface: a server
 	// bound to 0.0.0.0 or a LAN address may be reachable from other machines.
+	// Claude Linux sessions offer per-command loopback: host and other-command
+	// servers are outside the contract; host-interface bind confinement is unproved.
 	Loopback Feature = "loopback"
 	// LoopbackLocalOnly requires binds, inbound and outbound confined to loopback.
 	// Standalone Linux sandbox.Open proves private namespace loopback; native
@@ -129,6 +131,9 @@ func Support(e Engine, op Operation, f Feature) Capability {
 			if runtime.GOOS == "darwin" {
 				return Capability{Unsupported, LoopbackLocalOnlySeatbeltReason + "; Claude allowLocalBinding uses *:* and local-only binds are unproved"}
 			}
+			if runtime.GOOS == "linux" {
+				return Capability{Unsupported, "Claude Linux session local-only binds and inbound confinement have not been proved; standalone command namespace evidence does not establish this native-session capability"}
+			}
 			return Capability{Unsupported, "Claude allowLocalBinding permits binds on any interface; local-only binds are unproved on this platform"}
 		}
 		if runtime.GOOS == "darwin" && op == Session && e == OpenAICompatible {
@@ -154,6 +159,9 @@ func Support(e Engine, op Operation, f Feature) Capability {
 // sandboxed hosting of a CLI harness are unavailable on Windows. An API
 // session has no process to contain, so it is unaffected.
 func platform(e Engine, op Operation, f Feature, c Capability) Capability {
+	if runtime.GOOS == "linux" && e == Claude && op == Session && f == Loopback {
+		return Capability{Unknown, claudeLinuxLoopbackReason}
+	}
 	if runtime.GOOS == "darwin" && e == Claude && op == Session && f == Loopback {
 		return Capability{Unknown, claudeLoopbackExposureReason}
 	}
@@ -428,3 +436,9 @@ const LoopbackLocalOnlySeatbeltReason = "loopback_local_only_unenforceable: Seat
 
 // Interface exposure is platform evidence, distinct from the per-launch proof.
 const claudeLoopbackExposureReason = "macOS Claude Loopback is proved at launch by localhost reach and bind plus outbound off-machine refusal; LAH-39 real-Seatbelt evidence shows allowLocalBinding (local ip *:*) admits binds and inbound connections on every local interface, so 0.0.0.0 and LAN listeners may be reachable from other machines; no local-only claim; interface-address TCP bind, UDP bind and UDP send diagnostics record observations or unavailable measurements without gating the base proof"
+
+// ClaudeLinuxHostLoopbackReason names requests outside the owner-observed
+// per-command contract. LAH-40 owns selected-host-port refusal when it is added.
+const ClaudeLinuxHostLoopbackReason = "claude_linux_host_loopback_unavailable: Claude Linux sessions offer per-command loopback; the host's and other commands' servers are outside this contract"
+
+const claudeLinuxLoopbackReason = "Claude Linux offers per-command loopback: a command can reach servers it starts itself; the host's and other commands' servers are outside this contract; owner-observed Ubuntu 24.04.5 / bubblewrap 0.9.0 / Claude Code 2.1.289 proved in-command reach and bind with host localhost unreachable and outbound off-machine traffic refused; proved before launch, host-shared scope refused; host-interface bind confinement remains unproved, no local-only claim; socat is required"

@@ -73,6 +73,11 @@ func legacyworkbenchLinuxProbeKey(o Options, binary, version string, w workbench
 			values[1] = "bwrap-workbench-v4:readable-path-v2"
 		}
 	}
+	// Frozen pre-Python-move LocalOnly suffix. The canary relocation must not
+	// change either the established plain payload or this strict proof key.
+	if o.LoopbackLocalOnly {
+		values = append(values, "loopback-local-only-v1")
+	}
 	payload, _ := json.Marshal(values)
 	hash := sha256.Sum256(payload)
 	return hex.EncodeToString(hash[:]), nil
@@ -108,6 +113,10 @@ func TestWorkbenchProofKeyLegacyPayload(t *testing.T) {
 	strictKey, err := workbenchLinuxProbeKey(strict, binary, "0.8.0", w)
 	if err != nil || strictKey == got {
 		t.Fatalf("strict proof key missing request: %v", err)
+	}
+	strictWant, err := legacyworkbenchLinuxProbeKey(strict, binary, "0.8.0", w, "bwrap-workbench-v4")
+	if err != nil || strictKey != strictWant {
+		t.Fatalf("standalone Linux LocalOnly proof key changed during canary move: %v", err)
 	}
 	again, err := workbenchLinuxProbeKey(o, binary, "0.8.0", w)
 	if err != nil || got != again {

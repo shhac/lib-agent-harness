@@ -220,7 +220,7 @@ func (c *verificationCache) recordLoopback(key string, evidence loopbackEvidence
 		c.seen = map[string]bool{}
 		c.loopback = nil
 	}
-	if len(evidence.observations) > 0 || len(evidence.interfaces) > 0 {
+	if evidence.scope != "" || len(evidence.observations) > 0 || len(evidence.interfaces) > 0 {
 		if c.loopback == nil {
 			c.loopback = map[string]loopbackEvidence{}
 		}

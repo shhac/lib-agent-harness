@@ -26,7 +26,11 @@ func TestClaudeLoopbackOfferedAfterBaseProof(t *testing.T) {
 			t.Error("request dropped Loopback")
 		}
 		// A passing base proof with explicitly unavailable diagnostics.
-		return loopbackEvidence{interfaces: []ncInterfaceObservation{{"0.0.0.0", "bind", "unavailable"}}}, nil
+		evidence := loopbackEvidence{interfaces: []ncInterfaceObservation{{"0.0.0.0", "bind", "unavailable"}}}
+		if runtime.GOOS == "linux" {
+			evidence.scope = "per-command"
+		}
+		return evidence, nil
 	}
 	binary, _ := fakeHarness(t, fakeSandboxOK)
 	raw := sandboxOptions(t, harness.Claude, binary, true)
@@ -39,6 +43,14 @@ func TestClaudeLoopbackOfferedAfterBaseProof(t *testing.T) {
 	key, err := realClaudeProofKey(raw)
 	if err != nil || !verified.holds(key) {
 		t.Fatalf("verification absent: %v", err)
+	}
+	if runtime.GOOS == "linux" {
+		verified.mu.Lock()
+		scope := verified.loopback[key].scope
+		verified.mu.Unlock()
+		if scope != "per-command" {
+			t.Fatal("Linux scope not recorded")
+		}
 	}
 	s, err := Start(ctx, raw)
 	if err != nil {

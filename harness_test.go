@@ -322,6 +322,13 @@ func TestLoopbackClaims(t *testing.T) {
 		if claude.Reason != "restricted and sandboxed hosting are unavailable on Windows" {
 			t.Fatal(claude.Reason)
 		}
+	} else if runtime.GOOS == "linux" {
+		if claude.Reason != claudeLinuxLoopbackReason {
+			t.Fatal("Linux evidence status changed")
+		}
+		if strings.Contains(Support(Claude, Session, LoopbackLocalOnly).Reason, "any interface") || strings.Contains(Support(Claude, Session, LoopbackLocalOnly).Reason, "*:*") {
+			t.Fatal("Linux inherited unproved macOS bind claim")
+		}
 	} else if claude.Reason != supportTable[supportKey{Claude, Session, Loopback}].Reason {
 		t.Fatal("non-darwin reason changed")
 	}
@@ -334,6 +341,13 @@ func TestLoopbackClaims(t *testing.T) {
 				t.Errorf("%s %s claims loopback: %+v", e, op, c)
 			}
 		}
+	}
+}
+
+func TestClaudeLinuxHostLoopbackReasonStable(t *testing.T) {
+	const want = "claude_linux_host_loopback_unavailable: Claude Linux sessions offer per-command loopback; the host's and other commands' servers are outside this contract"
+	if ClaudeLinuxHostLoopbackReason != want {
+		t.Fatal("host-reachability reason changed")
 	}
 }
 

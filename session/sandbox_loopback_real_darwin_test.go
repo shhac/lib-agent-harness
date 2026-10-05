@@ -5,7 +5,6 @@ package session
 import (
 	"context"
 	stdflag "flag"
-	"net"
 	"os"
 	"os/exec"
 	"strings"
@@ -61,28 +60,4 @@ func TestClaudeLoopbackInterfaceRealProof(t *testing.T) {
 		t.Log("interface diagnostics unavailable; base Loopback proof passed")
 	}
 	t.Log("Loopback offered after base proof; all-interface exposure is LAH-39 platform evidence; optional measurements do not gate support")
-}
-
-func claudeInterfaceAddressClass(address string) string {
-	host, _, _ := strings.Cut(address, "%")
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return "unknown"
-	}
-	family := "IPv6"
-	if ip.To4() != nil {
-		family = "IPv4"
-	}
-	switch {
-	case ip.IsUnspecified():
-		return family + " wildcard"
-	case ip.IsLinkLocalUnicast():
-		return family + " link-local"
-	case ip.IsPrivate():
-		return family + " private"
-	case ip.IsLoopback():
-		return family + " loopback"
-	default:
-		return family + " other"
-	}
 }

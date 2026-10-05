@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strings"
@@ -48,7 +49,7 @@ func probeClaudeInterfaceDiagnostics(ctx context.Context, o Options, l *launch) 
 		return unavailable
 	}
 	defer os.RemoveAll(dir)
-	script, witnesses, payload, cleanup, err := ncInterfaceCandidate(addresses, dir, true)
+	script, witnesses, payload, cleanup, err := ncInterfaceCandidate(addresses, dir, true, false)
 	if err != nil {
 		return unavailable
 	}
@@ -86,12 +87,12 @@ func ncDiagnosticObservations(output string, witnesses []*ncInterfaceWitness) []
 			}
 		}
 		w.mu.Lock()
-		matched := w.matched
+		matched, payloadMatched := w.matched, w.payloadMatched
 		w.mu.Unlock()
 		rows[i].outcome = "not observed (nc " + status + "; cause unknown)"
 		if matched {
 			rows[i].outcome = "observed source"
-			if w.operation != "bind" {
+			if w.operation != "bind" || payloadMatched {
 				rows[i].outcome += " and nonce payload"
 			}
 			host, _, _ := strings.Cut(w.address, "%")
@@ -112,6 +113,8 @@ type ncInterfaceWitness struct {
 	port                            int
 	mu                              sync.Mutex
 	matched                         bool
+	tcpNonce                        bool
+	payloadMatched                  bool
 }
 
 func (w *ncInterfaceWitness) observe(peer net.IP) {
@@ -121,7 +124,7 @@ func (w *ncInterfaceWitness) observe(peer net.IP) {
 	w.matched = w.matched || net.ParseIP(host).Equal(peer) || net.ParseIP(host).IsUnspecified()
 }
 
-func ncInterfaceCandidate(addresses []string, directory string, wildcards bool) (scriptText string, witnesses []*ncInterfaceWitness, payload string, cleanup func(), err error) {
+func ncInterfaceCandidate(addresses []string, directory string, wildcards, tcpNonce bool) (scriptText string, witnesses []*ncInterfaceWitness, payload string, cleanup func(), err error) {
 	var cleanups []func()
 	cleanup = func() {
 		for i := len(cleanups) - 1; i >= 0; i-- {
@@ -147,7 +150,7 @@ func ncInterfaceCandidate(addresses []string, directory string, wildcards bool) 
 	}
 	var script strings.Builder
 	for _, attempt := range sandboxprobe.InterfaceAttempts(addresses, wildcards, true) {
-		w := &ncInterfaceWitness{address: attempt.Address, operation: attempt.Operation}
+		w := &ncInterfaceWitness{address: attempt.Address, operation: attempt.Operation, tcpNonce: tcpNonce}
 		w.destination = "127.0.0.1"
 		if strings.Contains(w.address, ":") {
 			w.destination = "::1"
@@ -172,7 +175,17 @@ func ncInterfaceCandidate(addresses []string, directory string, wildcards bool) 
 					if err != nil {
 						return
 					}
+					// A connection proves host reach independently of payload timing.
 					w.observe(c.RemoteAddr().(*net.TCPAddr).IP)
+					if tcpNonce {
+						_ = c.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+						data, readErr := io.ReadAll(io.LimitReader(c, int64(len(nonce)+1)))
+						if readErr == nil && string(data) == nonce {
+							w.mu.Lock()
+							w.payloadMatched = true
+							w.mu.Unlock()
+						}
+					}
 					c.Close()
 				}
 			}()
@@ -199,6 +212,9 @@ func ncInterfaceCandidate(addresses []string, directory string, wildcards bool) 
 		}
 		cleanups = append(cleanups, func() { closeListener(); <-done })
 		flags, input := "-z", "</dev/null"
+		if w.operation == "bind" && w.tcpNonce {
+			flags, input = "-N", "<"+sandboxprobe.ShellQuote(payload)
+		}
 		if w.operation != "bind" {
 			flags, input = "-u", "<"+sandboxprobe.ShellQuote(payload)
 		}
@@ -252,13 +268,16 @@ func judgeNCInterfaces(output string, witnesses []*ncInterfaceWitness) ([]string
 	outcomes := make([]string, len(witnesses))
 	for i, w := range witnesses {
 		w.mu.Lock()
-		matched := w.matched
+		matched, payloadMatched := w.matched, w.payloadMatched
 		w.mu.Unlock()
 		outcomes[i] = "unconfirmed (nc " + statuses[i] + ")"
 		if matched {
-			outcomes[i] = "observed source and payload"
+			outcomes[i] = "observed source"
+			if w.operation != "bind" || payloadMatched {
+				outcomes[i] += " and payload"
+			}
 		}
-		if w.operation == "bind" && matched {
+		if w.operation == "bind" && matched && !w.tcpNonce {
 			outcomes[i] = "observed source"
 		}
 		host, _, _ := strings.Cut(w.address, "%")

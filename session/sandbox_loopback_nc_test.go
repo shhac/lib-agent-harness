@@ -5,6 +5,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"net"
 	"os/exec"
 	"strings"
 	"testing"
@@ -14,6 +15,48 @@ import (
 	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
+func TestTCPWitnessRecordsReachWithoutNonce(t *testing.T) {
+	testenv.RequireLoopback(t)
+	for _, data := range []string{"", "partial"} {
+		t.Run(fmt.Sprintf("payload-%d", len(data)), func(t *testing.T) {
+			_, witnesses, _, cleanup, err := ncInterfaceCandidate([]string{"127.0.0.1"}, t.TempDir(), false, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cleanup()
+			w := witnesses[0]
+			c, err := net.Dial("tcp", net.JoinHostPort(w.destination, fmt.Sprint(w.port)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer c.Close()
+			if _, err := c.Write([]byte(data)); err != nil {
+				t.Fatal(err)
+			}
+			deadline := time.Now().Add(time.Second)
+			for {
+				w.mu.Lock()
+				matched, payloadMatched := w.matched, w.payloadMatched
+				w.mu.Unlock()
+				if payloadMatched {
+					t.Fatal("incomplete nonce confirmed")
+				}
+				if matched {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("connection did not record host reach")
+				}
+				time.Sleep(time.Millisecond)
+			}
+			output := "nc-interface:0:ok\nnc-interface:1:fail\nnc-interface:2:fail\nnc-interface-ran\n"
+			if row := ncDiagnosticObservations(output, witnesses)[0]; row.outcome != "observed source" {
+				t.Fatalf("payload invented: %+v", row)
+			}
+		})
+	}
+}
+
 func TestNCInterfaceCandidate(t *testing.T) {
 	testenv.RequireLoopback(t)
 	nc, err := exec.LookPath("nc")
@@ -22,7 +65,7 @@ func TestNCInterfaceCandidate(t *testing.T) {
 		return
 	}
 	_ = nc
-	script, witnesses, _, cleanup, err := ncInterfaceCandidate([]string{"127.0.0.1"}, t.TempDir(), false)
+	script, witnesses, _, cleanup, err := ncInterfaceCandidate([]string{"127.0.0.1"}, t.TempDir(), false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +103,7 @@ func TestNCCandidateRuntimeBudget(t *testing.T) {
 	for i := range addresses {
 		addresses[i] = "127.0.0.1"
 	}
-	script, witnesses, _, cleanup, err := ncInterfaceCandidate(addresses, t.TempDir(), false)
+	script, witnesses, _, cleanup, err := ncInterfaceCandidate(addresses, t.TempDir(), false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
