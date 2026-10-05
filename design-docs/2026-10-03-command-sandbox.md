@@ -84,6 +84,69 @@ sweep failure keeps the entry while a new Open proceeds independently.
 Malformed tokens also preserve uncertain ownership. Proof failure occurs
 before this state preparation.
 
+### Reclaiming read-only command trees
+
+Every command-state or workbench removal first restores owner rwx on real
+directories only. Commands may leave read-only checkouts or module caches in
+HOME/TMPDIR; ordinary RemoveAll cannot reclaim their children. No file modes,
+ACLs, ownership or immutable flags are changed, and WorkDir is never touched.
+Capability claims in harness.Support are unchanged.
+
+The remover anchors the parent with os.Root, refuses a top-level link or
+non-directory, and Lstats each child through its current root. Symlinks and
+non-directories are skipped by the permission walk. Each real directory is
+opened with openat through its anchored parent's descriptor, with no-follow
+and directory flags, then checked against the Lstat identity and the parent's
+mount before changing permissions. This direct openat is deliberate:
+Root.OpenFile resolves symlinks even when passed O_NOFOLLOW. Darwin's
+O_EVTONLY handle supports fchmod, but an unreadable directory cannot first be
+opened. For that case, a parent-descriptor Fstatat rechecks directory identity
+and device, then fchmodat(name+"/", mode|0700, AT_SYMLINK_NOFOLLOW_ANY) restores
+access. The trailing slash requires a real directory; NOFOLLOW_ANY rejects
+symlinks in every component, including a link swapped in after the check.
+A swapped-in regular file fails ENOTDIR, and a link fails ELOOP without
+changing its mode or target. This is deliberately stronger than ordinary
+AT_SYMLINK_NOFOLLOW, which can follow a link with a trailing slash. If the
+kernel refuses NOFOLLOW_ANY, cleanup does not fall back to that weaker call.
+The installed-kernel test proves the positive 0000 control and both negative
+controls, including an intermediate link and unchanged outside contents.
+The repaired directory is opened with no-follow flags and checked again
+before descent. This bootstrap replaces the plan's impossible handle-only
+repair without relaxing directory-only or no-follow containment.
+Linux uses O_PATH and x/sys v0.28.0's Fchmodat, which issues fchmodat2 when
+AT_EMPTY_PATH is specified. If that operation is unavailable or refused as
+unsupported, cleanup uses the same pinned descriptor through /proc/self/fd
+while it stays open. This fallback requires mounted, accessible procfs; without
+it, any remaining removal failure is reported through the existing cleanup
+error. After repair, OpenRoot(name+"/.")
+and a second SameFile check anchor descent. Each level closes its handles on
+return. Once the new root pins the checked directory, its metadata handle
+closes so recursion retains one root handle per depth. Other mounts are neither
+changed nor entered; discovery of one or inability to prove the opened mount
+refuses removal too, since Root.RemoveAll alone does not contain mount walks.
+Other walk/permission failures are best effort, followed by the anchored
+parent Root.RemoveAll; any remaining removal failure is returned.
+
+Removal is authorized only after SweepToken has established that nothing is
+live, or before any launch could have happened. Runner close settles its own
+work and sweeps before reclaiming scratch. The entry lifetime lock remains
+held through state removal; the base flock serializes sweeping and creation.
+Thus live or uncertain entries are never walked, concurrent sweepers cannot
+reclaim the same entry, and a failed entry does not block sibling reclamation
+or a new Open. Close still returns CommandCleanupUnknown on failure;
+scratch re-preparation still returns StateUnusable. Unreclaimable entries
+remain for retry on each later Open.
+
+An interruption during the walk leaves some directories owner-writable and
+nothing removed, with the token intact. The walk is idempotent and the next
+sweep repeats the identity check before repair. The only widening is owner
+bits inside private RuntimeHome state already authorized for deletion.
+Interrupted RemoveAll may leave a partial tree without workbench-token.json;
+the next sweep treats that as no launch. This is safe only because every
+removal starts after settlement/sweep, or before any launch. Between Runner
+close and Sandbox.Close, scratch may already be gone while token and lock
+files remain; the next unlocked sweep finds nothing live and removes state.
+
 On launcher SIGKILL, Linux bwrap children die with --die-with-parent. macOS
 supervisors and children retain the marker for the next stale sweep. A free
 lock alone never authorizes signalling: SweepToken establishes live identity.

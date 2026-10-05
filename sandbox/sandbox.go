@@ -221,7 +221,7 @@ func (s *Sandbox) Close() error {
 		s.wg.Wait()
 		s.closeErr = s.commands.close()
 		s.ws.Close()
-		if s.closeErr == nil && os.RemoveAll(s.dir) != nil {
+		if s.closeErr == nil && removeCommandTree(s.dir) != nil {
 			s.closeErr = commandError(CommandCleanupUnknown)
 		}
 		if s.lock != nil {

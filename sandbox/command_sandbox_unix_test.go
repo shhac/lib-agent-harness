@@ -373,3 +373,80 @@ func TestCommandSandboxPrivateLaunchObservation(t *testing.T) {
 		t.Fatal("exit without private launch evidence accepted")
 	}
 }
+
+func TestCommandSandboxReadonlyScratchCloseAndRecovery(t *testing.T) {
+	for _, interrupted := range []bool{false, true} {
+		t.Run(fmt.Sprint(interrupted), func(t *testing.T) {
+			opts := commandSandboxOptions(t, false)
+			s := openTestCommandSandbox(t, opts)
+			dir := s.dir
+			result, err := s.Run(context.Background(), CommandRequest{Command: `mkdir -p "$TMPDIR/co/a/b" && chmod -R a-w "$TMPDIR/co" && chmod 000 "$TMPDIR/co/a"`})
+			if err != nil || result.ExitCode != 0 {
+				t.Fatalf("%+v %v", result, err)
+			}
+			if interrupted {
+				if err := s.lock.Close(); err != nil {
+					t.Fatal(err)
+				}
+				s.lock = nil
+				next := openTestCommandSandbox(t, opts)
+				if err := next.Close(); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := s.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(dir); !os.IsNotExist(err) {
+				t.Fatal("read-only scratch survived", err)
+			}
+		})
+	}
+}
+
+func TestWorkbenchReadonlyScratchRepreparation(t *testing.T) {
+	opts := commandSandboxOptions(t, false)
+	requireCommandPlatform(t)
+	// Reuse the installed-runtime proof, as session resume does.
+	opts, err := normalize(opts, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof, err := proveWorkbench(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Production state lives below the normalized RuntimeHome. On macOS,
+	// a raw TempDir may contain the /var -> /private/var symlink and must not
+	// be passed directly to the scratch anchor's canonical-path check.
+	dir := filepath.Join(opts.RuntimeHome, "resume-state")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	outside := readonlyOutside(t)
+	readonlyCommandTree(t, filepath.Join(dir, "workbench/tmp/checkout"), outside)
+	data, err := json.Marshal(workbenchToken{process.NewToken(), time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "workbench-token.json"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	layout, _, _, scratch, err := prepareWorkbenchCommands(opts, proof, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		layout.scratch.Close()
+		_ = removeCommandTree(scratch)
+	}()
+	if _, err := os.Stat(filepath.Join(scratch, "tmp/checkout")); !os.IsNotExist(err) {
+		t.Fatal("old scratch retained", err)
+	}
+	for _, path := range []string{layout.Home, layout.Tmp} {
+		info, err := os.Lstat(path)
+		if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 {
+			t.Fatalf("new private scratch directory %s: %v %v", path, info, err)
+		}
+	}
+	assertOutsideUnchanged(t, outside)
+}

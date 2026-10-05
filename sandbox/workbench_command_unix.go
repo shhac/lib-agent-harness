@@ -60,18 +60,18 @@ func prepareWorkbenchCommands(o Options, proof Proof, dir string) (layout workbe
 		return layout, nil, token, scratch, stateError(StateUnusable)
 	}
 	scratch = filepath.Join(dir, "workbench")
-	if err := os.RemoveAll(scratch); err != nil {
+	if err := removeCommandTree(scratch); err != nil {
 		return layout, nil, token, scratch, stateError(StateUnusable)
 	}
 	for _, name := range []string{"home", "tmp"} {
 		if err := os.MkdirAll(filepath.Join(scratch, name), 0700); err != nil {
-			os.RemoveAll(scratch)
+			removeCommandTree(scratch)
 			return layout, nil, token, scratch, stateError(StateUnusable)
 		}
 	}
 	system := proof.system
 	if len(system) == 0 {
-		os.RemoveAll(scratch)
+		removeCommandTree(scratch)
 		return layout, nil, token, scratch, stateError(StateUnusable)
 	}
 	token = workbenchToken{process.NewToken(), time.Now()}
@@ -106,18 +106,18 @@ func prepareWorkbenchCommands(o Options, proof Proof, dir string) (layout workbe
 		}
 	}
 	if err != nil {
-		os.RemoveAll(scratch)
+		removeCommandTree(scratch)
 		return layout, nil, token, scratch, stateError(StateUnusable)
 	}
 	layout = workbenchLayout{Work: o.WorkDir, Home: filepath.Join(scratch, "home"), Tmp: filepath.Join(scratch, "tmp"), System: system, Read: o.Read, Write: o.Write, Loopback: o.Loopback}
 	env, err = skills.Environment(os.Environ(), append(append([]string{}, o.Env...), "HOME="+layout.Home, "TMPDIR="+layout.Tmp))
 	if err != nil {
-		os.RemoveAll(scratch)
+		removeCommandTree(scratch)
 		return layout, nil, token, scratch, stateError(StateUnusable)
 	}
 	env = process.TokenEnvironment(env, token.Token)
 	if err = layout.anchorScratch(); err != nil {
-		os.RemoveAll(scratch)
+		removeCommandTree(scratch)
 		return layout, nil, token, scratch, err
 	}
 	return layout, env, token, scratch, nil

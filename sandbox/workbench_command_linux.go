@@ -43,7 +43,7 @@ func newCommandSandbox(config commandConfig) (*commandSandbox, error) {
 			p.Close()
 			<-settled
 		}
-		if process.SweepToken(token.Token, token.Since) != nil || os.RemoveAll(scratch) != nil {
+		if process.SweepToken(token.Token, token.Since) != nil || removeCommandTree(scratch) != nil {
 			return &CommandError{Code: "command_cleanup_unknown"}
 		}
 		return nil

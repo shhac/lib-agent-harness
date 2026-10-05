@@ -630,6 +630,20 @@ Typed `sandbox.CommandError` failures include `CommandStartFailed`, `CommandOutc
 cleanup preserves recovery state. Standalone state lives under
 `RuntimeHome/commands/<random id>` with a lifetime lock; a subsequent Open
 sweeps unlocked stale entries and leaves live or uncertain entries alone.
+Before deleting command state or re-preparing scratch, cleanup attempts to
+restore owner read/write/search permission on real directories within that
+tree. It uses anchored handles, never follows symlinks, never changes file modes and refuses
+other mounts. This reclaims read-only checkouts and caches left by commands.
+On macOS, an unreadable directory is first repaired through its anchored
+parent using a directory-only, no-symlink kernel lookup; cleanup then opens
+and verifies its handle. Kernels that refuse that lookup retain the normal
+cleanup failure rather than weakening the no-follow rule.
+Linux repairs through the opened descriptor with fchmodat2; its compatibility
+fallback requires accessible `/proc/self/fd`. If neither mechanism works,
+remaining removal failures report through the existing cleanup error.
+Removal failures retain the existing cleanup errors; a failed stale entry is
+retried on later Open calls while other entries and the new Open proceed.
+These changes do not change `harness.Support` claims.
 Pre-launch refusals and failed proofs return `sandbox.RefusalError` and
 `sandbox.ProofError`. `sandbox.StateError` reports unusable or locked recovery state. The deprecated
 `session.OpenCommandSandbox` wrapper and its options, result and handle types
@@ -1776,7 +1790,9 @@ The runner uses the installed Go toolchain, read-only cached modules, private
 scratch for GOCACHE, no proxy or toolchain downloads, and a ten-minute timeout.
 It prints vet/test output and propagates the command's exit status; cancellation
 settles the command tree before Close. A crash may leave private runtime scratch;
-Open sweeps interrupted command state through its lifetime lock on reuse.
+Open sweeps interrupted command state through its lifetime lock on reuse,
+restoring owner directory permissions inside the scratch/state tree before
+removal, without following links or touching the caller's workspace.
 The working tree receives only normal Go test writes. A stopped socket probe may
 leave an owner-only random `ahp-*` directory under TMPDIR; a killed atomic-write
 probe may similarly leave `ah-write-*` scratch.

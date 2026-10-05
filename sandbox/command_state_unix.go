@@ -15,6 +15,12 @@ import (
 )
 
 func prepareCommandState(ctx context.Context, s *Sandbox, o *Options) error {
+	return prepareCommandStateRemoving(ctx, s, o, removeCommandTree)
+}
+
+// The remover parameter lets tests exercise per-entry failure without
+// weakening settlement or changing a global hook while other callers run.
+func prepareCommandStateRemoving(ctx context.Context, s *Sandbox, o *Options, remove func(string) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -61,7 +67,7 @@ func prepareCommandState(ctx context.Context, s *Sandbox, o *Options) error {
 			continue
 		} // locked or uncertain ownership is preserved
 		if sweepCommandState(dir) == nil {
-			_ = os.RemoveAll(dir)
+			_ = remove(dir)
 		}
 		_ = lock.Close()
 	}
@@ -74,7 +80,7 @@ func prepareCommandState(ctx context.Context, s *Sandbox, o *Options) error {
 	}
 	lock, err := lockSession(dir)
 	if err != nil {
-		_ = os.RemoveAll(dir)
+		_ = remove(dir)
 		return err
 	}
 	s.dir, s.lock = dir, lock
