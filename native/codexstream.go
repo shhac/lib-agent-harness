@@ -94,21 +94,18 @@ func (u codexUsage) usage() harness.Usage {
 type codexTranscoder struct {
 	markerSink // line reassembly, marker writing, the prompt banner
 
-	report     json.RawMessage
-	failure    string
-	completed  bool
-	structured bool
-	threadID   string
-	usage      harness.Usage
-	rawUsage   []json.RawMessage // every turn.completed usage, verbatim
-	running    map[string]time.Time
-	sawUsage   bool
-
-	now func() time.Time // injectable clock so the rendered durations are testable
+	report    json.RawMessage
+	failure   string
+	completed bool
+	threadID  string
+	usage     harness.Usage
+	rawUsage  []json.RawMessage // every turn.completed usage, verbatim
+	running   map[string]time.Time
+	sawUsage  bool
 }
 
 func newCodexTranscoder(out io.Writer) *codexTranscoder {
-	return &codexTranscoder{markerSink: markerSink{out: out}, running: map[string]time.Time{}, now: time.Now}
+	return &codexTranscoder{markerSink: newMarkerSink(out), running: map[string]time.Time{}}
 }
 
 func (t *codexTranscoder) Write(p []byte) (int, error) { return t.writeLines(p, t.consume) }

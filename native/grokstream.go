@@ -67,7 +67,6 @@ func (u grokUsage) usage() harness.Usage {
 type grokTranscoder struct {
 	markerSink
 
-	structured      bool
 	completed       bool
 	sawUsage        bool
 	sawCost         bool
@@ -88,7 +87,6 @@ type grokTranscoder struct {
 	// reports none, since `end` would otherwise report the same spend again.
 	errorSpend *grokSpend
 	running    map[string]time.Time
-	now        func() time.Time
 }
 
 type grokSpend struct {
@@ -99,7 +97,7 @@ type grokSpend struct {
 const grokCostTicksPerUSD = 1e10
 
 func newGrokTranscoder(out io.Writer) *grokTranscoder {
-	return &grokTranscoder{markerSink: markerSink{out: out}, running: map[string]time.Time{}, now: time.Now}
+	return &grokTranscoder{markerSink: newMarkerSink(out), running: map[string]time.Time{}}
 }
 
 func (t *grokTranscoder) Write(p []byte) (int, error) { return t.writeLines(p, t.consume) }

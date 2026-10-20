@@ -40,18 +40,16 @@ type fxDocument struct {
 type fxTranscoder struct {
 	markerSink
 
-	structured bool
-	completed  bool
-	sawUsage   bool
-	sessionID  string
-	usage      harness.Usage
-	report     json.RawMessage
-	failure    string
-	now        func() time.Time
+	completed bool
+	sawUsage  bool
+	sessionID string
+	usage     harness.Usage
+	report    json.RawMessage
+	failure   string
 }
 
 func newFxTranscoder(out io.Writer) *fxTranscoder {
-	return &fxTranscoder{markerSink: markerSink{out: out}, now: time.Now}
+	return &fxTranscoder{markerSink: newMarkerSink(out)}
 }
 
 func (t *fxTranscoder) Write(p []byte) (int, error) { return t.writeLines(p, t.consume) }

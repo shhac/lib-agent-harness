@@ -77,12 +77,10 @@ func validate(c Config, r Request) *RunError {
 
 func optionProblem(c Config) string {
 	engine := c.Provider.Engine
-	if (engine != harness.Codex && c.Codex.set()) ||
-		(engine != harness.Claude && c.Claude.set()) ||
-		(engine != harness.Grok && c.Grok.set()) ||
-		(engine != harness.Antigravity && c.Antigravity.set()) ||
-		(engine != harness.Fx && c.Fx.set()) {
-		return CodeOptionForOtherEngine
+	for other, entry := range nativeEngines {
+		if other != engine && entry.optionsSet(c) {
+			return CodeOptionForOtherEngine
+		}
 	}
 	switch engine {
 	case harness.Claude:

@@ -30,6 +30,10 @@ type markerSink struct {
 	onEvent func(Event)
 	out     io.Writer
 	partial []byte // carry for a chunk that split mid-line
+	// structured expects a schema-constrained report rather than text.
+	structured bool
+	// now is the clock, injectable so the rendered durations are testable.
+	now func() time.Time
 
 	// pendingPrompt is registered by the driver and rendered on first
 	// activity. Neither CLI echoes the prompt back as a stream event the way
@@ -37,6 +41,17 @@ type markerSink struct {
 	// arrival is what keeps the session banner above it: the event carrying
 	// the session id only arrives after the driver has handed the prompt over.
 	pendingPrompt string
+}
+
+func newMarkerSink(out io.Writer) markerSink { return markerSink{out: out, now: time.Now} }
+
+// configure applies the stream's options to the engine's transcoder.
+func (m *markerSink) configure(options StreamOptions) {
+	m.onEvent = options.OnEvent
+	m.structured = options.Structured
+	if options.Clock != nil {
+		m.now = options.Clock
+	}
 }
 
 // writeLines feeds whole lines to consume, carrying any partial tail to the

@@ -81,7 +81,6 @@ func (u antigravityUsage) usage() (harness.Usage, bool) {
 type antigravityTranscoder struct {
 	markerSink
 
-	structured      bool
 	completed       bool
 	sawUsage        bool
 	usageIncomplete bool
@@ -97,17 +96,15 @@ type antigravityTranscoder struct {
 	completedTools  map[string]bool
 	countedSteps    map[int]bool
 	running         map[string]time.Time
-	now             func() time.Time
 }
 
 func newAntigravityTranscoder(out io.Writer) *antigravityTranscoder {
 	return &antigravityTranscoder{
-		markerSink:     markerSink{out: out},
+		markerSink:     newMarkerSink(out),
 		startedTools:   map[string]bool{},
 		completedTools: map[string]bool{},
 		countedSteps:   map[int]bool{},
 		running:        map[string]time.Time{},
-		now:            time.Now,
 	}
 }
 

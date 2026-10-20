@@ -135,6 +135,8 @@ type transcoder interface {
 	// failureCause says why a failed turn failed, where the harness said;
 	// empty when it did not.
 	failureCause() (harness.Cause, *time.Time)
+	// configure applies the stream's options.
+	configure(StreamOptions)
 }
 
 // Stream converts JSON-line CLI output to a common transcript and events.
@@ -147,55 +149,16 @@ type Stream struct {
 }
 
 func NewStream(engine harness.Engine, transcript io.Writer, options StreamOptions) (*Stream, error) {
+	entry, ok := nativeEngines[engine]
+	if !ok {
+		return nil, capabilityError(engine, CodeUnsupportedEngine)
+	}
 	if transcript == nil {
 		transcript = io.Discard
 	}
-	s := &Stream{engine: engine, structured: options.Structured}
-	switch engine {
-	case harness.Codex:
-		t := newCodexTranscoder(transcript)
-		t.onEvent = options.OnEvent
-		t.structured = options.Structured
-		if options.Clock != nil {
-			t.now = options.Clock
-		}
-		s.t = t
-	case harness.Claude:
-		t := newStreamTranscoder(transcript)
-		t.onEvent = options.OnEvent
-		t.structured = options.Structured
-		if options.Clock != nil {
-			t.now = options.Clock
-		}
-		s.t = t
-	case harness.Grok:
-		t := newGrokTranscoder(transcript)
-		t.onEvent = options.OnEvent
-		t.structured = options.Structured
-		if options.Clock != nil {
-			t.now = options.Clock
-		}
-		s.t = t
-	case harness.Fx:
-		t := newFxTranscoder(transcript)
-		t.onEvent = options.OnEvent
-		t.structured = options.Structured
-		if options.Clock != nil {
-			t.now = options.Clock
-		}
-		s.t = t
-	case harness.Antigravity:
-		t := newAntigravityTranscoder(transcript)
-		t.onEvent = options.OnEvent
-		t.structured = options.Structured
-		if options.Clock != nil {
-			t.now = options.Clock
-		}
-		s.t = t
-	default:
-		return nil, capabilityError(engine, CodeUnsupportedEngine)
-	}
-	return s, nil
+	t := entry.transcoder(transcript)
+	t.configure(options)
+	return &Stream{engine: engine, structured: options.Structured, t: t}, nil
 }
 
 func (s *Stream) Write(p []byte) (int, error) { return s.t.Write(p) }
@@ -232,19 +195,48 @@ func (s *Stream) Report() (json.RawMessage, error) {
 // schema and output files, when a Schema was requested. An engine with no
 // native run is refused before this is called.
 func buildArgs(c Config, r Request, report *codexReport) []string {
-	switch c.Provider.Engine {
-	case harness.Codex:
-		return codexArgs(c, r, report)
-	case harness.Claude:
-		return claudeArgs(c, r)
-	case harness.Antigravity:
-		return antigravityArgs(c, r)
-	case harness.Grok:
-		return grokArgs(c, r)
-	case harness.Fx:
-		return fxArgs(c, r)
+	entry, ok := nativeEngines[c.Provider.Engine]
+	if !ok {
+		return nil
 	}
-	return nil
+	return entry.args(c, r, report)
+}
+
+// nativeEngine is what native runs know about one engine: how its output is
+// transcoded, how a request becomes its command line, and whether its own
+// options are set.
+type nativeEngine struct {
+	transcoder func(io.Writer) transcoder
+	args       func(Config, Request, *codexReport) []string
+	optionsSet func(Config) bool
+}
+
+var nativeEngines = map[harness.Engine]nativeEngine{
+	harness.Codex: {
+		transcoder: func(w io.Writer) transcoder { return newCodexTranscoder(w) },
+		args:       codexArgs,
+		optionsSet: func(c Config) bool { return c.Codex.set() },
+	},
+	harness.Claude: {
+		transcoder: func(w io.Writer) transcoder { return newStreamTranscoder(w) },
+		args:       func(c Config, r Request, _ *codexReport) []string { return claudeArgs(c, r) },
+		optionsSet: func(c Config) bool { return c.Claude.set() },
+	},
+	harness.Grok: {
+		transcoder: func(w io.Writer) transcoder { return newGrokTranscoder(w) },
+		args:       func(c Config, r Request, _ *codexReport) []string { return grokArgs(c, r) },
+		optionsSet: func(c Config) bool { return c.Grok.set() },
+	},
+	harness.Antigravity: {
+		transcoder: func(w io.Writer) transcoder { return newAntigravityTranscoder(w) },
+		args:       func(c Config, r Request, _ *codexReport) []string { return antigravityArgs(c, r) },
+		optionsSet: func(c Config) bool { return c.Antigravity.set() },
+	},
+	harness.Fx: {
+		transcoder: func(w io.Writer) transcoder { return newFxTranscoder(w) },
+		args:       func(c Config, r Request, _ *codexReport) []string { return fxArgs(c, r) },
+		optionsSet: func(c Config) bool { return c.Fx.set() },
+	},
 }
 
 func codexArgs(c Config, r Request, report *codexReport) []string {

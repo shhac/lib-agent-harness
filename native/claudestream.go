@@ -117,7 +117,6 @@ const structuredOutputTool = "StructuredOutput"
 type streamTranscoder struct {
 	markerSink // line reassembly, marker writing, the prompt banner
 
-	structured      bool
 	completed       bool
 	sawUsage        bool
 	sawCost         bool
@@ -134,11 +133,10 @@ type streamTranscoder struct {
 	suppressed      map[string]bool     // tool_use ids whose result must be dropped too
 	refusal         claudeproto.Refusal // why the latest request was refused, cleared by a response
 
-	now func() time.Time // injectable clock so the rendered durations are testable
 }
 
 func newStreamTranscoder(out io.Writer) *streamTranscoder {
-	return &streamTranscoder{markerSink: markerSink{out: out}, suppressed: map[string]bool{}, now: time.Now}
+	return &streamTranscoder{markerSink: newMarkerSink(out), suppressed: map[string]bool{}}
 }
 
 // userPrompt overrides the embedded registration to also record that the
