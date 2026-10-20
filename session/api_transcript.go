@@ -1,8 +1,5 @@
 package session
 
-// An OpenAI-compatible session's durable conversation: an append-only JSON
-// Lines transcript, synced after every record, under an exclusive lock.
-
 import (
 	"bytes"
 	"encoding/json"
@@ -18,6 +15,9 @@ import (
 	"github.com/shhac/lib-agent-harness/completion"
 	"github.com/shhac/lib-agent-harness/internal/sandboxbridge"
 )
+
+// An OpenAI-compatible session's durable conversation: an append-only JSON
+// Lines transcript, synced after every record, under an exclusive lock.
 
 // Record types, in the order a turn writes them.
 const (
@@ -327,4 +327,32 @@ func conversationBegun(records []record) bool {
 		}
 	}
 	return false
+}
+
+// Recovery is what reopening a session found left over from the process that
+// last had it open. It is reported, never acted on: no tool is ever re-run.
+type Recovery struct {
+	// TurnID names a turn that was still running when the session stopped
+	// without closing, "" when there was none. Such a turn is recorded as
+	// interrupted.
+	TurnID string `json:"turn_id,omitempty"`
+	// UnknownOutcomes are calls that had started without a recorded result.
+	// Their effects may or may not have happened; each is answered in the
+	// history as having an unknown outcome.
+	UnknownOutcomes []RecoveredCall `json:"unknown_outcomes,omitempty"`
+}
+
+// RecoveredCall names one call by the model's identifier and the tool's name.
+type RecoveredCall struct {
+	ID   string `json:"id"`
+	Tool string `json:"tool"`
+}
+
+// Recovered reports what opening this session found left over. It is the zero
+// value for a new session, a clean resume, and every CLI session.
+func (s *Session) Recovered() Recovery {
+	if s.api == nil {
+		return Recovery{}
+	}
+	return s.api.recovery
 }
