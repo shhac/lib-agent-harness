@@ -410,7 +410,7 @@ func (s *Session) setCommandCodeOption(ctx context.Context, id, option, value, c
 // returned as it is.
 func commandCodeConfigRefused(err error, code string) error {
 	var refusal *acpRefusal
-	if errors.As(err, &refusal) && (refusal.code == commandCodeInvalidParams || refusal.code == acpMethodMissing) {
+	if errors.As(err, &refusal) && (refusal.code == acpInvalidParams || refusal.code == acpMethodMissing) {
 		return &CapabilityError{Engine: harness.CommandCode, Code: code, Phase: BeforeFirstPrompt}
 	}
 	return err
@@ -427,112 +427,25 @@ func (s *Session) closeCommandCodeSession(id string) {
 }
 
 // commandCodeDialect is Command Code's ACP, answering permission requests by
-// the session's policy.
+// the session's policy with the strict once-only answer.
 func commandCodeDialect(p Policy) dialect {
-	return dialect{
-		envelope:   acpEnvelope,
-		parseReply: parseCommandCodeReply,
-		answer: func(m map[string]json.RawMessage) (map[string]any, bool) {
-			if !jsonRPCRequest(m) {
-				return nil, false
-			}
-			return commandCodeServerReply(m, p.CommandCodePermission), true
-		},
-	}
+	return acpDialect(harness.CommandCode, commandCodeRefusalCode, func(params json.RawMessage) map[string]any {
+		return acpStrictPermissionOutcome(params, p.CommandCodePermission == CommandCodeAllowWhenAsked)
+	})
 }
 
-// commandCodeServerReply answers a request from the agent. Only a permission
-// request is answered, by the session's policy and never with an "always"
-// option, which would grant or refuse the tool for the rest of the session.
-// Anything else is refused with a JSON-RPC error rather than left unanswered.
-func commandCodeServerReply(m map[string]json.RawMessage, permission string) map[string]any {
-	reply := map[string]any{"jsonrpc": "2.0", "id": m["id"]}
-	if str(m, "method") != "session/request_permission" {
-		reply["error"] = refusedOperation()
-		return reply
-	}
-	reply["result"] = map[string]any{"outcome": commandCodePermissionOutcome(m["params"], permission)}
-	return reply
-}
-
-// commandCodePermissionOutcome selects the allow-once option under
-// CommandCodeAllowWhenAsked and the reject-once option otherwise, and only
-// when the request offers both. A tool that would change the permission mode
-// is rejected under either policy: allowing it would let every later change
-// run without asking. Command Code asks the user a question through the same
-// method, offering only allow-once options, one per answer; such a request is
-// answered cancelled, as is anything unreadable, so no answer and no
-// permission is ever guessed.
-func commandCodePermissionOutcome(raw json.RawMessage, permission string) map[string]any {
-	var p struct {
-		ToolCall struct {
-			Kind string `json:"kind"`
-		} `json:"toolCall"`
-		Options []struct {
-			ID   string `json:"optionId"`
-			Kind string `json:"kind"`
-		} `json:"options"`
-	}
-	cancelled := map[string]any{"outcome": "cancelled"}
-	if json.Unmarshal(raw, &p) != nil {
-		return cancelled
-	}
-	chosen := map[string]string{}
-	ids := map[string]bool{}
-	for _, option := range p.Options {
-		if option.ID == "" {
-			continue
-		}
-		if _, seen := chosen[option.Kind]; seen {
-			return cancelled
-		}
-		if ids[option.ID] {
-			return cancelled
-		}
-		chosen[option.Kind] = option.ID
-		ids[option.ID] = true
-	}
-	allow, reject := chosen["allow_once"], chosen["reject_once"]
-	if allow == "" || reject == "" {
-		return cancelled
-	}
-	if permission == CommandCodeAllowWhenAsked && p.ToolCall.Kind != "switch_mode" {
-		return map[string]any{"outcome": "selected", "optionId": allow}
-	}
-	return map[string]any{"outcome": "selected", "optionId": reject}
-}
-
-// Command Code's own refusal codes, beside the ones every ACP agent shares.
-const (
-	commandCodeInvalidParams = "invalid_params"
-	commandCodeBusy          = "prompt_running"
-)
-
-// parseCommandCodeReply reads a JSON-RPC response as Codex's does, then
-// classifies an error reply from what Command Code states in fixed fields.
-func parseCommandCodeReply(m map[string]json.RawMessage) (string, response, bool, error) {
-	id, r, isReply, err := parseCodexReply(m)
-	if !isReply || err != nil || r.err == nil {
-		return id, r, isReply, err
-	}
-	var e struct {
-		Code int             `json:"code"`
-		Data json.RawMessage `json:"data"`
-	}
-	if json.Unmarshal(m["error"], &e) != nil {
-		return "", response{}, true, ErrProtocol
-	}
-	return id, response{err: &acpRefusal{engine: harness.CommandCode, rpc: e.Code, code: commandCodeRefusalCode(e.Code, e.Data)}}, true, nil
-}
+// commandCodeBusy is Command Code's own refusal code, beside the ones ACP
+// agents share.
+const commandCodeBusy = "prompt_running"
 
 // commandCodeRefusalCode classifies by the JSON-RPC code and, for a failed
 // run, the provider's HTTP status that Command Code passes on in data.
-func commandCodeRefusalCode(code int, data json.RawMessage) string {
+func commandCodeRefusalCode(code int, _ string, data json.RawMessage) string {
 	switch code {
 	case -32601:
 		return acpMethodMissing
 	case -32602:
-		return commandCodeInvalidParams
+		return acpInvalidParams
 	case -32600:
 		return commandCodeBusy
 	case -32000:

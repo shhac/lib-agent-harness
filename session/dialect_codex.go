@@ -14,7 +14,7 @@ func codexDialect(Policy) dialect {
 		envelope: func(id, method string, params map[string]any) map[string]any {
 			return map[string]any{"id": id, "method": method, "params": params}
 		},
-		parseReply: parseCodexReply,
+		parseReply: parseJSONRPCReply,
 		answer:     codexAnswer,
 	}
 }
@@ -37,10 +37,10 @@ func codexAnswer(m map[string]json.RawMessage) (map[string]any, bool) {
 	return reply, true
 }
 
-// parseCodexReply reads a JSON-RPC response into the request it answers and its
+// parseJSONRPCReply reads a JSON-RPC response into the request it answers and its
 // outcome. isReply is false for a notification or a server request, and a reply
 // that cannot be read is ErrProtocol.
-func parseCodexReply(m map[string]json.RawMessage) (id string, r response, isReply bool, err error) {
+func parseJSONRPCReply(m map[string]json.RawMessage) (id string, r response, isReply bool, err error) {
 	if len(m["method"]) != 0 || len(m["id"]) == 0 {
 		return "", response{}, false, nil
 	}

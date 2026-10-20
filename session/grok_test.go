@@ -386,7 +386,7 @@ func TestGrokPermissionNeverGrantsMoreThanOnce(t *testing.T) {
 	if got := grokPermissionOutcome(json.RawMessage(`not json`), GrokAllowWhenAsked); got["outcome"] != "cancelled" {
 		t.Errorf("an unreadable request was allowed: %v", got)
 	}
-	reply := grokServerReply(map[string]json.RawMessage{"id": json.RawMessage(`3`), "method": json.RawMessage(`"terminal/create"`)}, GrokAllowWhenAsked)
+	reply, _ := grokDialect(Policy{GrokPermission: GrokAllowWhenAsked}).answer(map[string]json.RawMessage{"id": json.RawMessage(`3`), "method": json.RawMessage(`"terminal/create"`)})
 	if reply["error"] == nil || reply["result"] != nil || reply["jsonrpc"] != "2.0" {
 		t.Errorf("an unhandled request was not refused: %v", reply)
 	}
@@ -551,7 +551,7 @@ func TestGrokRefusalsAreClassifiedWithoutProviderText(t *testing.T) {
 	}{
 		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32601,"message":"Method not found"}}`, acpMethodMissing, ErrUnsupported},
 		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32000,"message":"Authentication required","data":"no auth method id provided"}}`, acpAuthRequired, ErrRejected},
-		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32603,"message":"Path not found.","data":{"code":"FS_NOT_FOUND"}}}`, grokSessionNotFound, ErrRejected},
+		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32603,"message":"Path not found.","data":{"code":"FS_NOT_FOUND"}}}`, acpSessionNotFound, ErrRejected},
 		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32603,"message":"Internal error","data":{"message":"secret","http_status":401}}}`, acpAuthFailed, ErrRejected},
 		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32603,"message":"Internal error","data":{"message":"secret","http_status":503}}}`, acpProviderUnavailable, ErrRejected},
 		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32603,"message":"secret"}}`, acpRejected, ErrRejected},
@@ -560,7 +560,7 @@ func TestGrokRefusalsAreClassifiedWithoutProviderText(t *testing.T) {
 		if err := json.Unmarshal([]byte(tc.reply), &m); err != nil {
 			t.Fatal(err)
 		}
-		id, r, isReply, err := parseGrokReply(m)
+		id, r, isReply, err := grokDialect(Policy{}).parseReply(m)
 		var refusal *acpRefusal
 		if id != "1" || !isReply || err != nil || !errors.As(r.err, &refusal) || refusal.code != tc.code || !errors.Is(r.err, tc.is) {
 			t.Fatalf("%s: %q %+v %v %v", tc.reply, id, r, isReply, err)

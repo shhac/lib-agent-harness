@@ -595,7 +595,7 @@ func TestCommandCodeModeUpdateBeforeTheWatchIsArmed(t *testing.T) {
 				}
 				switch setMode {
 				case "refuse":
-					return nil, &acpRefusal{engine: harness.CommandCode, rpc: -32602, code: commandCodeInvalidParams}
+					return nil, &acpRefusal{engine: harness.CommandCode, rpc: -32602, code: acpInvalidParams}
 				case "silent":
 				default:
 					notify(s, `{"method":"session/update","params":{"sessionId":"cc-session-1","update":{"sessionUpdate":"current_mode_update","currentModeId":"default"}}}`)
@@ -766,33 +766,6 @@ func TestCommandCodePermissionRequestsFollowThePolicy(t *testing.T) {
 				t.Fatalf("question answered %q", got)
 			}
 		})
-	}
-}
-
-func TestCommandCodePermissionNeverGrantsMoreThanOnce(t *testing.T) {
-	for _, tc := range []string{
-		`{"options":[{"optionId":"allow_always","kind":"allow_always"},{"optionId":"reject_always","kind":"reject_always"}]}`,
-		`{"options":[{"optionId":"allow_once","kind":"allow_once"}]}`,
-		`{"options":[{"optionId":"reject_once","kind":"reject_once"}]}`,
-		`{"options":[{"optionId":"a","kind":"allow_once"},{"optionId":"b","kind":"allow_once"},{"optionId":"r","kind":"reject_once"}]}`,
-		`{"options":[{"optionId":"same","kind":"allow_once"},{"optionId":"same","kind":"reject_once"}]}`,
-		`not json`,
-	} {
-		for _, policy := range []string{CommandCodeDenyWhenAsked, CommandCodeAllowWhenAsked} {
-			if got := commandCodePermissionOutcome(json.RawMessage(tc), policy); got["outcome"] != "cancelled" {
-				t.Errorf("%s under %s: %v", tc, policy, got)
-			}
-		}
-	}
-	modeSwitch := json.RawMessage(`{"toolCall":{"kind":"switch_mode"},"options":[{"optionId":"allow_once","kind":"allow_once"},{"optionId":"reject_once","kind":"reject_once"}]}`)
-	for _, policy := range []string{CommandCodeDenyWhenAsked, CommandCodeAllowWhenAsked} {
-		if got := commandCodePermissionOutcome(modeSwitch, policy); got["optionId"] != "reject_once" {
-			t.Errorf("a mode switch under %s: %v", policy, got)
-		}
-	}
-	reply := commandCodeServerReply(map[string]json.RawMessage{"id": json.RawMessage(`3`), "method": json.RawMessage(`"terminal/create"`)}, CommandCodeAllowWhenAsked)
-	if reply["error"] == nil || reply["result"] != nil || reply["jsonrpc"] != "2.0" {
-		t.Errorf("an unhandled request was not refused: %v", reply)
 	}
 }
 
@@ -985,7 +958,7 @@ func TestCommandCodeRefusalsAreClassifiedWithoutProviderText(t *testing.T) {
 		is    error
 	}{
 		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32601,"message":"secret"}}`, acpMethodMissing, ErrUnsupported},
-		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32602,"message":"Unknown model: secret"}}`, commandCodeInvalidParams, ErrRejected},
+		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32602,"message":"Unknown model: secret"}}`, acpInvalidParams, ErrRejected},
 		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32600,"message":"A prompt is already running"}}`, commandCodeBusy, ErrRejected},
 		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32000,"message":"Not authenticated. secret"}}`, acpAuthRequired, ErrRejected},
 		{`{"jsonrpc":"2.0","id":"1","error":{"code":-32603,"message":"secret","data":{"status":401,"code":"secret"}}}`, acpAuthFailed, ErrRejected},
@@ -996,7 +969,7 @@ func TestCommandCodeRefusalsAreClassifiedWithoutProviderText(t *testing.T) {
 		if err := json.Unmarshal([]byte(tc.reply), &m); err != nil {
 			t.Fatal(err)
 		}
-		id, r, isReply, err := parseCommandCodeReply(m)
+		id, r, isReply, err := commandCodeDialect(Policy{}).parseReply(m)
 		var refusal *acpRefusal
 		if id != "1" || !isReply || err != nil || !errors.As(r.err, &refusal) || refusal.code != tc.code || !errors.Is(r.err, tc.is) {
 			t.Fatalf("%s: %q %+v %v %v", tc.reply, id, r, isReply, err)

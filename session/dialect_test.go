@@ -92,6 +92,8 @@ func TestDialectAnswers(t *testing.T) {
 		{"grok notification", harness.Grok, Policy{}, `{"jsonrpc":"2.0","method":"session/update"}`, ``},
 		{"command code unknown", harness.CommandCode, Policy{}, `{"jsonrpc":"2.0","id":3,"method":"terminal/create"}`, `{` + refused + `,"id":3,"jsonrpc":"2.0"}`},
 		{"command code notification", harness.CommandCode, Policy{}, `{"jsonrpc":"2.0","method":"session/update"}`, ``},
+		{"fx unknown", harness.Fx, Policy{}, `{"jsonrpc":"2.0","id":3,"method":"fs/read_text_file"}`, `{` + refused + `,"id":3,"jsonrpc":"2.0"}`},
+		{"fx notification", harness.Fx, Policy{}, `{"jsonrpc":"2.0","method":"session/update"}`, ``},
 	} {
 		reply, isRequest := dialectFor(t, tc.engine, tc.policy).answer(frame(t, tc.frame))
 		if tc.want == "" {
@@ -120,6 +122,7 @@ func TestDialectPermissionPolicyIsPerWire(t *testing.T) {
 	}{
 		{harness.Grok, Policy{GrokPermission: GrokAllowWhenAsked}, Policy{GrokPermission: GrokDenyWhenAsked}},
 		{harness.CommandCode, Policy{CommandCodePermission: CommandCodeAllowWhenAsked}, Policy{CommandCodePermission: CommandCodeDenyWhenAsked}},
+		{harness.Fx, Policy{FxPermission: FxAllowWhenAsked}, Policy{FxPermission: FxDenyWhenAsked}},
 	} {
 		allowing, denying := dialectFor(t, tc.engine, tc.allow), dialectFor(t, tc.engine, tc.deny)
 		for i := 0; i < 2; i++ {

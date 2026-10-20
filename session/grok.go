@@ -27,7 +27,6 @@ package session
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -141,7 +140,7 @@ func (s *Session) initializeGrok(ctx context.Context, resume bool) error {
 	s.mu.Unlock()
 	body, err = s.transport.request(ctx, method, grokSessionParams(s.options, resume, id))
 	if err != nil {
-		if resume && grokSessionGone(err) {
+		if resume && acpSessionGone(err) {
 			return fmt.Errorf("%w: %w", errConversationGone, err)
 		}
 		return err
@@ -179,32 +178,12 @@ func (s *Session) discardGrokSession(id string) {
 }
 
 // grokDialect is Grok's ACP, answering permission requests by the session's
-// policy.
+// policy and never with an "always" option, which would persist a grant or a
+// rule in the operator's configuration.
 func grokDialect(p Policy) dialect {
-	return dialect{
-		envelope:   acpEnvelope,
-		parseReply: parseGrokReply,
-		answer: func(m map[string]json.RawMessage) (map[string]any, bool) {
-			if !jsonRPCRequest(m) {
-				return nil, false
-			}
-			return grokServerReply(m, p.GrokPermission), true
-		},
-	}
-}
-
-// grokServerReply answers a request from the agent. A permission request is
-// answered by the session's policy and never with an "always" option, which
-// would persist a grant or a rule in the operator's configuration. Anything
-// else is refused with a JSON-RPC error rather than left unanswered.
-func grokServerReply(m map[string]json.RawMessage, permission string) map[string]any {
-	reply := map[string]any{"jsonrpc": "2.0", "id": m["id"]}
-	if str(m, "method") != "session/request_permission" {
-		reply["error"] = refusedOperation()
-		return reply
-	}
-	reply["result"] = map[string]any{"outcome": grokPermissionOutcome(m["params"], permission)}
-	return reply
+	return acpDialect(harness.Grok, grokRefusalCode, func(params json.RawMessage) map[string]any {
+		return grokPermissionOutcome(params, p.GrokPermission)
+	})
 }
 
 // grokPermissionOutcome selects the allow-once option under GrokAllowWhenAsked and the
@@ -231,26 +210,7 @@ func grokPermissionOutcome(raw json.RawMessage, permission string) map[string]an
 	return map[string]any{"outcome": "cancelled"}
 }
 
-// grokSessionNotFound is Grok's refusal of a conversation it does not hold.
-const grokSessionNotFound = "session_not_found"
-
-// parseGrokReply reads a JSON-RPC response as Codex's does, then classifies
-// an error reply from what Grok states in fixed fields.
-func parseGrokReply(m map[string]json.RawMessage) (string, response, bool, error) {
-	id, r, isReply, err := parseCodexReply(m)
-	if !isReply || err != nil || r.err == nil {
-		return id, r, isReply, err
-	}
-	var e struct {
-		Code    int             `json:"code"`
-		Message string          `json:"message"`
-		Data    json.RawMessage `json:"data"`
-	}
-	if json.Unmarshal(m["error"], &e) != nil {
-		return "", response{}, true, ErrProtocol
-	}
-	return id, response{err: &acpRefusal{engine: harness.Grok, rpc: e.Code, code: grokRefusalCode(e.Code, e.Message, e.Data)}}, true, nil
-}
+// acpSessionNotFound is Grok's refusal of a conversation it does not hold.
 
 func grokRefusalCode(code int, message string, data json.RawMessage) string {
 	if code == -32601 {
@@ -262,7 +222,7 @@ func grokRefusalCode(code int, message string, data json.RawMessage) string {
 	}
 	_ = json.Unmarshal(data, &d)
 	if d.Code == "FS_NOT_FOUND" {
-		return grokSessionNotFound
+		return acpSessionNotFound
 	}
 	if code == -32000 && strings.Contains(message, "Authentication required") {
 		return acpAuthRequired
@@ -271,11 +231,6 @@ func grokRefusalCode(code int, message string, data json.RawMessage) string {
 		return status
 	}
 	return acpRejected
-}
-
-func grokSessionGone(err error) bool {
-	var refusal *acpRefusal
-	return errors.As(err, &refusal) && refusal.code == grokSessionNotFound
 }
 
 // grokAccountMethod reads the login on the session's own agent process. It

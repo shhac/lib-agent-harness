@@ -240,7 +240,7 @@ func (s *Session) initializeFx(ctx context.Context, resume bool) error {
 	}
 	body, err = s.transport.request(ctx, method, fxSessionParams(s.options, resume, id))
 	if err != nil {
-		if resume && fxSessionGone(err) {
+		if resume && acpSessionGone(err) {
 			return fmt.Errorf("%w: %w", errConversationGone, err)
 		}
 		return err
@@ -324,7 +324,7 @@ func (s *Session) setFxMode(ctx context.Context, id string, state fxSessionState
 	next, err := s.setFxOptionRaw(ctx, id, "mode", fxAskingMode)
 	if err != nil {
 		var refusal *acpRefusal
-		if errors.As(err, &refusal) && refusal.code == fxInvalidParams {
+		if errors.As(err, &refusal) && refusal.code == acpInvalidParams {
 			return fxConfig{}, &UnsupportedError{Engine: harness.Fx, Operation: "permission mode", Code: RefusedNotOffered, Capability: harness.Capability{Availability: harness.Unsupported, Reason: "the installed fx does not report the session's permission mode"}}
 		}
 		return fxConfig{}, fxConfigRefused(err, CapabilityChangedPermissionMode)
@@ -369,7 +369,7 @@ func (s *Session) setFxOptionRaw(ctx context.Context, id, option, value string) 
 // it means. Anything else, such as a lost transport, is returned as it is.
 func fxConfigRefused(err error, code string) error {
 	var refusal *acpRefusal
-	if errors.As(err, &refusal) && (refusal.code == fxInvalidParams || refusal.code == acpMethodMissing) {
+	if errors.As(err, &refusal) && (refusal.code == acpInvalidParams || refusal.code == acpMethodMissing) {
 		return &CapabilityError{Engine: harness.Fx, Code: code, Phase: BeforeFirstPrompt}
 	}
 	return err
@@ -385,102 +385,11 @@ func (s *Session) closeFxSession(id string) {
 }
 
 // fxDialect is fx's agent protocol, answering permission requests by the
-// session's policy.
+// session's policy with the strict once-only answer.
 func fxDialect(p Policy) dialect {
-	return dialect{
-		envelope:   acpEnvelope,
-		parseReply: parseFxReply,
-		answer: func(m map[string]json.RawMessage) (map[string]any, bool) {
-			if !jsonRPCRequest(m) {
-				return nil, false
-			}
-			return fxServerReply(m, p.FxPermission), true
-		},
-	}
-}
-
-// fxServerReply answers a request from the agent. Only a permission request
-// is answered, by the session's policy and never with an "always" option,
-// which would grant the tool for the rest of the session. Anything else is
-// refused with a JSON-RPC error rather than left unanswered.
-func fxServerReply(m map[string]json.RawMessage, permission string) map[string]any {
-	reply := map[string]any{"jsonrpc": "2.0", "id": m["id"]}
-	if str(m, "method") != "session/request_permission" {
-		reply["error"] = refusedOperation()
-		return reply
-	}
-	reply["result"] = map[string]any{"outcome": fxPermissionOutcome(m["params"], permission)}
-	return reply
-}
-
-// fxPermissionOutcome selects the allow-once option under FxAllowWhenAsked
-// and the reject-once option otherwise, and only when the request offers
-// both. A request that offers neither, or that offers two options of the
-// same kind or the same id, is answered cancelled: a shared id would let a
-// deny be read as an allow. A tool that would change the permission mode is
-// rejected under either policy, because allowing it would let every later
-// change run without asking.
-func fxPermissionOutcome(raw json.RawMessage, permission string) map[string]any {
-	var p struct {
-		ToolCall struct {
-			Kind string `json:"kind"`
-		} `json:"toolCall"`
-		Options []struct {
-			ID   string `json:"optionId"`
-			Kind string `json:"kind"`
-		} `json:"options"`
-	}
-	cancelled := map[string]any{"outcome": "cancelled"}
-	if json.Unmarshal(raw, &p) != nil {
-		return cancelled
-	}
-	chosen := map[string]string{}
-	ids := map[string]bool{}
-	for _, option := range p.Options {
-		if option.ID == "" {
-			continue
-		}
-		if _, seen := chosen[option.Kind]; seen {
-			return cancelled
-		}
-		if ids[option.ID] {
-			return cancelled
-		}
-		chosen[option.Kind] = option.ID
-		ids[option.ID] = true
-	}
-	allow, reject := chosen["allow_once"], chosen["reject_once"]
-	if allow == "" || reject == "" {
-		return cancelled
-	}
-	if permission == FxAllowWhenAsked && p.ToolCall.Kind != "switch_mode" {
-		return map[string]any{"outcome": "selected", "optionId": allow}
-	}
-	return map[string]any{"outcome": "selected", "optionId": reject}
-}
-
-// fx's own refusal codes, beside the ones every ACP agent shares.
-const (
-	fxInvalidParams   = "invalid_params"
-	fxSessionNotFound = "session_not_found"
-)
-
-// parseFxReply reads a JSON-RPC response as the other ACP agents' does, then
-// classifies an error reply from what fx states in fixed fields.
-func parseFxReply(m map[string]json.RawMessage) (string, response, bool, error) {
-	id, r, isReply, err := parseCodexReply(m)
-	if !isReply || err != nil || r.err == nil {
-		return id, r, isReply, err
-	}
-	var e struct {
-		Code    int             `json:"code"`
-		Message string          `json:"message"`
-		Data    json.RawMessage `json:"data"`
-	}
-	if json.Unmarshal(m["error"], &e) != nil {
-		return "", response{}, true, ErrProtocol
-	}
-	return id, response{err: &acpRefusal{engine: harness.Fx, rpc: e.Code, code: fxRefusalCode(e.Code, e.Message, e.Data)}}, true, nil
+	return acpDialect(harness.Fx, fxRefusalCode, func(params json.RawMessage) map[string]any {
+		return acpStrictPermissionOutcome(params, p.FxPermission == FxAllowWhenAsked)
+	})
 }
 
 // fxRefusalCode classifies by the JSON-RPC code, and reads fx's message only
@@ -493,9 +402,9 @@ func fxRefusalCode(code int, message string, data json.RawMessage) string {
 		return acpMethodMissing
 	case -32602:
 		if strings.Contains(message, "Session not found") {
-			return fxSessionNotFound
+			return acpSessionNotFound
 		}
-		return fxInvalidParams
+		return acpInvalidParams
 	case -32000:
 		return acpAuthRequired
 	}
@@ -507,10 +416,4 @@ func fxRefusalCode(code int, message string, data json.RawMessage) string {
 		return status
 	}
 	return acpRejected
-}
-
-// fxSessionGone reports whether a refusal means the conversation is gone.
-func fxSessionGone(err error) bool {
-	var refusal *acpRefusal
-	return errors.As(err, &refusal) && refusal.code == fxSessionNotFound
 }
