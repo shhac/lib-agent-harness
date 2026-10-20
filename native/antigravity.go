@@ -44,11 +44,7 @@ func withAntigravityEnvironment(env []string) []string {
 		}
 		out = append(out, entry)
 	}
-	for _, entry := range nativecli.AntigravityReducedTelemetry {
-		key, value, _ := strings.Cut(entry, "=")
-		out = overrideEnv(out, key, value)
-	}
-	return out
+	return nativecli.Override(out, nativecli.AntigravityReducedTelemetry...)
 }
 
 // antigravityArgs binds values with --flag=value so a prompt or value beginning

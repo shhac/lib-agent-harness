@@ -35,11 +35,7 @@ func withGrokReducedTelemetry(env []string) []string {
 	if env == nil {
 		env = os.Environ()
 	}
-	for _, entry := range grokReducedTelemetryEnvironment {
-		key, value, _ := strings.Cut(entry, "=")
-		env = overrideEnv(env, key, value)
-	}
-	return env
+	return nativecli.Override(env, grokReducedTelemetryEnvironment...)
 }
 
 // grokArgs binds every value with --flag=value: Grok's parser reads a separate

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/nativecli"
 	"github.com/shhac/lib-agent-harness/internal/tomltest"
 )
 
@@ -471,7 +472,7 @@ func TestDefaultClaudeHomeSelection(t *testing.T) {
 	if !isDefaultClaudeHome("/users/me/.claude", env) || isDefaultClaudeHome("/users/me/other", env) {
 		t.Fatal("wrong native home classification")
 	}
-	if got := withoutEnv(env, "CLAUDE_CONFIG_DIR"); !reflect.DeepEqual(got, []string{"HOME=/users/me"}) {
+	if got := nativecli.Without(env, "CLAUDE_CONFIG_DIR"); !reflect.DeepEqual(got, []string{"HOME=/users/me"}) {
 		t.Fatalf("override was retained: %v", got)
 	}
 }

@@ -442,10 +442,6 @@ func (s *Stream) readCodexReport(path string) error {
 	return err
 }
 
-func overrideEnv(env []string, key, value string) []string {
-	return append(withoutEnv(env, key), key+"="+value)
-}
-
 // nativeEnvironment applies only the selected engine's documented home and
 // policy variables. Nil continues to mean that the process inherits its exact
 // environment when no override is requested.
@@ -466,9 +462,9 @@ func nativeEnvironment(c Config) []string {
 			// The CLI has no variable that moves its home, and a home that
 			// names another directory was refused before the launch.
 		case engine == harness.Claude && isDefaultClaudeHome(home, env):
-			env = withoutEnv(env, key)
+			env = nativecli.Without(env, key)
 		default:
-			env = overrideEnv(env, key, home)
+			env = nativecli.Override(env, key+"="+home)
 		}
 	}
 	if engine != harness.Grok || c.Grok.Telemetry != GrokTelemetryReduced {
@@ -550,15 +546,6 @@ func Version(ctx context.Context, c Config) (string, error) {
 	return strings.TrimSpace(out.String()), err
 }
 
-func withoutEnv(env []string, key string) []string {
-	out := make([]string, 0, len(env))
-	for _, entry := range env {
-		if !strings.HasPrefix(entry, key+"=") {
-			out = append(out, entry)
-		}
-	}
-	return out
-}
 func isDefaultClaudeHome(home string, env []string) bool {
 	userHome := ""
 	for _, entry := range env {
