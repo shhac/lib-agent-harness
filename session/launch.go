@@ -14,7 +14,6 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
-	"github.com/shhac/lib-agent-harness/internal/nativecli"
 )
 
 // prepareLaunch builds a restricted session's runtime and proves it before any
@@ -78,70 +77,6 @@ type launch struct {
 
 func commandArgs(o Options, nativeID string, resuming bool, l *launch) []string {
 	return engines[o.Provider.Engine].args(o, nativeID, resuming, l)
-}
-
-// codexArgs runs Codex's app server on stdio.
-func codexArgs(o Options, _ string, _ bool, l *launch) []string {
-	args := []string{"app-server", "--listen", "stdio://"}
-	if o.Browser {
-		args = append(args, nativecli.CodexBrowserArgs()...)
-	}
-	if l != nil {
-		args = append(args, l.extra...)
-	}
-	return args
-}
-
-// claudeArgs runs Claude Code's stream-json protocol for one conversation.
-func claudeArgs(o Options, nativeID string, resuming bool, l *launch) []string {
-	args := []string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--permission-mode", o.Policy.ClaudePermission}
-	if l != nil {
-		args = append(args, l.extra...)
-	}
-	if o.Browser {
-		args = append(args, "--chrome")
-	}
-	if resuming {
-		args = append(args, "--resume", nativeID)
-	} else {
-		args = append(args, "--session-id", nativeID)
-	}
-	if o.Model != "" {
-		args = append(args, "--model", o.Model)
-	}
-	if o.Effort != "" {
-		args = append(args, "--effort", o.Effort)
-	}
-	if o.Policy.ClaudeTools != nil {
-		args = append(args, "--tools="+strings.Join(o.Policy.ClaudeTools, ","))
-	}
-	args = append(args, claudeSkillArgs(o)...)
-	if instructions := effectiveInstructions(o); instructions.Mode != "" {
-		flag := "--system-prompt"
-		if instructions.Mode == Append {
-			flag = "--append-system-prompt"
-		}
-		args = append(args, flag, instructions.Text)
-	}
-	return args
-}
-
-// grokArgs starts Grok's agent protocol on stdio, always as its own process:
-// a shared leader would carry another client's sessions and configuration.
-// Values are bound with "=", because Grok reads a separate value beginning
-// with "-" as a missing one.
-func grokArgs(o Options) []string {
-	args := []string{"agent", "--no-leader"}
-	if o.Model != "" {
-		args = append(args, "--model="+o.Model)
-	}
-	if o.Effort != "" {
-		args = append(args, "--reasoning-effort="+o.Effort)
-	}
-	if o.skills != nil && o.skills.delivery == nativeSkills {
-		args = append(args, "--plugin-dir="+o.skills.pluginDir)
-	}
-	return append(args, "stdio")
 }
 
 // verificationKey identifies exactly what a probe established: this binary, as
@@ -259,36 +194,4 @@ func disposableEnvironment(o Options, dir string) []string {
 		return append(env, "CODEX_HOME="+dir)
 	}
 	return append(env, "CLAUDE_CONFIG_DIR="+dir)
-}
-
-// codexRestrictedLaunch runs a restricted Codex session in a home this library
-// owns, with the operator's login shared into it: their own home keeps its
-// servers, hooks and trust settings, and none of it reaches the worker. The
-// model catalog is narrowed to the requested model and effort.
-func codexRestrictedLaunch(ctx context.Context, o Options, host *toolHost) (Options, []string, error) {
-	if _, err := prepareRuntimeHome(o.Provider.CLI.Home, o.RuntimeHome); err != nil {
-		return o, nil, err
-	}
-	if err := syncRuntimeSkills(o); err != nil {
-		return o, nil, err
-	}
-	catalog, err := readCodexCatalog(ctx, o)
-	if err != nil {
-		return o, nil, err
-	}
-	restricted, effort, err := restrictedCatalogFor(catalog, o.Model, o.Effort)
-	if err != nil {
-		return o, nil, err
-	}
-	o.Effort = effort
-	catalogFile := catalogPath(host.cfg.Dir)
-	if err = writePrivate(catalogFile, restricted); err != nil {
-		return o, nil, err
-	}
-	args, err := codexRestrictedArgs(host, catalogFile)
-	return o, args, err
-}
-
-func claudeRestrictedLaunch(_ context.Context, o Options, host *toolHost) (Options, []string, error) {
-	return o, claudeRestrictedArgs(host), nil
 }

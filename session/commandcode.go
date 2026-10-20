@@ -1,5 +1,15 @@
 package session
 
+import (
+	"context"
+	"encoding/json"
+	"path/filepath"
+	"slices"
+	"strings"
+
+	harness "github.com/shhac/lib-agent-harness"
+)
+
 // Command Code's Agent Client Protocol: JSON-RPC 2.0 over the stdio of
 // `cmd acp`. Every method and shape here was checked against Command Code
 // 1.74.1:
@@ -34,15 +44,6 @@ package session
 //     request offers allow_once and reject_once (and the "always" options
 //     unless the call carries a risk). Command Code also asks the user a
 //     question through it, offering one allow_once option per answer.
-
-import (
-	"context"
-	"encoding/json"
-	"path/filepath"
-	"slices"
-
-	harness "github.com/shhac/lib-agent-harness"
-)
 
 // commandCodeProtocolVersion is the only Agent Client Protocol version spoken
 // to Command Code.
@@ -353,4 +354,16 @@ func commandCodeRefusalCode(code int, _ string, data json.RawMessage) string {
 		return status
 	}
 	return acpRejected
+}
+
+// commandCodeManaged is what a Command Code session neither inherits nor
+// accepts as an addition: Command Code's own variables, which change where it
+// connects, which providers it uses and how it runs, except its protective
+// switches.
+func commandCodeManaged(key string) bool {
+	upper := strings.ToUpper(key)
+	if upper == "CMD_ZDR" || upper == "CMD_LOCAL_ONLY" {
+		return false
+	}
+	return strings.HasPrefix(upper, "CMD_") || strings.HasPrefix(upper, "COMMANDCODE_") || strings.HasPrefix(upper, "COMMAND_CODE_")
 }

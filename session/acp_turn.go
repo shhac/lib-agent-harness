@@ -144,3 +144,8 @@ func (s *Session) acpTurnEnded(t *Turn, engine harness.Engine, end acpTurnEnd, c
 	s.emit(t, Event{Kind: "status", Status: end.status})
 	t.finish(end.status, err)
 }
+
+// interruptACP cancels the running prompt, as every ACP agent reads it.
+func (s *Session) interruptACP(ctx context.Context, _ string) error {
+	return s.transport.send(ctx, grokNotification("session/cancel", map[string]any{"sessionId": s.Ref().ID}))
+}

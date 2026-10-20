@@ -5,12 +5,10 @@ package session
 
 import (
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 
 	harness "github.com/shhac/lib-agent-harness"
-	"github.com/shhac/lib-agent-harness/internal/nativecli"
 )
 
 // environment is the session's own environment plus the caller's additions,
@@ -23,100 +21,10 @@ func environment(o Options) []string {
 	return append(env, o.Env...)
 }
 
-// claudeOverrides turns off auto-memory in a sandboxed session: it would read
-// and write the operator's own memory folders.
-func claudeOverrides(o Options, env []string) []string {
-	if o.Sandbox == nil {
-		return env
-	}
-	return append(env, "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1")
-}
-
-func grokOverrides(o Options, env []string) []string {
-	if o.Policy.GrokTelemetry != GrokTelemetryReduced {
-		return env
-	}
-	return nativecli.Override(env, nativecli.GrokReducedTelemetry...)
-}
-
 // homeVariable names the environment variable that selects an engine's home.
 func homeVariable(e harness.Engine) string {
 	described, _ := harness.Describe(e)
 	return described.HomeVariable
-}
-
-// codexHomeValue gives a restricted or sandboxed session its own runtime
-// home: the library wrote that home's configuration and shared the login into
-// it, so nothing the operator keeps beside their credential comes along.
-func codexHomeValue(o Options) (string, bool) {
-	if (o.Restriction != nil || o.Sandbox != nil) && o.RuntimeHome != "" {
-		return o.RuntimeHome, true
-	}
-	return o.Provider.CLI.Home, true
-}
-
-// claudeHomeValue leaves CLAUDE_CONFIG_DIR unset for the CLI's own default
-// home, where setting it would move Claude's project and credential lookup.
-func claudeHomeValue(o Options) (string, bool) {
-	home, err := os.UserHomeDir()
-	if err == nil && filepath.Clean(o.Provider.CLI.Home) == filepath.Join(home, ".claude") {
-		return "", false
-	}
-	return o.Provider.CLI.Home, true
-}
-
-// grokManaged is what a Grok session never inherits: its home, which the
-// session selects, and the credentials and endpoint overrides that would move
-// it off the selected login.
-func grokManaged(key string) bool {
-	upper := strings.ToUpper(key)
-	if strings.HasPrefix(upper, "XAI_") || strings.HasPrefix(upper, "GROK_AUTH") {
-		return true
-	}
-	if !strings.HasPrefix(upper, "GROK_") {
-		return false
-	}
-	return upper == "GROK_HOME" || upper == "GROK_DEPLOYMENT_KEY" || upper == "GROK_AGENT_SECRET" || strings.HasSuffix(upper, "_API_KEY") || strings.HasSuffix(upper, "_URL")
-}
-
-// commandCodeManaged is what a Command Code session neither inherits nor
-// accepts as an addition: Command Code's own variables, which change where it
-// connects, which providers it uses and how it runs, except its protective
-// switches.
-func commandCodeManaged(key string) bool {
-	upper := strings.ToUpper(key)
-	if upper == "CMD_ZDR" || upper == "CMD_LOCAL_ONLY" {
-		return false
-	}
-	return strings.HasPrefix(upper, "CMD_") || strings.HasPrefix(upper, "COMMANDCODE_") || strings.HasPrefix(upper, "COMMAND_CODE_")
-}
-
-// fxManaged is what an fx session never inherits: fx's own variables, which
-// change which sign-in it uses, which model it runs, how it asks and how it
-// reports, except its protective switches.
-func fxManaged(key string) bool {
-	upper := strings.ToUpper(key)
-	if fxProtected(upper) {
-		return false
-	}
-	return strings.HasPrefix(upper, "FX_")
-}
-
-// fxProtected are the fx variables that carry the operator's own choice of a
-// bound, a cost or a network switch. Dropping one would run the session with
-// more room, at more cost, or reaching further than the operator allowed, so
-// these are inherited and accepted as additions; the rest of fx's variables
-// stay managed.
-//
-// fx has no environment variable that carries a privacy guarantee: its Zero
-// Data Retention control is a Gateway account setting, which no environment
-// variable reaches.
-func fxProtected(upper string) bool {
-	switch upper {
-	case "FX_MAX_AGENT_STEPS", "FX_ULTRAFAST", "FX_AUTO_UPGRADE":
-		return true
-	}
-	return false
 }
 
 // sandboxInherited is all a sandboxed session inherits from this process:
@@ -204,13 +112,6 @@ func validateEnv(o Options) error {
 	return nil
 }
 
-func refuseCodexAddition(o Options, key, upper string) error {
-	if o.Sandbox != nil && o.Browser && (strings.HasPrefix(upper, "NODE_REPL_") || strings.HasPrefix(upper, "BROWSER_USE_") || strings.HasPrefix(upper, "SKY_")) {
-		return refuse(o, "env", RefusedEnvManaged, "environment addition "+key+" would change the sandboxed browser outside its proven configuration")
-	}
-	return nil
-}
-
 // refuseManagedAddition refuses a caller's addition of a variable managed
 // reports, for an engine whose inheritance and addition rules are the same
 // set. Each engine wires it explicitly, so changing what an engine inherits
@@ -222,16 +123,6 @@ func refuseManagedAddition(label string, managed func(key string) bool) func(o O
 		}
 		return nil
 	}
-}
-
-// refuseGrokAddition refuses every GROK_ and XAI_ addition, more than a Grok
-// session withholds on inheritance: the operator's own Grok settings carry
-// over, but a caller sets Grok's controls only through Policy.
-func refuseGrokAddition(o Options, key, upper string) error {
-	if strings.HasPrefix(upper, "GROK_") || strings.HasPrefix(upper, "XAI_") {
-		return refuse(o, "env", RefusedEnvManaged, "environment addition "+key+" is managed by the harness; set Policy.GrokTelemetry for Grok's telemetry controls")
-	}
-	return nil
 }
 
 var envKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)

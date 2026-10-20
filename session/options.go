@@ -264,47 +264,6 @@ func legacyPolicyDefaults(o Options) Options {
 	return o
 }
 
-func normalizeCodexPolicy(o Options) (Options, error) {
-	o = legacyPolicyDefaults(o)
-	switch o.Policy.CodexSandbox {
-	case "read-only", "workspace-write", "danger-full-access":
-	default:
-		return o, refuse(o, "policy", RefusedPolicy, "invalid Codex sandbox policy")
-	}
-	switch o.Policy.CodexApproval {
-	case "never", "on-request", "untrusted":
-	default:
-		return o, refuse(o, "policy", RefusedPolicy, "invalid Codex approval policy")
-	}
-	return o, nil
-}
-
-func normalizeClaudePolicy(o Options) (Options, error) {
-	o = legacyPolicyDefaults(o)
-	switch o.Policy.ClaudePermission {
-	case "dontAsk", "default", "acceptEdits", "plan", "auto":
-	default:
-		return o, refuse(o, "policy", RefusedPolicy, "invalid Claude permission policy")
-	}
-	return o, nil
-}
-
-func normalizeGrokPolicy(o Options) (Options, error) {
-	switch o.Policy.GrokPermission {
-	case "":
-		return o, refuse(o, "policy", RefusedPolicy, "Grok's agent mode runs edits and commands without asking; set Policy.GrokPermission to GrokDenyWhenAsked or GrokAllowWhenAsked knowingly")
-	case GrokDenyWhenAsked, GrokAllowWhenAsked:
-	default:
-		return o, refuse(o, "policy", RefusedPolicy, "invalid Grok permission policy")
-	}
-	switch o.Policy.GrokTelemetry {
-	case "", GrokTelemetryReduced:
-	default:
-		return o, refuse(o, "policy", RefusedPolicy, "invalid Grok telemetry policy")
-	}
-	return o, nil
-}
-
 // reference digests the stable contract a resume has to match.
 //
 // An ordinary session hashes exactly the fields it always hashed, in exactly

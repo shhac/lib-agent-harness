@@ -1,5 +1,16 @@
 package session
 
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+
+	harness "github.com/shhac/lib-agent-harness"
+)
+
 // fx's Agent Client Protocol: JSON-RPC 2.0 over the stdio of `fx acp`. Every
 // method and shape here was checked against fx 0.0.14:
 //
@@ -31,17 +42,6 @@ package session
 //     allow_once, allow_always and reject_once. A request that offers no
 //     option the session's policy wants is answered cancelled, so neither a
 //     permission nor an answer is ever guessed.
-
-import (
-	"context"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"slices"
-	"strings"
-
-	harness "github.com/shhac/lib-agent-harness"
-)
 
 // fxProtocolVersion is the only Agent Client Protocol version spoken to fx.
 const fxProtocolVersion = 1
@@ -287,4 +287,32 @@ func fxRefusalCode(code int, message string, data json.RawMessage) string {
 		return status
 	}
 	return acpRejected
+}
+
+// fxManaged is what an fx session never inherits: fx's own variables, which
+// change which sign-in it uses, which model it runs, how it asks and how it
+// reports, except its protective switches.
+func fxManaged(key string) bool {
+	upper := strings.ToUpper(key)
+	if fxProtected(upper) {
+		return false
+	}
+	return strings.HasPrefix(upper, "FX_")
+}
+
+// fxProtected are the fx variables that carry the operator's own choice of a
+// bound, a cost or a network switch. Dropping one would run the session with
+// more room, at more cost, or reaching further than the operator allowed, so
+// these are inherited and accepted as additions; the rest of fx's variables
+// stay managed.
+//
+// fx has no environment variable that carries a privacy guarantee: its Zero
+// Data Retention control is a Gateway account setting, which no environment
+// variable reaches.
+func fxProtected(upper string) bool {
+	switch upper {
+	case "FX_MAX_AGENT_STEPS", "FX_ULTRAFAST", "FX_AUTO_UPGRADE":
+		return true
+	}
+	return false
 }

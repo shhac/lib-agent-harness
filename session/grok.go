@@ -1,5 +1,16 @@
 package session
 
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"time"
+
+	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/nativecli"
+)
+
 // Grok's Agent Client Protocol: JSON-RPC 2.0 over the stdio of
 // `grok agent --no-leader stdio`. Every method and shape here was checked
 // against grok 1.0.41:
@@ -23,17 +34,6 @@ package session
 //   - session/request_permission is a request from the agent. Grok asks only
 //     where a permission rule or its mode says to; otherwise, in agent mode, it
 //     runs edits and shell commands without asking.
-
-import (
-	"context"
-	"encoding/json"
-	"fmt"
-	"strings"
-	"time"
-
-	harness "github.com/shhac/lib-agent-harness"
-	"github.com/shhac/lib-agent-harness/internal/nativecli"
-)
 
 // grokProtocolVersion is the only Agent Client Protocol version spoken here.
 const grokProtocolVersion = 1
@@ -242,4 +242,69 @@ func parseGrokAccount(raw json.RawMessage) (harness.AccountSnapshot, error) {
 		return harness.AccountSnapshot{}, ErrProtocol
 	}
 	return a, nil
+}
+
+func normalizeGrokPolicy(o Options) (Options, error) {
+	switch o.Policy.GrokPermission {
+	case "":
+		return o, refuse(o, "policy", RefusedPolicy, "Grok's agent mode runs edits and commands without asking; set Policy.GrokPermission to GrokDenyWhenAsked or GrokAllowWhenAsked knowingly")
+	case GrokDenyWhenAsked, GrokAllowWhenAsked:
+	default:
+		return o, refuse(o, "policy", RefusedPolicy, "invalid Grok permission policy")
+	}
+	switch o.Policy.GrokTelemetry {
+	case "", GrokTelemetryReduced:
+	default:
+		return o, refuse(o, "policy", RefusedPolicy, "invalid Grok telemetry policy")
+	}
+	return o, nil
+}
+
+// grokManaged is what a Grok session never inherits: its home, which the
+// session selects, and the credentials and endpoint overrides that would move
+// it off the selected login.
+func grokManaged(key string) bool {
+	upper := strings.ToUpper(key)
+	if strings.HasPrefix(upper, "XAI_") || strings.HasPrefix(upper, "GROK_AUTH") {
+		return true
+	}
+	if !strings.HasPrefix(upper, "GROK_") {
+		return false
+	}
+	return upper == "GROK_HOME" || upper == "GROK_DEPLOYMENT_KEY" || upper == "GROK_AGENT_SECRET" || strings.HasSuffix(upper, "_API_KEY") || strings.HasSuffix(upper, "_URL")
+}
+
+// refuseGrokAddition refuses every GROK_ and XAI_ addition, more than a Grok
+// session withholds on inheritance: the operator's own Grok settings carry
+// over, but a caller sets Grok's controls only through Policy.
+func refuseGrokAddition(o Options, key, upper string) error {
+	if strings.HasPrefix(upper, "GROK_") || strings.HasPrefix(upper, "XAI_") {
+		return refuse(o, "env", RefusedEnvManaged, "environment addition "+key+" is managed by the harness; set Policy.GrokTelemetry for Grok's telemetry controls")
+	}
+	return nil
+}
+
+func grokOverrides(o Options, env []string) []string {
+	if o.Policy.GrokTelemetry != GrokTelemetryReduced {
+		return env
+	}
+	return nativecli.Override(env, nativecli.GrokReducedTelemetry...)
+}
+
+// grokArgs starts Grok's agent protocol on stdio, always as its own process:
+// a shared leader would carry another client's sessions and configuration.
+// Values are bound with "=", because Grok reads a separate value beginning
+// with "-" as a missing one.
+func grokArgs(o Options) []string {
+	args := []string{"agent", "--no-leader"}
+	if o.Model != "" {
+		args = append(args, "--model="+o.Model)
+	}
+	if o.Effort != "" {
+		args = append(args, "--reasoning-effort="+o.Effort)
+	}
+	if o.skills != nil && o.skills.delivery == nativeSkills {
+		args = append(args, "--plugin-dir="+o.skills.pluginDir)
+	}
+	return append(args, "stdio")
 }

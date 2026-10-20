@@ -6,7 +6,6 @@ package session
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 
 	harness "github.com/shhac/lib-agent-harness"
@@ -116,22 +115,6 @@ func (s *Session) watchTurn(lifetime context.Context, t *Turn) {
 	}()
 }
 
-// startCodexTurn asks the server to open the turn and adopts the id it assigns.
-func (s *Session) startCodexTurn(ctx context.Context, t *Turn, ref Ref, in Input) error {
-	body, err := s.transport.request(ctx, "turn/start", codexTurnParams(ref.ID, in.Text, s.options.Effort))
-	if err != nil {
-		return err
-	}
-	var r struct {
-		Turn struct{ ID string } `json:"turn"`
-	}
-	if json.Unmarshal(body, &r) != nil || r.Turn.ID == "" {
-		return ErrProtocol
-	}
-	s.replayStarting(t, r.Turn.ID)
-	return nil
-}
-
 // replayStarting ends t's starting phase. Notifications that arrived while the
 // turn was still starting were buffered against it, so they are replayed here,
 // under eventMu for the whole replay so no live notification interleaves with
@@ -239,44 +222,6 @@ func (s *Session) requestInterrupt(ctx context.Context, expected string) error {
 	return engines[s.options.Provider.Engine].interrupt(s, ctx, expected)
 }
 
-func (s *Session) interruptCodex(ctx context.Context, expected string) error {
-	_, err := s.transport.request(ctx, "turn/interrupt", map[string]any{"threadId": s.Ref().ID, "turnId": expected})
-	return err
-}
-
-func (s *Session) interruptClaude(ctx context.Context, _ string) error {
-	_, err := s.transport.request(ctx, "interrupt", map[string]any{})
-	return err
-}
-
-// interruptACP cancels the running prompt, as every ACP agent reads it.
-func (s *Session) interruptACP(ctx context.Context, _ string) error {
-	return s.transport.send(ctx, grokNotification("session/cancel", map[string]any{"sessionId": s.Ref().ID}))
-}
-
-// interruptAPI cancels the request and the running handler, both the
-// library's own. The tool channel pauses with them, as CancelTools does.
-func (s *Session) interruptAPI(context.Context, string) error {
-	s.CancelTools()
-	s.api.interrupt()
-	return nil
-}
-
-func (s *Session) startClaudeTurn(request, _ context.Context, _ *Turn, ref Ref, in Input) error {
-	return s.transport.send(request, claudeUserFrame(ref.ID, in.Text))
-}
-
-// startCodexTurnSynced brings the shared login up to date before the turn, so
-// concurrent workers sharing refresh tokens never start on a stale one.
-func (s *Session) startCodexTurnSynced(request, _ context.Context, t *Turn, ref Ref, in Input) error {
-	s.syncLogin()
-	return s.startCodexTurn(request, t, ref, in)
-}
-
-func (s *Session) startAPITurnEntry(_, _ context.Context, t *Turn, _ Ref, in Input) error {
-	return s.startAPITurn(t, in)
-}
-
 // Steer uses native Codex turn/steer or, on Claude, Grok and Command Code,
 // interrupt-and-continue. The composed path returns a NEW Turn after the old
 // turn's terminal result. There is no silent retry/restart; transport loss
@@ -338,23 +283,6 @@ func (s *Session) Steer(ctx context.Context, expected string, in Input, o SteerO
 	}
 	s.setCapability(&s.caps.Steer, harness.Capability{Availability: harness.Composed, Reason: reason})
 	return SteerResult{harness.Composed, next}, nil
-}
-
-// steerCodex is Codex's native turn/steer, which keeps the running turn.
-func (s *Session) steerCodex(ctx context.Context, t *Turn, expected string, in Input) (SteerResult, error) {
-	body, err := s.transport.request(ctx, "turn/steer", map[string]any{"threadId": s.Ref().ID, "expectedTurnId": expected, "input": codexInput(in.Text)})
-	if err != nil {
-		return SteerResult{}, s.controlFailed(opSteer, nil, err)
-	}
-	var reply struct {
-		TurnID string `json:"turnId"`
-	}
-	if json.Unmarshal(body, &reply) != nil || reply.TurnID != expected {
-		s.fail(ErrProtocol)
-		return SteerResult{}, ErrProtocol
-	}
-	s.setCapability(&s.caps.Steer, harness.Capability{Availability: harness.Native, Reason: "turn/steer acknowledged by installed harness"})
-	return SteerResult{harness.Native, t}, nil
 }
 
 // controlOp names a control request whose native method an installed harness

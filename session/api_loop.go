@@ -1,7 +1,5 @@
 package session
 
-// The turn loop the library runs for an OpenAI-compatible session.
-
 import (
 	"context"
 	"encoding/json"
@@ -12,6 +10,8 @@ import (
 	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/completion"
 )
+
+// The turn loop the library runs for an OpenAI-compatible session.
 
 // startAPITurn records the turn and its input, then runs the loop in the
 // background. The turn outlives the request that started it; interrupting it
@@ -287,4 +287,16 @@ func (s *Session) touch() {
 	s.mu.Lock()
 	s.lastEvent = time.Now().UTC()
 	s.mu.Unlock()
+}
+
+func (s *Session) startAPITurnEntry(_, _ context.Context, t *Turn, _ Ref, in Input) error {
+	return s.startAPITurn(t, in)
+}
+
+// interruptAPI cancels the request and the running handler, both the
+// library's own. The tool channel pauses with them, as CancelTools does.
+func (s *Session) interruptAPI(context.Context, string) error {
+	s.CancelTools()
+	s.api.interrupt()
+	return nil
 }
