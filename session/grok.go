@@ -32,6 +32,7 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/nativecli"
 )
 
 // grokProtocolVersion is the only Agent Client Protocol version spoken here.
@@ -234,27 +235,11 @@ func grokRefusalCode(code int, message string, data json.RawMessage) string {
 const grokAccountMethod = "_x.ai/auth/check_subscription"
 
 // parseGrokAccount reads a check_subscription answer, as package account does
-// for an inspection. Nil LoggedIn and empty fields stay unknown.
+// for an inspection.
 func parseGrokAccount(raw json.RawMessage) (harness.AccountSnapshot, error) {
-	var r struct {
-		Authenticated *bool `json:"authenticated"`
-		Meta          *struct {
-			Email    string  `json:"email"`
-			AuthMode string  `json:"auth_mode"`
-			Tier     string  `json:"subscription_tier"`
-			Team     *string `json:"team_name"`
-		} `json:"meta"`
-	}
-	if json.Unmarshal(raw, &r) != nil || r.Authenticated == nil {
+	a, ok := nativecli.GrokSubscription(raw, observation(grokAccountMethod, harness.Measured))
+	if !ok {
 		return harness.AccountSnapshot{}, ErrProtocol
-	}
-	a := harness.AccountSnapshot{Observation: observation(grokAccountMethod, harness.Measured), LoggedIn: r.Authenticated}
-	if !*r.Authenticated || r.Meta == nil {
-		return a, nil
-	}
-	a.Email, a.AuthMethod, a.Plan = r.Meta.Email, r.Meta.AuthMode, r.Meta.Tier
-	if r.Meta.Team != nil {
-		a.Organization = *r.Meta.Team
 	}
 	return a, nil
 }

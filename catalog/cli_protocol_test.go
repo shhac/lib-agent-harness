@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/nativecli"
 )
 
 const codexCatalogFixture = `{"id":1,"result":{}}
@@ -150,7 +151,7 @@ func TestGrokCatalogMapsTheVerifiedInitializeReply(t *testing.T) {
 	}
 	// Exactly one request, and never session/new: it runs the user's hooks
 	// and creates a session.
-	if written.String() != grokInitialize {
+	if written.String() != nativecli.GrokInitialize {
 		t.Fatalf("requests: %q", written.String())
 	}
 	if !reflect.DeepEqual(command.args, []string{"agent", "--no-leader", "stdio"}) {

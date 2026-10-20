@@ -19,6 +19,7 @@ import (
 
 	"github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/apihttp"
+	"github.com/shhac/lib-agent-harness/internal/nativecli"
 	"github.com/shhac/lib-agent-harness/internal/rawjson"
 	"github.com/shhac/lib-agent-harness/internal/tokens"
 	"github.com/shhac/lib-agent-harness/process"
@@ -230,13 +231,10 @@ func grokUsage(report *grokUsageReport) harness.Usage {
 	return tokens.CacheExclusive(tokens.Report{Input: report.Input, Output: report.Output, CacheRead: report.CacheRead, CacheWrite: report.CacheWrite, Reasoning: report.Reasoning})
 }
 
-// grokCostTicksPerUSD: Grok states cost exactly in ticks of 10^-10 USD.
-const grokCostTicksPerUSD = 1e10
-
 func grokCost(spend grokSpend) harness.Cost {
 	switch {
 	case spend.CostTicks != nil && *spend.CostTicks >= 0:
-		return harness.Cost{USD: float64(*spend.CostTicks) / grokCostTicksPerUSD, Known: true}
+		return harness.Cost{USD: float64(*spend.CostTicks) / nativecli.GrokCostTicksPerUSD, Known: true}
 	case spend.CostTicks == nil && spend.CostUSD != nil && *spend.CostUSD >= 0:
 		return harness.Cost{USD: *spend.CostUSD, Known: true}
 	}

@@ -5,18 +5,18 @@ import (
 	"encoding/json"
 	"github.com/shhac/lib-agent-harness/internal/rawjson"
 	"io"
+
+	"github.com/shhac/lib-agent-harness/internal/nativecli"
 )
 
-// grokInitialize is the only request sent. session/new would also list
-// models, but it runs the user's hooks and creates a session.
-const grokInitialize = `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{}}}` + "\n"
-
-// readGrokCatalog reads the model state Grok's ACP agent attaches to its
+// readGrokCatalog sends initialize, the only request: session/new would also
+// list models, but it runs the user's hooks and creates a session. It reads
+// the model state Grok's ACP agent attaches to its
 // initialize reply (result._meta.modelState). Notifications, and anything else
 // that is not the reply, are skipped. Only model metadata is retained; the
 // reply's host, MCP and command data never leave here.
 func readGrokCatalog(reader io.Reader, writer io.Writer) ([]Model, error) {
-	if _, err := io.WriteString(writer, grokInitialize); err != nil {
+	if _, err := io.WriteString(writer, nativecli.GrokInitialize); err != nil {
 		return nil, err
 	}
 	scanner := lines(reader)

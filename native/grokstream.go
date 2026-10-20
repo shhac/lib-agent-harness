@@ -16,6 +16,7 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/nativecli"
 	"github.com/shhac/lib-agent-harness/internal/rawjson"
 	"github.com/shhac/lib-agent-harness/internal/tokens"
 )
@@ -94,8 +95,6 @@ type grokSpend struct {
 	line []byte
 }
 
-const grokCostTicksPerUSD = 1e10
-
 func newGrokTranscoder(out io.Writer) *grokTranscoder {
 	return &grokTranscoder{markerSink: newMarkerSink(out), running: map[string]time.Time{}}
 }
@@ -125,7 +124,7 @@ func (t *grokTranscoder) snapshot() Result {
 		SessionID: t.sessionID,
 		Report:    append(json.RawMessage(nil), t.report...),
 		Usage:     usage,
-		Cost:      harness.Cost{USD: float64(t.costTicks) / grokCostTicksPerUSD, Known: t.completed && t.sawCost && !t.costIncomplete},
+		Cost:      harness.Cost{USD: float64(t.costTicks) / nativecli.GrokCostTicksPerUSD, Known: t.completed && t.sawCost && !t.costIncomplete},
 		RawUsage:  joinRawUsage(t.rawUsage),
 		Failure:   t.failure,
 	}
@@ -373,7 +372,7 @@ func (t *grokTranscoder) recordSpend(spend grokSpend) {
 		t.costTicks += *ev.TotalCostTicks
 		t.sawCost = true
 	case ev.TotalCostUSD != nil:
-		t.costTicks += int64(math.Round(*ev.TotalCostUSD * grokCostTicksPerUSD))
+		t.costTicks += int64(math.Round(*ev.TotalCostUSD * nativecli.GrokCostTicksPerUSD))
 		t.sawCost = true
 	}
 	if (ev.TotalCostUSD == nil && ev.TotalCostTicks == nil) || ev.CostPartial || ev.UsageIncomplete {
@@ -388,7 +387,7 @@ func (ev grokWireEvent) hasSpend() bool {
 func (t *grokTranscoder) writeSpendTrailer() {
 	usage := t.usage
 	usage.Known = t.sawUsage && !t.usageIncomplete
-	cost := harness.Cost{USD: float64(t.costTicks) / grokCostTicksPerUSD, Known: t.sawCost && !t.costIncomplete}
+	cost := harness.Cost{USD: float64(t.costTicks) / nativecli.GrokCostTicksPerUSD, Known: t.sawCost && !t.costIncomplete}
 	t.event(Event{Kind: "usage", Usage: usage, Cost: cost})
 	t.spendTrailer(usage, t.sawUsage, cost)
 }

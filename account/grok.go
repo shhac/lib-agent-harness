@@ -121,7 +121,7 @@ func grokConverse(w io.Writer, r io.Reader) (json.RawMessage, error) {
 	lines := bufio.NewScanner(r)
 	lines.Buffer(make([]byte, 0, 64<<10), grokFrameLimit)
 	out := json.NewEncoder(w)
-	if out.Encode(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}}}) != nil {
+	if _, err := io.WriteString(w, nativecli.GrokInitialize); err != nil {
 		return nil, errGrokEnded
 	}
 	if _, err := grokAwait(lines, 1); err != nil {
@@ -168,25 +168,9 @@ func grokAwait(lines *bufio.Scanner, id int) (json.RawMessage, error) {
 }
 
 func parseGrokSubscription(raw json.RawMessage) (harness.AccountSnapshot, error) {
-	var r struct {
-		Authenticated *bool `json:"authenticated"`
-		Meta          *struct {
-			Email    string  `json:"email"`
-			AuthMode string  `json:"auth_mode"`
-			Tier     string  `json:"subscription_tier"`
-			Team     *string `json:"team_name"`
-		} `json:"meta"`
-	}
-	if json.Unmarshal(raw, &r) != nil || r.Authenticated == nil {
+	a, ok := nativecli.GrokSubscription(raw, harness.Observation{Quality: harness.Measured, ObservedAt: time.Now().UTC(), Source: grokSubscriptionMethod})
+	if !ok {
 		return harness.AccountSnapshot{}, errGrokInvalid
-	}
-	a := harness.AccountSnapshot{Observation: harness.Observation{Quality: harness.Measured, ObservedAt: time.Now().UTC(), Source: grokSubscriptionMethod}, LoggedIn: r.Authenticated}
-	if !*r.Authenticated || r.Meta == nil {
-		return a, nil
-	}
-	a.Email, a.AuthMethod, a.Plan = r.Meta.Email, r.Meta.AuthMode, r.Meta.Tier
-	if r.Meta.Team != nil {
-		a.Organization = *r.Meta.Team
 	}
 	return a, nil
 }

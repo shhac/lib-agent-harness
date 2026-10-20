@@ -11,6 +11,7 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/nativecli"
 )
 
 func TestGrokArgsBindEveryValue(t *testing.T) {
@@ -185,7 +186,7 @@ func TestGrokResumedUsageIsSummedAndGapsStayUnknown(t *testing.T) {
 	runGrokLines(t, s, "second", `{"type":"text","data":"b"}`, end(5, 1, `,"total_cost_usd_ticks":50`))
 	r := s.Snapshot()
 	// Neither invocation stated its cache figures, so the split stays unknown.
-	if r.Usage != (harness.Usage{Known: true, Input: 15, Output: 3}) || r.Cost != (harness.Cost{USD: 150 / grokCostTicksPerUSD, Known: true}) {
+	if r.Usage != (harness.Usage{Known: true, Input: 15, Output: 3}) || r.Cost != (harness.Cost{USD: 150 / nativecli.GrokCostTicksPerUSD, Known: true}) {
 		t.Fatalf("resumed invocations must sum: %+v", r)
 	}
 
