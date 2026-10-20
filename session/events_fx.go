@@ -8,20 +8,25 @@ package session
 // was observed from fx 0.0.14.
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"strconv"
 
 	harness "github.com/shhac/lib-agent-harness"
 )
 
-// Turn failure codes an fx prompt response can end with, beside its own
-// enumerated stop reasons and the refusal codes in fx.go.
-const (
-	fxCancelled        = "cancelled"
-	fxStopUnrecognized = "stop_reason_unrecognized"
-)
+// readFxPromptEnd reads fx's prompt response, which states the turn's own
+// usage beside its stop reason.
+func readFxPromptEnd(body json.RawMessage, interruptRequested bool) (acpTurnEnd, bool) {
+	var r struct {
+		StopReason string          `json:"stopReason"`
+		Usage      json.RawMessage `json:"usage"`
+	}
+	if json.Unmarshal(body, &r) != nil || r.StopReason == "" {
+		return acpTurnEnd{}, false
+	}
+	status, code := acpOutcome(r.StopReason, interruptRequested)
+	return acpTurnEnd{status: status, code: code, usage: parseFxTurnUsage(r.Usage)}, true
+}
 
 // fxEvent routes one notification for the active turn.
 func (s *Session) fxEvent(t *Turn, ref Ref, m map[string]json.RawMessage) {
@@ -118,109 +123,6 @@ func (s *Session) fxContext(t *Turn, update map[string]json.RawMessage) {
 	}
 	setContextPercent(&c)
 	s.observeContext(c, t)
-}
-
-// startFxTurn sends the prompt. Its response is the end of the turn, so it
-// is awaited apart from the request that started it.
-func (s *Session) startFxTurn(request, lifetime context.Context, t *Turn, ref Ref, in Input) error {
-	params := grokPromptParams(ref.ID, in.Text)
-	w, ok := s.transport.(asyncWire)
-	if !ok {
-		go func() {
-			body, err := s.transport.request(lifetime, "session/prompt", params)
-			s.fxPromptEnded(t, body, err)
-		}()
-		return nil
-	}
-	reply, forget, err := w.call(request, "session/prompt", params)
-	if err != nil {
-		return err
-	}
-	go func() {
-		defer forget()
-		select {
-		case r := <-reply:
-			s.fxPromptEnded(t, r.body, r.err)
-		case <-t.done:
-		case <-s.done:
-		}
-	}()
-	return nil
-}
-
-// fxPromptEnded ends the turn from the prompt's response. It holds the event
-// lock so the turn ends after every notification that preceded the response.
-func (s *Session) fxPromptEnded(t *Turn, body json.RawMessage, err error) {
-	s.eventMu.Lock()
-	defer s.eventMu.Unlock()
-	if t.ended() {
-		return
-	}
-	if err != nil {
-		var refusal *acpRefusal
-		if !errors.As(err, &refusal) {
-			s.failTurn(t, err)
-			return
-		}
-		// A refused prompt is a definitive answer about this turn, not about the
-		// session, which stays usable. Tools may already have run.
-		s.fxTurnEnded(t, "failed", refusal.code, refusal.HarnessFacts().Cause, Usage{})
-		return
-	}
-	var r struct {
-		StopReason string          `json:"stopReason"`
-		Usage      json.RawMessage `json:"usage"`
-	}
-	if json.Unmarshal(body, &r) != nil || r.StopReason == "" {
-		s.failTurn(t, ErrProtocol)
-		return
-	}
-	t.mu.Lock()
-	interrupted := t.interruptRequested
-	t.mu.Unlock()
-	status, code := fxOutcome(r.StopReason, interrupted)
-	s.fxTurnEnded(t, status, code, "", parseFxTurnUsage(r.Usage))
-}
-
-// fxOutcome maps a stop reason to a turn status and, for a failure, a fixed
-// code. Only end_turn completes a turn. A cancellation is an interruption only
-// when one was requested; otherwise it is a refused permission or a
-// cancellation from elsewhere, and both are failures.
-func fxOutcome(stop string, interruptRequested bool) (string, string) {
-	switch stop {
-	case "end_turn":
-		return "completed", ""
-	case "cancelled":
-		if interruptRequested {
-			return "interrupted", ""
-		}
-		return "failed", fxCancelled
-	case "max_tokens", "max_turn_requests", "refusal":
-		return "failed", stop
-	}
-	return "failed", fxStopUnrecognized
-}
-
-// fxTurnEnded publishes the turn's own accounting, when fx stated it, and
-// its status, then ends it. A refused prompt carries the cause its refusal
-// was classified with.
-func (s *Session) fxTurnEnded(t *Turn, status, code string, cause harness.Cause, usage Usage) {
-	var err error
-	t.mu.Lock()
-	if usage.Known {
-		usage.Final = true
-		t.result.Usage = usage
-	}
-	if code != "" {
-		t.result.NativeError = true
-		err = &TurnError{Engine: harness.Fx, Code: code, Cause: cause}
-	}
-	t.mu.Unlock()
-	if usage.Known {
-		s.emit(t, Event{Kind: "usage", Usage: &usage})
-	}
-	s.emit(t, Event{Kind: "status", Status: status})
-	t.finish(status, err)
 }
 
 // parseFxTurnUsage reads the turn's accounting from a prompt response. Its

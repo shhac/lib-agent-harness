@@ -1,9 +1,7 @@
 package session
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"strconv"
 	"strings"
 
@@ -17,13 +15,10 @@ import (
 // response_completed notification, and the turn's own accounting is in the
 // prompt's response. Every shape here was observed from grok 1.0.41.
 
-// Turn failure codes a Grok prompt response can end with, beside its own
-// enumerated stop reasons and the refusal codes in grok.go.
-const (
-	grokPermissionRejected = "permission_rejected"
-	grokCancelled          = "cancelled"
-	grokStopUnrecognized   = "stop_reason_unrecognized"
-)
+// grokPermissionRejected is the turn failure code for a cancellation Grok says
+// was a refused permission, beside the shared ACP codes in acp_turn.go and
+// the refusal codes in grok.go.
+const grokPermissionRejected = "permission_rejected"
 
 // grokEvent routes one notification for the active turn. Streamed content is
 // ACP's session/update; per-response usage is Grok's own extension envelope.
@@ -182,54 +177,9 @@ func grokToolName(update map[string]json.RawMessage) string {
 	return "tool"
 }
 
-// startGrokTurn sends the prompt. Its response is the end of the turn, so it
-// is awaited apart from the request that started it; a transport that cannot
-// send now and answer later waits for the whole exchange instead.
-func (s *Session) startGrokTurn(request, lifetime context.Context, t *Turn, ref Ref, in Input) error {
-	params := grokPromptParams(ref.ID, in.Text)
-	w, ok := s.transport.(asyncWire)
-	if !ok {
-		go func() {
-			body, err := s.transport.request(lifetime, "session/prompt", params)
-			s.grokPromptEnded(t, body, err)
-		}()
-		return nil
-	}
-	reply, forget, err := w.call(request, "session/prompt", params)
-	if err != nil {
-		return err
-	}
-	go func() {
-		defer forget()
-		select {
-		case r := <-reply:
-			s.grokPromptEnded(t, r.body, r.err)
-		case <-t.done:
-		case <-s.done:
-		}
-	}()
-	return nil
-}
-
-// grokPromptEnded ends the turn from the prompt's response. It holds the event
-// lock so the turn ends after every notification that preceded the response.
-func (s *Session) grokPromptEnded(t *Turn, body json.RawMessage, err error) {
-	s.eventMu.Lock()
-	defer s.eventMu.Unlock()
-	if t.ended() {
-		return
-	}
-	if err != nil {
-		var refusal *acpRefusal
-		if !errors.As(err, &refusal) {
-			s.failTurn(t, err)
-			return
-		}
-		// A refused prompt is a definitive answer about this turn, not about the
-		// session, which stays usable. Tools may already have run.
-		s.grokTurnEnded(t, "failed", refusal.code, Usage{})
-		return
-	}
+// readGrokPromptEnd reads Grok's prompt response, which states the turn's
+// usage and why a cancellation happened in its _meta.
+func readGrokPromptEnd(body json.RawMessage, interruptRequested bool) (acpTurnEnd, bool) {
 	var r struct {
 		StopReason string `json:"stopReason"`
 		Meta       struct {
@@ -238,57 +188,19 @@ func (s *Session) grokPromptEnded(t *Turn, body json.RawMessage, err error) {
 		} `json:"_meta"`
 	}
 	if json.Unmarshal(body, &r) != nil || r.StopReason == "" {
-		s.failTurn(t, ErrProtocol)
-		return
+		return acpTurnEnd{}, false
 	}
-	t.mu.Lock()
-	interrupted := t.interruptRequested
-	t.mu.Unlock()
-	status, code := grokOutcome(r.StopReason, r.Meta.Category, interrupted)
-	s.grokTurnEnded(t, status, code, parseGrokTurnUsage(r.Meta.Usage))
+	status, code := grokOutcome(r.StopReason, r.Meta.Category, interruptRequested)
+	return acpTurnEnd{status: status, code: code, usage: parseGrokTurnUsage(r.Meta.Usage)}, true
 }
 
-// grokOutcome maps a stop reason to a turn status and, for a failure, a fixed
-// code. Only end_turn completes a turn. A cancellation is an interruption only
-// when one was requested; otherwise it is a refused permission or a
-// cancellation from elsewhere, and both are failures.
+// grokOutcome is the shared outcome, except that a cancellation nobody asked
+// for which Grok says was a refused permission is reported as one.
 func grokOutcome(stop, category string, interruptRequested bool) (string, string) {
-	switch stop {
-	case "end_turn":
-		return "completed", ""
-	case "cancelled":
-		switch {
-		case interruptRequested:
-			return "interrupted", ""
-		case category == "PermissionRejected":
-			return "failed", grokPermissionRejected
-		}
-		return "failed", grokCancelled
-	case "max_tokens", "max_turn_requests", "refusal":
-		return "failed", stop
+	if stop == "cancelled" && !interruptRequested && category == "PermissionRejected" {
+		return "failed", grokPermissionRejected
 	}
-	return "failed", grokStopUnrecognized
-}
-
-// grokTurnEnded publishes the turn's own accounting, when Grok stated it, and
-// its status, then ends it.
-func (s *Session) grokTurnEnded(t *Turn, status, code string, usage Usage) {
-	var err error
-	t.mu.Lock()
-	if usage.Known {
-		usage.Final = true
-		t.result.Usage = usage
-	}
-	if code != "" {
-		t.result.NativeError = true
-		err = &TurnError{Engine: harness.Grok, Code: code}
-	}
-	t.mu.Unlock()
-	if usage.Known {
-		s.emit(t, Event{Kind: "usage", Usage: &usage})
-	}
-	s.emit(t, Event{Kind: "status", Status: status})
-	t.finish(status, err)
+	return acpOutcome(stop, interruptRequested)
 }
 
 // parseGrokTurnUsage reads the turn's accounting from a prompt response. Its

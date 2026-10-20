@@ -1,9 +1,7 @@
 package session
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"strconv"
 
 	harness "github.com/shhac/lib-agent-harness"
@@ -14,12 +12,21 @@ import (
 // response carries two usage scopes: usage is the session's running total,
 // and _meta.usage is this turn's own, which is the one reported.
 
-// Turn failure codes a Command Code prompt response can end with, beside its
-// own enumerated stop reasons and the refusal codes in commandcode.go.
-const (
-	commandCodeCancelled        = "cancelled"
-	commandCodeStopUnrecognized = "stop_reason_unrecognized"
-)
+// readCommandCodePromptEnd reads Command Code's prompt response, whose
+// _meta.usage is the turn's own accounting.
+func readCommandCodePromptEnd(body json.RawMessage, interruptRequested bool) (acpTurnEnd, bool) {
+	var r struct {
+		StopReason string `json:"stopReason"`
+		Meta       struct {
+			Usage json.RawMessage `json:"usage"`
+		} `json:"_meta"`
+	}
+	if json.Unmarshal(body, &r) != nil || r.StopReason == "" {
+		return acpTurnEnd{}, false
+	}
+	status, code := acpOutcome(r.StopReason, interruptRequested)
+	return acpTurnEnd{status: status, code: code, usage: parseCommandCodeTurnUsage(r.Meta.Usage)}, true
+}
 
 // commandCodeEvent routes one notification for the active turn.
 func (s *Session) commandCodeEvent(t *Turn, ref Ref, m map[string]json.RawMessage) {
@@ -107,111 +114,6 @@ func (s *Session) commandCodeContext(t *Turn, update map[string]json.RawMessage)
 	}
 	setContextPercent(&c)
 	s.observeContext(c, t)
-}
-
-// startCommandCodeTurn sends the prompt. Its response is the end of the turn,
-// so it is awaited apart from the request that started it.
-func (s *Session) startCommandCodeTurn(request, lifetime context.Context, t *Turn, ref Ref, in Input) error {
-	params := grokPromptParams(ref.ID, in.Text)
-	w, ok := s.transport.(asyncWire)
-	if !ok {
-		go func() {
-			body, err := s.transport.request(lifetime, "session/prompt", params)
-			s.commandCodePromptEnded(t, body, err)
-		}()
-		return nil
-	}
-	reply, forget, err := w.call(request, "session/prompt", params)
-	if err != nil {
-		return err
-	}
-	go func() {
-		defer forget()
-		select {
-		case r := <-reply:
-			s.commandCodePromptEnded(t, r.body, r.err)
-		case <-t.done:
-		case <-s.done:
-		}
-	}()
-	return nil
-}
-
-// commandCodePromptEnded ends the turn from the prompt's response. It holds the
-// event lock so the turn ends after every notification that preceded the
-// response.
-func (s *Session) commandCodePromptEnded(t *Turn, body json.RawMessage, err error) {
-	s.eventMu.Lock()
-	defer s.eventMu.Unlock()
-	if t.ended() {
-		return
-	}
-	if err != nil {
-		var refusal *acpRefusal
-		if !errors.As(err, &refusal) {
-			s.failTurn(t, err)
-			return
-		}
-		// A refused prompt is a definitive answer about this turn, not about the
-		// session, which stays usable. Tools may already have run.
-		s.commandCodeTurnEnded(t, "failed", refusal.code, refusal.HarnessFacts().Cause, Usage{})
-		return
-	}
-	var r struct {
-		StopReason string `json:"stopReason"`
-		Meta       struct {
-			Usage json.RawMessage `json:"usage"`
-		} `json:"_meta"`
-	}
-	if json.Unmarshal(body, &r) != nil || r.StopReason == "" {
-		s.failTurn(t, ErrProtocol)
-		return
-	}
-	t.mu.Lock()
-	interrupted := t.interruptRequested
-	t.mu.Unlock()
-	status, code := commandCodeOutcome(r.StopReason, interrupted)
-	s.commandCodeTurnEnded(t, status, code, "", parseCommandCodeTurnUsage(r.Meta.Usage))
-}
-
-// commandCodeOutcome maps a stop reason to a turn status and, for a failure, a
-// fixed code. Only end_turn completes a turn. A cancellation is an
-// interruption only when one was requested.
-func commandCodeOutcome(stop string, interruptRequested bool) (string, string) {
-	switch stop {
-	case "end_turn":
-		return "completed", ""
-	case "cancelled":
-		if interruptRequested {
-			return "interrupted", ""
-		}
-		return "failed", commandCodeCancelled
-	case "max_tokens", "max_turn_requests", "refusal":
-		return "failed", stop
-	}
-	return "failed", commandCodeStopUnrecognized
-}
-
-// commandCodeTurnEnded publishes the turn's own accounting, when Command Code
-// stated it, and its status, then ends it. A refused prompt carries the
-// cause its refusal was classified with.
-func (s *Session) commandCodeTurnEnded(t *Turn, status, code string, cause harness.Cause, usage Usage) {
-	var err error
-	t.mu.Lock()
-	if usage.Known {
-		usage.Final = true
-		t.result.Usage = usage
-	}
-	if code != "" {
-		t.result.NativeError = true
-		err = &TurnError{Engine: harness.CommandCode, Code: code, Cause: cause}
-	}
-	t.mu.Unlock()
-	if usage.Known {
-		s.emit(t, Event{Kind: "usage", Usage: &usage})
-	}
-	s.emit(t, Event{Kind: "status", Status: status})
-	t.finish(status, err)
 }
 
 // parseCommandCodeTurnUsage reads a turn's own accounting. Command Code sums

@@ -953,12 +953,12 @@ func TestCommandCodeStopReasonsAndUsage(t *testing.T) {
 	}{
 		{"end_turn", false, "completed", ""},
 		{"cancelled", true, "interrupted", ""},
-		{"cancelled", false, "failed", commandCodeCancelled},
+		{"cancelled", false, "failed", acpCancelled},
 		{"max_tokens", false, "failed", "max_tokens"},
 		{"max_turn_requests", false, "failed", "max_turn_requests"},
-		{"something_new", false, "failed", commandCodeStopUnrecognized},
+		{"something_new", false, "failed", acpStopUnrecognized},
 	} {
-		status, code := commandCodeOutcome(tc.stop, tc.interrupted)
+		status, code := acpOutcome(tc.stop, tc.interrupted)
 		if status != tc.status || code != tc.code {
 			t.Errorf("%+v: %s %s", tc, status, code)
 		}

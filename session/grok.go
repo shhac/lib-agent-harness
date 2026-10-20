@@ -59,10 +59,6 @@ func grokSessionParams(o Options, resume bool, id string) map[string]any {
 	return p
 }
 
-func grokPromptParams(session, text string) map[string]any {
-	return map[string]any{"sessionId": session, "prompt": []any{map[string]any{"type": "text", "text": text}}}
-}
-
 func grokNotification(method string, params map[string]any) map[string]any {
 	return map[string]any{"jsonrpc": "2.0", "method": method, "params": params}
 }

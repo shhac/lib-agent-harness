@@ -445,6 +445,9 @@ func TestGrokRefusedPromptFailsOnlyItsTurn(t *testing.T) {
 	if !errors.As(err, &failure) || failure.Code != acpRateLimited || result.Usage.Known || !result.NativeError {
 		t.Fatalf("%+v %v", result, err)
 	}
+	if facts, ok := harness.ErrorFacts(err); !ok || facts.Cause != harness.CauseRateLimited || facts.Family != harness.FailureTurn {
+		t.Fatalf("the refusal's cause was lost: %+v", facts)
+	}
 	if strings.Contains(err.Error(), "secret") {
 		t.Fatal("provider text reached the error")
 	}
@@ -504,10 +507,10 @@ func TestGrokStopReasons(t *testing.T) {
 		{"end_turn", "", false, "completed", ""},
 		{"cancelled", "MidTurnAbort", true, "interrupted", ""},
 		{"cancelled", "PermissionRejected", false, "failed", grokPermissionRejected},
-		{"cancelled", "", false, "failed", grokCancelled},
+		{"cancelled", "", false, "failed", acpCancelled},
 		{"max_tokens", "", false, "failed", "max_tokens"},
 		{"refusal", "", false, "failed", "refusal"},
-		{"something_new", "", false, "failed", grokStopUnrecognized},
+		{"something_new", "", false, "failed", acpStopUnrecognized},
 	} {
 		status, code := grokOutcome(tc.stop, tc.category, tc.interrupted)
 		if status != tc.status || code != tc.code {
