@@ -317,7 +317,7 @@ func normalizeAPISkills(o Options) (Options, error) {
 		return o, &UnsupportedError{Engine: o.Provider.Engine, Operation: "skills", Code: RefusedGlobalSkills, Capability: harness.Support(o.Provider.Engine, harness.Session, harness.IncludeGlobalSkills)}
 	}
 	if len(set.Provided) == 0 {
-		if o.SkillRun.set() {
+		if skillRunSet(o.SkillRun) {
 			return o, refuse(o, "skills", RefusedConflict, "SkillRun applies only to provided skills that permit scripts")
 		}
 		return o, nil
@@ -333,7 +333,7 @@ func normalizeAPISkills(o Options) (Options, error) {
 	}
 	_, scripted := skills.Names(loaded)
 	switch {
-	case o.SkillRun.set() && len(scripted) == 0:
+	case skillRunSet(o.SkillRun) && len(scripted) == 0:
 		return o, refuse(o, "skills", RefusedConflict, "SkillRun applies only to provided skills that permit scripts")
 	case len(scripted) > 0 && o.SkillRun.WorkDir == "":
 		return o, refuse(o, "skills", skills.CodeWorkDirRequired, "a session offering skill scripts requires SkillRun.WorkDir")

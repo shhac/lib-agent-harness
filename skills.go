@@ -1,5 +1,11 @@
 package harness
 
+import (
+	"context"
+
+	"time"
+)
+
 // Skills an application relies on travel with its tools: a SKILL.md and the
 // files it references. An engine's globally installed skills may stay in use,
 // but wherever the library does not load them, the caller names exactly which
@@ -72,4 +78,52 @@ type Skills struct {
 	Global   GlobalSkills
 	Delivery SkillDelivery
 	Provided []Skill
+}
+
+// SkillRunOptions says how a provided skill's scripts run when a caller
+// answers a request to run one: completion.AnswerSkillCalls, a restricted
+// session's hosted run_skill_script, or a handler from session.SkillTools.
+type SkillRunOptions struct {
+	// WorkDir is the scripts' working directory. It is required for scripts:
+	// without it (or Exec) every script call is refused, and setting it is the
+	// caller's standing authorization for a permitting skill's scripts to run
+	// when the model asks.
+	WorkDir string
+	// Env is added to the scripts' environment, which otherwise holds only
+	// the parent's PATH, HOME, TMPDIR, LANG and LC_* entries.
+	Env []string
+	// Timeout bounds each script; zero means one minute, and more than ten
+	// minutes is refused.
+	Timeout time.Duration
+	// Exec, when set, runs each checked command instead of the library's
+	// runner, for an application that runs scripts in its own container or
+	// sandbox. Its error is never shown to the model.
+	Exec func(context.Context, SkillCommand) (SkillOutput, error)
+}
+
+// SkillCommand is one checked script invocation.
+type SkillCommand struct {
+	// Skill is the skill's name, and Dir its directory with every symbolic
+	// link resolved.
+	Skill string
+	Dir   string
+	// Script is the script's resolved absolute path, inside Dir.
+	Script string
+	// Args is the argument vector; no shell reads it.
+	Args    []string
+	WorkDir string
+	// Env is the allowlisted environment with SkillRunOptions.Env applied.
+	Env     []string
+	Timeout time.Duration
+}
+
+// SkillOutput is what a script produced. Stdout and Stderr are each bounded
+// to 64 KiB; the rest is discarded and marked truncated.
+type SkillOutput struct {
+	ExitCode        int    `json:"exit_code"`
+	TimedOut        bool   `json:"timed_out"`
+	Stdout          string `json:"stdout"`
+	StdoutTruncated bool   `json:"stdout_truncated"`
+	Stderr          string `json:"stderr"`
+	StderrTruncated bool   `json:"stderr_truncated"`
 }

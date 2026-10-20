@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/skills"
@@ -62,54 +61,17 @@ import (
 // permitting skill gets run_skill_script, and each call runs as SkillRun says.
 
 // SkillRunOptions says how a restricted session's hosted run_skill_script, or
-// a handler from SkillTools, runs a skill's scripts. It has the shape of
-// completion.SkillRunOptions.
-type SkillRunOptions struct {
-	// WorkDir is the scripts' working directory. It is required for scripts:
-	// setting it (or Exec) is the caller's standing authorization for the
-	// hosted tool to run a permitting skill's scripts when the model asks.
-	WorkDir string
-	// Env is added to the scripts' environment, which otherwise holds only
-	// the parent's PATH, HOME, TMPDIR, LANG and LC_* entries.
-	Env []string
-	// Timeout bounds each script; zero means one minute, and more than ten
-	// minutes is refused.
-	Timeout time.Duration
-	// Exec, when set, runs each checked command instead of the library's
-	// runner, for an application that runs scripts in its own container or
-	// sandbox. Its error is never shown to the model.
-	Exec func(context.Context, SkillCommand) (SkillOutput, error)
-}
+// a handler from SkillTools, runs a skill's scripts; SkillCommand and
+// SkillOutput are one checked invocation and what it produced. They are the
+// same types as completion's.
+type (
+	SkillRunOptions = harness.SkillRunOptions
+	SkillCommand    = harness.SkillCommand
+	SkillOutput     = harness.SkillOutput
+)
 
-func (o SkillRunOptions) set() bool {
+func skillRunSet(o SkillRunOptions) bool {
 	return o.WorkDir != "" || o.Env != nil || o.Timeout != 0 || o.Exec != nil
-}
-
-// SkillCommand is one checked script invocation.
-type SkillCommand struct {
-	// Skill is the skill's name, and Dir its directory with every symbolic
-	// link resolved.
-	Skill string
-	Dir   string
-	// Script is the script's resolved absolute path, inside Dir.
-	Script string
-	// Args is the argument vector; no shell reads it.
-	Args    []string
-	WorkDir string
-	// Env is the allowlisted environment with SkillRunOptions.Env applied.
-	Env     []string
-	Timeout time.Duration
-}
-
-// SkillOutput is what a script produced. Stdout and Stderr are each bounded
-// to 64 KiB; the rest is discarded and marked truncated.
-type SkillOutput struct {
-	ExitCode        int    `json:"exit_code"`
-	TimedOut        bool   `json:"timed_out"`
-	Stdout          string `json:"stdout"`
-	StdoutTruncated bool   `json:"stdout_truncated"`
-	Stderr          string `json:"stderr"`
-	StderrTruncated bool   `json:"stderr_truncated"`
 }
 
 // The skill tools' names, reserved in any tool host they are mounted in.
@@ -165,7 +127,7 @@ func normalizeSkills(o Options) (Options, error) {
 		return o, err
 	}
 	if len(set.Provided) == 0 {
-		if o.SkillRun.set() {
+		if skillRunSet(o.SkillRun) {
 			return o, refuse(o, "skills", RefusedConflict, "SkillRun applies only to provided skills that permit scripts in a restricted session")
 		}
 		return o, nil
@@ -182,7 +144,7 @@ func normalizeSkills(o Options) (Options, error) {
 	_, scripted := skills.Names(loaded)
 	hostsScripts := plan.delivery == hostedSkills && len(scripted) > 0
 	switch {
-	case o.SkillRun.set() && !hostsScripts:
+	case skillRunSet(o.SkillRun) && !hostsScripts:
 		return o, refuse(o, "skills", RefusedConflict, "SkillRun applies only to provided skills that permit scripts in a restricted session")
 	case hostsScripts && o.SkillRun.WorkDir == "":
 		return o, refuse(o, "skills", skills.CodeWorkDirRequired, "a restricted session hosting skill scripts requires SkillRun.WorkDir")
@@ -286,7 +248,7 @@ func mountSkillTools(o Options, loaded []skills.Skill) (Options, error) {
 		}
 	}
 	host.Tools = append(slices.Clone(host.Tools), freezeTools(skillToolDefinitions(loaded))...)
-	host.Handler = skillHandler{loaded: loaded, opts: runOptions(o.SkillRun), next: host.Handler}
+	host.Handler = skillHandler{loaded: loaded, opts: o.SkillRun, next: host.Handler}
 	if err := host.validate(); err != nil {
 		return o, toolHostRefusal(o, err)
 	}
@@ -322,7 +284,7 @@ func SkillTools(set harness.Skills, opts SkillRunOptions) ([]ToolDefinition, Too
 		return nil, nil, &UnsupportedError{Operation: "skills", Code: skills.Code(err), Capability: harness.Capability{Availability: harness.Unsupported, Reason: "a provided skill could not be loaded"}}
 	}
 	opts.Env = slices.Clone(opts.Env)
-	return skillToolDefinitions(loaded), skillHandler{loaded: loaded, opts: runOptions(opts)}, nil
+	return skillToolDefinitions(loaded), skillHandler{loaded: loaded, opts: opts}, nil
 }
 
 type skillHandler struct {
@@ -340,17 +302,6 @@ func (h skillHandler) CallTool(ctx context.Context, call ToolCall) (ToolResult, 
 	}
 	content, failed := skills.Answer(ctx, h.loaded, call.Name, call.Arguments, h.opts)
 	return ToolResult{Content: content, IsError: failed}, nil
-}
-
-func runOptions(o SkillRunOptions) skills.RunOptions {
-	run := skills.RunOptions{WorkDir: o.WorkDir, Env: o.Env, Timeout: o.Timeout}
-	if o.Exec != nil {
-		run.Exec = func(ctx context.Context, c skills.ExecCommand) (skills.ExecOutput, error) {
-			out, err := o.Exec(ctx, SkillCommand(c))
-			return skills.ExecOutput(out), err
-		}
-	}
-	return run
 }
 
 // effectiveInstructions are the instructions a launch sends: the caller's,

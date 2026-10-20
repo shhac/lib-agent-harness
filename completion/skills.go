@@ -3,7 +3,6 @@ package completion
 import (
 	"context"
 	"strings"
-	"time"
 
 	"github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/skills"
@@ -176,49 +175,14 @@ func (r Result) ApplicationCalls() []ToolCall {
 	return calls
 }
 
-// SkillRunOptions says how AnswerSkillCalls runs a skill's scripts.
-type SkillRunOptions struct {
-	// WorkDir is the scripts' working directory. It is required: without it
-	// every script call is refused.
-	WorkDir string
-	// Env is added to the scripts' environment, which otherwise holds only
-	// the parent's PATH, HOME, TMPDIR, LANG and LC_* entries.
-	Env []string
-	// Timeout bounds each script; zero means one minute, and more than ten
-	// minutes is refused.
-	Timeout time.Duration
-	// Exec, when set, runs each checked command instead of the library's
-	// runner, for an application that runs scripts in its own container or
-	// sandbox. Its error is never shown to the model.
-	Exec func(context.Context, SkillCommand) (SkillOutput, error)
-}
-
-// SkillCommand is one checked script invocation.
-type SkillCommand struct {
-	// Skill is the skill's name, and Dir its directory with every symbolic
-	// link resolved.
-	Skill string
-	Dir   string
-	// Script is the script's resolved absolute path, inside Dir.
-	Script string
-	// Args is the argument vector; no shell reads it.
-	Args    []string
-	WorkDir string
-	// Env is the allowlisted environment with SkillRunOptions.Env applied.
-	Env     []string
-	Timeout time.Duration
-}
-
-// SkillOutput is what a script produced. Stdout and Stderr are each bounded
-// to 64 KiB; the rest is discarded and marked truncated.
-type SkillOutput struct {
-	ExitCode        int    `json:"exit_code"`
-	TimedOut        bool   `json:"timed_out"`
-	Stdout          string `json:"stdout"`
-	StdoutTruncated bool   `json:"stdout_truncated"`
-	Stderr          string `json:"stderr"`
-	StderrTruncated bool   `json:"stderr_truncated"`
-}
+// SkillRunOptions says how AnswerSkillCalls runs a skill's scripts;
+// SkillCommand and SkillOutput are one checked invocation and what it
+// produced. They are the same types as session's.
+type (
+	SkillRunOptions = harness.SkillRunOptions
+	SkillCommand    = harness.SkillCommand
+	SkillOutput     = harness.SkillOutput
+)
 
 // AnswerSkillCalls answers the skill calls among calls, one role "tool"
 // message per call, in order; calls to other tools are skipped, so
@@ -241,23 +205,9 @@ func AnswerSkillCalls(ctx context.Context, calls []ToolCall, set harness.Skills,
 		}
 		content := skills.ErrorText(call.Function.Name, "skills_unavailable")
 		if err == nil {
-			content, _ = skills.Answer(ctx, loaded, call.Function.Name, []byte(call.Function.Arguments), runOptions(opts))
+			content, _ = skills.Answer(ctx, loaded, call.Function.Name, []byte(call.Function.Arguments), opts)
 		}
 		answers = append(answers, Message{Role: "tool", ToolCallID: call.ID, Content: content})
 	}
 	return answers
-}
-
-// runOptions carries SkillRunOptions into the shared skill runner, adapting
-// only the caller's Exec at its boundary.
-func runOptions(opts SkillRunOptions) skills.RunOptions {
-	run := skills.RunOptions{WorkDir: opts.WorkDir, Env: opts.Env, Timeout: opts.Timeout}
-	if opts.Exec == nil {
-		return run
-	}
-	run.Exec = func(ctx context.Context, c skills.ExecCommand) (skills.ExecOutput, error) {
-		out, err := opts.Exec(ctx, SkillCommand{Skill: c.Skill, Dir: c.Dir, Script: c.Script, Args: c.Args, WorkDir: c.WorkDir, Env: c.Env, Timeout: c.Timeout})
-		return skills.ExecOutput(out), err
-	}
-	return run
 }

@@ -6,7 +6,8 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"strings"
-	"time"
+
+	harness "github.com/shhac/lib-agent-harness"
 )
 
 // The library's own skill tools, as the model sees them wherever skills are
@@ -146,34 +147,16 @@ func DecodeCall(tool string, arguments []byte) (Call, bool) {
 	return decoded, true
 }
 
-// ExecCommand is one checked script invocation handed to a caller's runner.
-type ExecCommand struct {
-	Skill, Dir, Script string
-	Args               []string
-	WorkDir            string
-	Env                []string
-	Timeout            time.Duration
-}
-
-// ExecOutput is what a script produced, as a run_skill_script answer carries it.
-type ExecOutput struct {
-	ExitCode        int    `json:"exit_code"`
-	TimedOut        bool   `json:"timed_out"`
-	Stdout          string `json:"stdout"`
-	StdoutTruncated bool   `json:"stdout_truncated"`
-	Stderr          string `json:"stderr"`
-	StderrTruncated bool   `json:"stderr_truncated"`
-}
-
-// RunOptions says how Answer runs scripts: in WorkDir, which is required,
-// with Env added to the allowlisted environment, bounded by Timeout, and
-// through Exec instead of Run when it is set.
-type RunOptions struct {
-	WorkDir string
-	Env     []string
-	Timeout time.Duration
-	Exec    func(context.Context, ExecCommand) (ExecOutput, error)
-}
+// ExecCommand is one checked script invocation, ExecOutput what it produced
+// as a run_skill_script answer carries it, and RunOptions how Answer runs
+// scripts: in WorkDir, which is required, with Env added to the allowlisted
+// environment, bounded by Timeout, and through Exec instead of Run when it is
+// set. They are the public skill run types, so no caller converts.
+type (
+	ExecCommand = harness.SkillCommand
+	ExecOutput  = harness.SkillOutput
+	RunOptions  = harness.SkillRunOptions
+)
 
 // Answer answers one skill tool call. A load_skill answer is the file's text;
 // a run_skill_script answer is ExecOutput as JSON. Anything that cannot be
