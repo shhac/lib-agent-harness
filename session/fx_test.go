@@ -534,3 +534,36 @@ func TestFxRefusesAModelItDidNotTake(t *testing.T) {
 		t.Fatalf("model: %v", err)
 	}
 }
+
+// fx's refusals classify by JSON-RPC code and the provider status fx passes
+// on, reading its message only to tell a gone conversation from a bad
+// request; the classified cause is what a caller's retry decision reads.
+func TestFxRefusalCodes(t *testing.T) {
+	for _, c := range []struct {
+		rpc     int
+		message string
+		data    string
+		want    string
+		cause   harness.Cause
+	}{
+		{-32601, "Method not found", ``, acpMethodMissing, ""},
+		{-32602, "Session not found", ``, acpSessionNotFound, harness.CauseUnknown},
+		{-32602, "Model is not available for the active provider", ``, acpInvalidParams, harness.CauseUnknown},
+		{-32000, "secret", ``, acpAuthRequired, harness.CauseAuthentication},
+		{-32603, "secret", `{"status":401}`, acpAuthFailed, harness.CauseAuthentication},
+		{-32603, "secret", `{"status":429}`, acpRateLimited, harness.CauseRateLimited},
+		{-32603, "secret", `{"status":504}`, acpTimedOut, harness.CauseTimeout},
+		{-32603, "secret", `{"status":503}`, acpProviderUnavailable, harness.CauseUnavailable},
+		{-32603, "secret", `{"status":400}`, acpProviderRejected, harness.CauseUnknown},
+		{-32603, "secret", ``, acpRejected, harness.CauseUnknown},
+	} {
+		code := fxRefusalCode(c.rpc, c.message, json.RawMessage(c.data))
+		refusal := &acpRefusal{engine: harness.Fx, rpc: c.rpc, code: code}
+		if code != c.want || refusal.HarnessFacts().Cause != c.cause {
+			t.Errorf("%d %q %s: %s %s", c.rpc, c.message, c.data, code, refusal.HarnessFacts().Cause)
+		}
+		if strings.Contains(refusal.Error(), "secret") {
+			t.Error("provider text reached the error")
+		}
+	}
+}
