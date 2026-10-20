@@ -136,59 +136,35 @@ func unsupportedMode(o Options) error {
 	return nil
 }
 
-// otherEnginePolicy refuses a policy field only the other engine reads. Left
-// in place it would be ignored, and a caller reading an empty ClaudeTools as
-// "no tools" on Codex would be running with every native tool.
+// policyFields says which engine reads each Policy field. A field set for a
+// session of any other engine is refused rather than ignored: left in place
+// it would be ignored, and a caller reading an empty ClaudeTools as "no
+// tools" on Codex would be running with every native tool. A nil ClaudeTools
+// is unset; an empty one is set.
+var policyFields = []struct {
+	owner harness.Engine
+	name  string
+	set   func(Policy) bool
+}{
+	{harness.Codex, "CodexSandbox", func(p Policy) bool { return p.CodexSandbox != "" }},
+	{harness.Codex, "CodexApproval", func(p Policy) bool { return p.CodexApproval != "" }},
+	{harness.Claude, "ClaudePermission", func(p Policy) bool { return p.ClaudePermission != "" }},
+	{harness.Claude, "ClaudeTools", func(p Policy) bool { return p.ClaudeTools != nil }},
+	{harness.Grok, "GrokPermission", func(p Policy) bool { return p.GrokPermission != "" }},
+	{harness.Grok, "GrokTelemetry", func(p Policy) bool { return p.GrokTelemetry != "" }},
+	{harness.CommandCode, "CommandCodePermission", func(p Policy) bool { return p.CommandCodePermission != "" }},
+	{harness.Antigravity, "AntigravityPermission", func(p Policy) bool { return p.AntigravityPermission != "" }},
+	{harness.Fx, "FxPermission", func(p Policy) bool { return p.FxPermission != "" }},
+}
+
+// otherEnginePolicy refuses a policy field only another engine reads.
 func otherEnginePolicy(o Options) error {
-	if o.Policy.CommandCodePermission != "" && o.Provider.Engine != harness.CommandCode {
-		return refuse(o, "policy", RefusedOtherEnginePolicy, "only Command Code reads Policy.CommandCodePermission; leave it unset")
-	}
-	if o.Policy.AntigravityPermission != "" && o.Provider.Engine != harness.Antigravity {
-		return refuse(o, "policy", RefusedOtherEnginePolicy, "only Antigravity reads Policy.AntigravityPermission; leave it unset")
-	}
-	if o.Policy.FxPermission != "" && o.Provider.Engine != harness.Fx {
-		return refuse(o, "policy", RefusedOtherEnginePolicy, "only fx reads Policy.FxPermission; leave it unset")
-	}
-	if foreign := engines[o.Provider.Engine].foreignPolicy; foreign != nil {
-		return foreign(o)
-	}
-	return nil
-}
-
-func grokPolicySet(p Policy) bool { return p.GrokPermission != "" || p.GrokTelemetry != "" }
-
-func codexForeignPolicy(o Options) error {
-	if o.Policy.ClaudePermission != "" || o.Policy.ClaudeTools != nil {
-		return refuse(o, "policy", RefusedOtherEnginePolicy, "Codex does not read Policy.ClaudePermission or Policy.ClaudeTools; leave them unset")
-	}
-	if grokPolicySet(o.Policy) {
-		return refuse(o, "policy", RefusedOtherEnginePolicy, "Codex does not read Policy.GrokPermission or Policy.GrokTelemetry; leave them unset")
-	}
-	return nil
-}
-
-func claudeForeignPolicy(o Options) error {
-	if o.Policy.CodexSandbox != "" || o.Policy.CodexApproval != "" {
-		return refuse(o, "policy", RefusedOtherEnginePolicy, "Claude does not read Policy.CodexSandbox or Policy.CodexApproval; leave them unset")
-	}
-	if grokPolicySet(o.Policy) {
-		return refuse(o, "policy", RefusedOtherEnginePolicy, "Claude does not read Policy.GrokPermission or Policy.GrokTelemetry; leave them unset")
-	}
-	return nil
-}
-
-func grokForeignPolicy(o Options) error {
-	p := o.Policy
-	if p.CodexSandbox != "" || p.CodexApproval != "" || p.ClaudePermission != "" || p.ClaudeTools != nil {
-		return refuse(o, "policy", RefusedOtherEnginePolicy, "Grok does not read the Codex or Claude policy fields; leave them unset")
-	}
-	return nil
-}
-
-func commandCodeForeignPolicy(o Options) error {
-	p := o.Policy
-	if p.CodexSandbox != "" || p.CodexApproval != "" || p.ClaudePermission != "" || p.ClaudeTools != nil || grokPolicySet(p) {
-		return refuse(o, "policy", RefusedOtherEnginePolicy, "Command Code does not read the Codex, Claude or Grok policy fields; leave them unset")
+	for _, field := range policyFields {
+		if field.owner == o.Provider.Engine || !field.set(o.Policy) {
+			continue
+		}
+		owner, _ := harness.Describe(field.owner)
+		return refuse(o, "policy", RefusedOtherEnginePolicy, "only "+owner.Label+" reads Policy."+field.name+"; leave it unset")
 	}
 	return nil
 }

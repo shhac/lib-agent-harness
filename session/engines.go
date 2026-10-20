@@ -64,8 +64,6 @@ type engineEntry struct {
 	restrictedArgs func(ctx context.Context, o Options, host *toolHost) (Options, []string, error)
 	// sandbox is how the engine runs sandboxed; nil refuses a sandbox.
 	sandbox *sandboxSupport
-	// foreignPolicy refuses Policy fields belonging to other engines.
-	foreignPolicy func(Options) error
 	// inspect reads a login without a conversation; nil refuses Inspect,
 	// pointing elsewhere when inspectElsewhere says where.
 	inspect          *inspectLaunch
@@ -85,7 +83,7 @@ func init() {
 		harness.Codex: {
 			dialect: codexDialect, homeValue: codexHomeValue,
 			args: codexArgs, restrictedArgs: codexRestrictedLaunch, sandbox: codexSandbox,
-			foreignPolicy: codexForeignPolicy, inspect: codexInspect,
+			inspect:         codexInspect,
 			normalizePolicy: normalizeCodexPolicy, refuseAddition: refuseCodexAddition,
 			initialize: (*Session).initializeCodex, event: (*Session).codexEvent,
 			bufferStart: true, startTurn: (*Session).startCodexTurnSynced,
@@ -95,7 +93,7 @@ func init() {
 		harness.Claude: {
 			dialect: claudeDialect, homeValue: claudeHomeValue,
 			args: claudeArgs, restrictedArgs: claudeRestrictedLaunch, sandbox: claudeSandbox,
-			foreignPolicy: claudeForeignPolicy, inspect: claudeInspect,
+			inspect:         claudeInspect,
 			normalizePolicy: normalizeClaudePolicy, overrides: claudeOverrides,
 			initialize: (*Session).initializeClaude, sessionNotice: (*Session).observeClaudeInit, event: (*Session).claudeEvent,
 			startTurn: (*Session).startClaudeTurn, interrupt: (*Session).interruptClaude,
@@ -103,10 +101,10 @@ func init() {
 			accountFromStart: true, quota: claudeQuotaRead, context: claudeContextRead,
 		},
 		harness.Grok: {
-			dialect:       grokDialect,
-			foreignPolicy: grokForeignPolicy, inspectElsewhere: "inspect a Grok login with account.Inspect",
-			args:            func(o Options, _ string, _ bool, _ *launch) []string { return grokArgs(o) },
-			normalizePolicy: normalizeGrokPolicy, withheld: grokManaged,
+			dialect:          grokDialect,
+			inspectElsewhere: "inspect a Grok login with account.Inspect",
+			args:             func(o Options, _ string, _ bool, _ *launch) []string { return grokArgs(o) },
+			normalizePolicy:  normalizeGrokPolicy, withheld: grokManaged,
 			refuseAddition: refuseGrokAddition, overrides: grokOverrides,
 			initialize: (*Session).initializeGrok, event: (*Session).grokEvent,
 			startTurn: acpStartTurn(harness.Grok, readGrokPromptEnd), interrupt: (*Session).interruptACP,
@@ -115,7 +113,7 @@ func init() {
 		},
 		harness.CommandCode: {
 			dialect: commandCodeDialect, resolveHome: commandCodeHome,
-			foreignPolicy:   commandCodeForeignPolicy,
+
 			args:            func(Options, string, bool, *launch) []string { return commandCodeArgs() },
 			normalizePolicy: normalizeCommandCodePolicy, withheld: commandCodeManaged,
 			refuseAddition: refuseCommandCodeAddition,
@@ -125,7 +123,7 @@ func init() {
 		},
 		harness.Antigravity: {
 			dialect: antigravityDialect, resolveHome: antigravityHome,
-			foreignPolicy:    antigravityForeignPolicy,
+
 			inspectElsewhere: "inspect an Antigravity login with account.Inspect",
 			args: func(o Options, nativeID string, resuming bool, _ *launch) []string {
 				return antigravityArgs(o, nativeID, resuming)
@@ -138,7 +136,7 @@ func init() {
 		},
 		harness.Fx: {
 			dialect: fxDialect, resolveHome: fxHome,
-			foreignPolicy:   fxForeignPolicy,
+
 			args:            func(Options, string, bool, *launch) []string { return fxArgs() },
 			normalizePolicy: normalizeFxPolicy, withheld: fxManaged,
 			refuseAddition: refuseFxAddition,

@@ -226,7 +226,12 @@ func checkCatalogModel(o Options) error {
 }
 
 func policySet(p Policy) bool {
-	return p.CodexSandbox != "" || p.CodexApproval != "" || p.ClaudePermission != "" || p.ClaudeTools != nil || p.GrokPermission != "" || p.GrokTelemetry != "" || p.CommandCodePermission != "" || p.AntigravityPermission != "" || p.FxPermission != ""
+	for _, field := range policyFields {
+		if field.set(p) {
+			return true
+		}
+	}
+	return false
 }
 
 func checkInstructions(o Options) error {

@@ -124,18 +124,6 @@ func unsupportedFx(o Options) error {
 	return nil
 }
 
-// fxForeignPolicy refuses the policy fields only the other engines read.
-func fxForeignPolicy(o Options) error {
-	p := o.Policy
-	if p.CodexSandbox != "" || p.CodexApproval != "" || p.ClaudePermission != "" || p.ClaudeTools != nil || grokPolicySet(p) {
-		return refuse(o, "policy", RefusedOtherEnginePolicy, "fx does not read the Codex, Claude or Grok policy fields; leave them unset")
-	}
-	if p.CommandCodePermission != "" || p.AntigravityPermission != "" {
-		return refuse(o, "policy", RefusedOtherEnginePolicy, "fx does not read the Command Code or Antigravity policy fields; leave them unset")
-	}
-	return nil
-}
-
 // fxSessionState is what session/new reported. A resumed session answers with
 // its configuration alone, so the id and the modes may be absent.
 type fxSessionState struct {

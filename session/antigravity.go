@@ -112,14 +112,6 @@ func normalizeAntigravityPolicy(o Options) (Options, error) {
 	return o, nil
 }
 
-func antigravityForeignPolicy(o Options) error {
-	p := o.Policy
-	if p.CodexSandbox != "" || p.CodexApproval != "" || p.ClaudePermission != "" || p.ClaudeTools != nil || grokPolicySet(p) {
-		return refuse(o, "policy", RefusedOtherEnginePolicy, "Antigravity does not read the Codex, Claude or Grok policy fields; leave them unset")
-	}
-	return nil
-}
-
 // antigravityManaged is what an Antigravity session neither inherits nor
 // accepts as an addition: provider credentials and endpoint/telemetry switches.
 func antigravityManaged(key string) bool {
