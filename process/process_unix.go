@@ -171,44 +171,61 @@ func (p *Process) reapGroup() {
 		return
 	}
 	for range 5 {
-		found := false
-		attempted := false
-		for _, member := range candidates(p.launched.Add(-time.Second)) {
-			if member.group != pid || member.pid == pid {
-				continue
-			}
-			found = true
-			// Revalidate both birth identity and group immediately before
-			// signalling its group. A live member anchors the pgid, so it
-			// cannot be recycled between validation and the group signal.
-			signalOwned(member.pid, member.identity, processIdentity, func(child int) {
-				if p.leaderReused(pid) {
-					return
-				}
-				if group, err := syscall.Getpgid(child); err == nil && group == pid {
-					attempted = true
-					snapshot := tree(p.token, p.launched, pid, nil)
-					// Enumeration can take time: re-establish the group anchor again.
-					signalOwned(child, member.identity, processIdentity, func(child int) {
-						if p.leaderReused(pid) {
-							return
-						}
-						if pgid, err := syscall.Getpgid(child); err == nil && pgid == pid {
-							_ = syscall.Kill(-pid, syscall.SIGKILL)
-						}
-					})
-					killTree(snapshot)
-				}
-			})
-			if attempted {
-				break // One tree snapshot and group termination attempt per round.
-			}
-		}
-		if !found {
+		if !p.reapRound(pid) {
 			return
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+// reapRound makes one tree snapshot and group termination attempt for the
+// leader's group, and reports whether any member was still in it.
+func (p *Process) reapRound(pid int) bool {
+	found := false
+	for _, member := range candidates(p.launched.Add(-time.Second)) {
+		if member.group != pid || member.pid == pid {
+			continue
+		}
+		found = true
+		if p.reapMember(pid, member) {
+			break // One tree snapshot and group termination attempt per round.
+		}
+	}
+	return found
+}
+
+// reapMember signals the leader's group through member, revalidating both
+// member's birth identity and its group immediately before signalling: a
+// live member anchors the pgid, so it cannot be recycled between validation
+// and the group signal. It reports whether member still anchored the group,
+// so the attempt was made.
+func (p *Process) reapMember(pid int, member candidate) bool {
+	attempted := false
+	signalOwned(member.pid, member.identity, processIdentity, func(child int) {
+		if !p.anchorsGroup(child, pid) {
+			return
+		}
+		attempted = true
+		snapshot := tree(p.token, p.launched, pid, nil)
+		// Enumeration can take time: re-establish the group anchor again.
+		signalOwned(child, member.identity, processIdentity, func(child int) {
+			if p.anchorsGroup(child, pid) {
+				_ = syscall.Kill(-pid, syscall.SIGKILL)
+			}
+		})
+		killTree(snapshot)
+	})
+	return attempted
+}
+
+// anchorsGroup reports whether child still holds the leader's group: the
+// leader's PID was not reused, and child is in group pid.
+func (p *Process) anchorsGroup(child, pid int) bool {
+	if p.leaderReused(pid) {
+		return false
+	}
+	group, err := syscall.Getpgid(child)
+	return err == nil && group == pid
 }
 
 // leaderReused reports whether pid now names a process other than the leader
