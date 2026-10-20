@@ -18,6 +18,7 @@ import (
 	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/claudeproto"
 	"github.com/shhac/lib-agent-harness/internal/rawjson"
+	"github.com/shhac/lib-agent-harness/internal/tokens"
 )
 
 // streamEvent is the subset of claude's stream-json protocol this driver
@@ -54,27 +55,28 @@ type streamEvent struct {
 // Its input_tokens excludes both cache figures, so the shared Input, which
 // counts every prompt token, is the sum of all three.
 type streamUsage struct {
-	InputTokens              int64 `json:"input_tokens"`
-	OutputTokens             int64 `json:"output_tokens"`
-	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
-	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+	InputTokens              *int64 `json:"input_tokens"`
+	OutputTokens             *int64 `json:"output_tokens"`
+	CacheCreationInputTokens *int64 `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     *int64 `json:"cache_read_input_tokens"`
 	// Details states the part of OutputTokens that was thinking.
 	Details *claudeproto.OutputDetails `json:"output_tokens_details"`
 }
 
+// usage is unknown unless claude states both counts. A thinking figure that
+// is not a part of the output leaves only the reasoning split unknown.
 func (u streamUsage) usage() harness.Usage {
-	out := harness.Usage{
-		Input:      u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens,
-		Output:     u.OutputTokens,
-		CacheRead:  u.CacheReadInputTokens,
-		CacheWrite: u.CacheCreationInputTokens,
-		CacheKnown: true,
+	r := tokens.Report{Input: u.InputTokens, Output: u.OutputTokens, CacheRead: u.CacheReadInputTokens, CacheWrite: u.CacheCreationInputTokens}
+	if u.OutputTokens != nil {
+		if reasoning, ok := u.Details.Reasoning(*u.OutputTokens); ok {
+			r.Reasoning = &reasoning
+		}
 	}
-	out.Reasoning, out.ReasoningKnown = u.Details.Reasoning(u.OutputTokens)
-	return out
+	return tokens.CacheExclusive(r)
 }
 
-// addUsage folds one invocation's usage into the run's running total.
+// addUsage folds one invocation's usage into the run's running total, and
+// reports whether the total is still a measurement.
 //
 // Added rather than replaced because a resumed run reports only its OWN turn,
 // not the session's total (verified live: a resume whose turn produced 43
@@ -84,18 +86,9 @@ func (u streamUsage) usage() harness.Usage {
 // Summing is correct for claude specifically and wrong for codex, whose
 // turn.completed reports the session total every time; see
 // codexTranscoder.recordUsage.
-//
-// The reasoning split stays known only while every invocation reported it;
-// first says acc holds nothing yet.
-func addUsage(acc, u harness.Usage, first bool) harness.Usage {
-	acc.Input += u.Input
-	acc.Output += u.Output
-	acc.CacheRead += u.CacheRead
-	acc.CacheWrite += u.CacheWrite
-	acc.Reasoning += u.Reasoning
-	acc.CacheKnown = u.CacheKnown
-	acc.ReasoningKnown = u.ReasoningKnown && (first || acc.ReasoningKnown)
-	return acc
+func addUsage(acc, u harness.Usage) (harness.Usage, bool) {
+	total := tokens.Add(acc, u)
+	return total, total.Known
 }
 
 // contentBlock is one item of an assistant or user message's content array.
@@ -314,14 +307,20 @@ func (t *streamTranscoder) recordResult(ev streamEvent, rawLine []byte) (bool, s
 	// Claude can emit a terminal error with all-zero counters despite having
 	// streamed output. Such placeholders are not evidence of a free invocation.
 	failed := ev.IsError || strings.HasPrefix(ev.Subtype, "error")
-	usageUsable := ev.Usage != nil && (!failed || ev.Usage.usage().Total() > 0)
+	var usage harness.Usage
+	if ev.Usage != nil {
+		usage = ev.Usage.usage()
+	}
+	usageUsable := usage.Known && (!failed || usage.Total() > 0)
 	if ev.Usage != nil {
 		if raw := extractUsage(rawLine); raw != nil {
 			t.rawUsage = append(t.rawUsage, raw)
 		}
 	}
 	if usageUsable {
-		t.usage = addUsage(t.usage, ev.Usage.usage(), !t.sawUsage)
+		var ok bool
+		t.usage, ok = addUsage(t.usage, usage)
+		t.usageIncomplete = t.usageIncomplete || !ok
 		t.sawUsage = true
 	} else {
 		t.usageIncomplete = true

@@ -17,6 +17,7 @@ import (
 	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/nativecli"
 	"github.com/shhac/lib-agent-harness/internal/rawjson"
+	"github.com/shhac/lib-agent-harness/internal/tokens"
 )
 
 type antigravityWireEvent struct {
@@ -65,20 +66,16 @@ type antigravityUsage struct {
 	CacheReadTokens *int64 `json:"cache_read_tokens"`
 }
 
-// usage is not known unless agy states both input and output counts.
+// usage is not known unless agy states both input and output counts. Its
+// output excludes the thinking reported beside it, and agy never writes to the
+// cache, so a stated read is the whole split.
 func (u antigravityUsage) usage() (harness.Usage, bool) {
-	if u.InputTokens == nil || u.OutputTokens == nil {
-		return harness.Usage{}, false
+	output := u.OutputTokens
+	if u.ThinkingTokens != nil {
+		output = tokens.Sum(u.OutputTokens, u.ThinkingTokens)
 	}
-	read, reasoning := valueOrZero(u.CacheReadTokens), valueOrZero(u.ThinkingTokens)
-	return harness.Usage{
-		Input:          *u.InputTokens + read,
-		Output:         *u.OutputTokens + reasoning,
-		CacheRead:      read,
-		Reasoning:      reasoning,
-		CacheKnown:     u.CacheReadTokens != nil,
-		ReasoningKnown: u.ThinkingTokens != nil,
-	}, true
+	usage := tokens.CacheExclusive(tokens.Report{Input: u.InputTokens, Output: output, CacheRead: u.CacheReadTokens, CacheWrite: tokens.NoCacheWrite(u.CacheReadTokens), Reasoning: u.ThinkingTokens})
+	return usage, usage.Known
 }
 
 type antigravityTranscoder struct {
@@ -235,7 +232,8 @@ func (t *antigravityTranscoder) countStepUsage(u antigravityStepUpdate) {
 		return
 	}
 	t.rawUsage = append(t.rawUsage, append(json.RawMessage(nil), u.Usage...))
-	t.usage = addUsage(t.usage, usage, !t.sawUsage)
+	t.usage, ok = addUsage(t.usage, usage)
+	t.usageIncomplete = t.usageIncomplete || !ok
 	t.sawUsage = true
 }
 

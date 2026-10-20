@@ -113,7 +113,7 @@ func TestStreamNormalizesUsageAcrossResumes(t *testing.T) {
 		// Codex reports the session total, with cached input inside input_tokens.
 		{harness.Codex, `{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":10}}`, `{"type":"turn.completed","usage":{"input_tokens":150,"cached_input_tokens":30,"output_tokens":15}}`, harness.Usage{Known: true, Input: 150, CacheRead: 30, Output: 15, CacheKnown: true}},
 		// Claude reports each invocation, with cached input outside input_tokens.
-		{harness.Claude, `{"type":"result","structured_output":{"ok":true},"usage":{"input_tokens":80,"cache_read_input_tokens":20,"output_tokens":10}}`, `{"type":"result","structured_output":{"ok":true},"usage":{"input_tokens":40,"cache_read_input_tokens":30,"output_tokens":5}}`, harness.Usage{Known: true, Input: 170, CacheRead: 50, Output: 15, CacheKnown: true}},
+		{harness.Claude, `{"type":"result","structured_output":{"ok":true},"usage":{"input_tokens":80,"cache_read_input_tokens":20,"cache_creation_input_tokens":0,"output_tokens":10}}`, `{"type":"result","structured_output":{"ok":true},"usage":{"input_tokens":40,"cache_read_input_tokens":30,"cache_creation_input_tokens":0,"output_tokens":5}}`, harness.Usage{Known: true, Input: 170, CacheRead: 50, Output: 15, CacheKnown: true}},
 	}
 	for _, tc := range cases {
 		t.Run(string(tc.engine), func(t *testing.T) {
@@ -477,7 +477,7 @@ func TestDefaultClaudeHomeSelection(t *testing.T) {
 }
 
 func TestUsageAvailabilityDistinguishesZeroFromAbsent(t *testing.T) {
-	for _, wire := range []string{`{"type":"result","result":"ok"}`, `{"type":"result","result":"ok","usage":{"input_tokens":0},"total_cost_usd":0}`} {
+	for _, wire := range []string{`{"type":"result","result":"ok"}`, `{"type":"result","result":"ok","usage":{"input_tokens":0,"output_tokens":0},"total_cost_usd":0}`} {
 		s, _ := NewStream(harness.Claude, io.Discard, StreamOptions{})
 		io.WriteString(s, wire)
 		s.Close()
@@ -485,6 +485,35 @@ func TestUsageAvailabilityDistinguishesZeroFromAbsent(t *testing.T) {
 		want := strings.Contains(wire, "usage")
 		if r.Usage.Known != want || r.Cost.Known != want {
 			t.Fatalf("availability %+v for %s", r, wire)
+		}
+	}
+}
+
+// A split one invocation omitted stays unknown for the run, whichever came
+// first, and a count that is not a measurement leaves the run's usage unknown.
+func TestStreamUsageSplitsAndInvalidCountsAcrossResumes(t *testing.T) {
+	stated := `{"type":"result","result":"ok","usage":{"input_tokens":10,"output_tokens":2,"cache_read_input_tokens":5,"cache_creation_input_tokens":1}}`
+	omitted := `{"type":"result","result":"ok","usage":{"input_tokens":10,"output_tokens":2}}`
+	negative := `{"type":"result","result":"ok","usage":{"input_tokens":-10,"output_tokens":2}}`
+	for name, c := range map[string]struct {
+		lines []string
+		known bool
+		cache bool
+	}{
+		"stated twice":           {[]string{stated, stated}, true, true},
+		"stated then omitted":    {[]string{stated, omitted}, true, false},
+		"omitted then stated":    {[]string{omitted, stated}, true, false},
+		"a negative count":       {[]string{stated, negative}, false, false},
+		"a negative count first": {[]string{negative, stated}, false, false},
+	} {
+		s, _ := NewStream(harness.Claude, io.Discard, StreamOptions{})
+		for _, line := range c.lines {
+			s.UserPrompt("continue")
+			io.WriteString(s, line)
+			s.Close()
+		}
+		if u := s.Snapshot().Usage; u.Known != c.known || (c.known && u.CacheKnown != c.cache) {
+			t.Errorf("%s: %+v", name, u)
 		}
 	}
 }

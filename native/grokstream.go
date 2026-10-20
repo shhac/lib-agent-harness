@@ -17,6 +17,7 @@ import (
 
 	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/rawjson"
+	"github.com/shhac/lib-agent-harness/internal/tokens"
 )
 
 type grokWireEvent struct {
@@ -52,23 +53,15 @@ type grokWireEvent struct {
 // cache figures back. ACP's camel-case inputTokens is not read: the headless
 // fields are the ones that split the cache out.
 type grokUsage struct {
-	Input      int64  `json:"input_tokens"`
-	Output     int64  `json:"output_tokens"`
-	CacheRead  int64  `json:"cache_read_input_tokens"`
-	CacheWrite int64  `json:"cache_creation_input_tokens"`
+	Input      *int64 `json:"input_tokens"`
+	Output     *int64 `json:"output_tokens"`
+	CacheRead  *int64 `json:"cache_read_input_tokens"`
+	CacheWrite *int64 `json:"cache_creation_input_tokens"`
 	Reasoning  *int64 `json:"reasoning_tokens"`
 }
 
 func (u grokUsage) usage() harness.Usage {
-	return harness.Usage{
-		Input:          u.Input + u.CacheRead + u.CacheWrite,
-		Output:         u.Output,
-		CacheRead:      u.CacheRead,
-		CacheWrite:     u.CacheWrite,
-		Reasoning:      valueOrZero(u.Reasoning),
-		CacheKnown:     true,
-		ReasoningKnown: u.Reasoning != nil,
-	}
+	return tokens.CacheExclusive(tokens.Report{Input: u.Input, Output: u.Output, CacheRead: u.CacheRead, CacheWrite: u.CacheWrite, Reasoning: u.Reasoning})
 }
 
 type grokTranscoder struct {
@@ -369,7 +362,9 @@ func (t *grokTranscoder) recordSpend(spend grokSpend) {
 			raw, _ = json.Marshal(ev.Usage)
 		}
 		t.rawUsage = append(t.rawUsage, raw)
-		t.usage = addUsage(t.usage, ev.Usage.usage(), !t.sawUsage)
+		var ok bool
+		t.usage, ok = addUsage(t.usage, ev.Usage.usage())
+		t.usageIncomplete = t.usageIncomplete || !ok
 		t.sawUsage = true
 	}
 	if ev.Usage == nil || ev.UsageIncomplete {
@@ -484,11 +479,4 @@ func grokToolDescription(ev grokWireEvent) string {
 		return ev.toolName()
 	}
 	return ev.toolName() + "\n" + string(ev.RawInput)
-}
-
-func valueOrZero(v *int64) int64 {
-	if v == nil {
-		return 0
-	}
-	return *v
 }

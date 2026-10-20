@@ -184,7 +184,8 @@ func TestGrokResumedUsageIsSummedAndGapsStayUnknown(t *testing.T) {
 	runGrokLines(t, s, "first", `{"type":"text","data":"a"}`, end(10, 2, `,"total_cost_usd_ticks":100`))
 	runGrokLines(t, s, "second", `{"type":"text","data":"b"}`, end(5, 1, `,"total_cost_usd_ticks":50`))
 	r := s.Snapshot()
-	if r.Usage != (harness.Usage{Known: true, Input: 15, Output: 3, CacheKnown: true}) || r.Cost != (harness.Cost{USD: 150 / grokCostTicksPerUSD, Known: true}) {
+	// Neither invocation stated its cache figures, so the split stays unknown.
+	if r.Usage != (harness.Usage{Known: true, Input: 15, Output: 3}) || r.Cost != (harness.Cost{USD: 150 / grokCostTicksPerUSD, Known: true}) {
 		t.Fatalf("resumed invocations must sum: %+v", r)
 	}
 

@@ -25,6 +25,7 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/tokens"
 )
 
 // codexEvent is the subset of codex's --json protocol this driver reads.
@@ -73,9 +74,9 @@ func (i codexItem) kind() string {
 // ReasoningOutputTokens is a SUBSET of OutputTokens, recorded for analysis
 // and never added into a total.
 type codexUsage struct {
-	InputTokens           int64  `json:"input_tokens"`
+	InputTokens           *int64 `json:"input_tokens"`
 	CachedInputTokens     *int64 `json:"cached_input_tokens"`
-	OutputTokens          int64  `json:"output_tokens"`
+	OutputTokens          *int64 `json:"output_tokens"`
 	ReasoningOutputTokens *int64 `json:"reasoning_output_tokens"`
 }
 
@@ -83,15 +84,7 @@ type codexUsage struct {
 // write (its caching is implicit), so CacheWrite stays 0; a report without a
 // cached figure leaves the split unknown rather than claiming nothing was cached.
 func (u codexUsage) usage() harness.Usage {
-	out := harness.Usage{Input: u.InputTokens, Output: u.OutputTokens}
-	if u.ReasoningOutputTokens != nil {
-		out.Reasoning, out.ReasoningKnown = *u.ReasoningOutputTokens, true
-	}
-	if u.CachedInputTokens != nil {
-		out.CacheRead = *u.CachedInputTokens
-		out.CacheKnown = true
-	}
-	return out
+	return tokens.CacheInclusive(tokens.Report{Input: u.InputTokens, Output: u.OutputTokens, CacheRead: u.CachedInputTokens, CacheWrite: tokens.NoCacheWrite(u.CachedInputTokens), Reasoning: u.ReasoningOutputTokens})
 }
 
 // codexTranscoder consumes `codex exec --json` stdout and writes the marker
@@ -212,10 +205,8 @@ func (t *codexTranscoder) recordUsage(ev codexEvent, line []byte) {
 		return
 	}
 	t.usage = ev.Usage.usage()
-	t.sawUsage = true
-	usage := t.usage
-	usage.Known = true
-	t.event(Event{Kind: "usage", Usage: usage})
+	t.sawUsage = t.usage.Known
+	t.event(Event{Kind: "usage", Usage: t.usage})
 	if raw := extractUsage(line); raw != nil {
 		t.rawUsage = append(t.rawUsage, raw)
 	}

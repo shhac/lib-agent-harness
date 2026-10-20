@@ -7,6 +7,7 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/tokens"
 )
 
 // fx's noninteractive run writes one JSON document to standard output when it
@@ -118,9 +119,9 @@ func (t *fxTranscoder) record(doc fxDocument) {
 		t.event(Event{Kind: "session", SessionID: doc.SessionID})
 		t.emit("", "session id: "+doc.SessionID)
 	}
-	if u := doc.Usage; u != nil && u.Input != nil && u.Output != nil {
-		t.usage = harness.Usage{Known: true, Input: *u.Input, Output: *u.Output}
-		t.sawUsage = true
+	if u := doc.Usage; u != nil {
+		t.usage = tokens.CacheInclusive(tokens.Report{Input: u.Input, Output: u.Output})
+		t.sawUsage = t.usage.Known
 	}
 	t.flushPrompt()
 	for _, call := range doc.ToolCalls {
