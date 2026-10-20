@@ -111,7 +111,11 @@ jobs:
         run: go run ./internal/cmd/sandboxcheck
   linux-bwrap-080:
     name: linux (bubblewrap 0.8.0)
-    runs-on: ubuntu-latest
+    # The same image the main Linux job verifies: ubuntu-latest moved to an
+    # image whose network gives the probe no outside control, which is an
+    # environment change to investigate on its own, not a bubblewrap 0.8.0
+    # result.
+    runs-on: ubuntu-24.04
     env:
       AGENT_HARNESS_TEST_NO_SKIP: '1'
       AGENT_HARNESS_TEST_BWRAP_080: '1'
