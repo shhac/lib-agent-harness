@@ -248,14 +248,18 @@ func skillDeliveryFor(o Options) (skillDelivery, error) {
 		// fx takes no skill plugin flag, so a provided skill's index travels
 		// with the session's instructions.
 		return instructionSkills, nil
+	case harness.Claude:
+		if o.Sandbox == nil && !composed && claudeTool(o, "Skill") {
+			return nativeSkills, nil
+		}
+		if !claudeTool(o, "Read") {
+			return 0, refuse(o, "skills", RefusedSkills, "a Claude session reads provided skills with its Read tool, or loads them with its Skill tool; Policy.ClaudeTools has neither")
+		}
+		return instructionSkills, nil
 	}
-	if o.Sandbox == nil && !composed && claudeTool(o, "Skill") {
-		return nativeSkills, nil
-	}
-	if !claudeTool(o, "Read") {
-		return 0, refuse(o, "skills", RefusedSkills, "a Claude session reads provided skills with its Read tool, or loads them with its Skill tool; Policy.ClaudeTools has neither")
-	}
-	return instructionSkills, nil
+	// An engine not named here has no proven way to receive a provided
+	// skill; it is refused rather than given another engine's delivery.
+	return 0, refuse(o, "skills", RefusedSkills, "this engine has no proven way to receive provided skills")
 }
 
 // claudeTool reports whether a Claude session's policy keeps a native tool.

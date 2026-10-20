@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"testing"
 
 	harness "github.com/shhac/lib-agent-harness"
@@ -51,4 +52,22 @@ func TestSandboxOnAnEngineWithoutOneIsRefused(t *testing.T) {
 func describedHomeDir(e harness.Engine) string {
 	d, _ := harness.Describe(e)
 	return d.HomeDir
+}
+
+// Shared code that branches on an engine refuses one it does not name,
+// rather than applying Claude's rules to it.
+func TestUnnamedEnginesAreRefusedNotGivenClaudesRules(t *testing.T) {
+	for _, e := range []harness.Engine{harness.CommandCode, harness.Antigravity} {
+		o := Options{Provider: harness.Provider{Engine: e}}
+		if _, err := skillDeliveryFor(o); err == nil {
+			t.Errorf("%s: provided skills were given a delivery", e)
+		}
+		// A platform without containment refuses first, with a capability error.
+		_, err := normalizeSandbox(Options{Provider: harness.Provider{Engine: e}, WorkDir: t.TempDir(), Sandbox: &Sandbox{}})
+		var refused *UnsupportedError
+		notOffered := errors.As(err, &refused) && refused.Code == RefusedNotOffered
+		if !notOffered && !errors.As(err, new(*CapabilityError)) {
+			t.Errorf("%s: a sandbox was normalised: %v", e, err)
+		}
+	}
 }

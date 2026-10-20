@@ -148,24 +148,38 @@ func normalizeSandbox(o Options) (Options, error) {
 	if err := validateSandboxTools(o); err != nil {
 		return o, err
 	}
-	if o.Provider.Engine == harness.Codex {
-		if o.Policy.CodexSandbox != "" {
-			return o, refuse(o, "policy", RefusedConflict, "a sandboxed Codex session owns its sandbox; leave Policy.CodexSandbox unset")
-		}
-		if o.Policy.CodexApproval != "" && o.Policy.CodexApproval != "never" {
-			return o, refuse(o, "policy", RefusedConflict, "a sandboxed Codex session never asks for approval; leave Policy.CodexApproval unset or never")
-		}
-		o.Policy.CodexApproval = "never"
-		if o.RuntimeHome == "" {
-			return o, refuse(o, "runtime_home", RefusedRuntimeHome, "a sandboxed Codex session requires a durable private runtime home; set Options.RuntimeHome")
-		}
-		abs, err := filepath.Abs(o.RuntimeHome)
-		if err != nil {
-			return o, refuse(o, "runtime_home", RefusedRuntimeHome, "invalid sandboxed session runtime home")
-		}
-		o.RuntimeHome = abs
-		return o, nil
+	support := engines[o.Provider.Engine].sandbox
+	if support == nil || support.normalize == nil {
+		c := harness.Support(o.Provider.Engine, harness.Session, harness.Sandbox)
+		return o, &UnsupportedError{Engine: o.Provider.Engine, Operation: "sandbox", Code: RefusedNotOffered, Capability: c}
 	}
+	return support.normalize(o)
+}
+
+// normalizeCodexSandbox applies what a sandboxed Codex session requires of
+// its policy and runtime home.
+func normalizeCodexSandbox(o Options) (Options, error) {
+	if o.Policy.CodexSandbox != "" {
+		return o, refuse(o, "policy", RefusedConflict, "a sandboxed Codex session owns its sandbox; leave Policy.CodexSandbox unset")
+	}
+	if o.Policy.CodexApproval != "" && o.Policy.CodexApproval != "never" {
+		return o, refuse(o, "policy", RefusedConflict, "a sandboxed Codex session never asks for approval; leave Policy.CodexApproval unset or never")
+	}
+	o.Policy.CodexApproval = "never"
+	if o.RuntimeHome == "" {
+		return o, refuse(o, "runtime_home", RefusedRuntimeHome, "a sandboxed Codex session requires a durable private runtime home; set Options.RuntimeHome")
+	}
+	abs, err := filepath.Abs(o.RuntimeHome)
+	if err != nil {
+		return o, refuse(o, "runtime_home", RefusedRuntimeHome, "invalid sandboxed session runtime home")
+	}
+	o.RuntimeHome = abs
+	return o, nil
+}
+
+// normalizeClaudeSandbox applies what a sandboxed Claude session requires of
+// its permission mode and tools.
+func normalizeClaudeSandbox(o Options) (Options, error) {
 	if o.Policy.ClaudePermission != "" && o.Policy.ClaudePermission != "dontAsk" {
 		return o, refuse(o, "policy", RefusedConflict, "a sandboxed Claude session runs in dontAsk permission mode; leave Policy.ClaudePermission unset or dontAsk")
 	}
@@ -252,7 +266,10 @@ func sandboxArgs(o Options) []string { return engines[o.Provider.Engine].sandbox
 // order: arguments, preparation, proof, and only after the proof the tool
 // channel.
 type sandboxSupport struct {
-	args func(Options) []string
+	// normalize applies what a sandboxed session of the engine requires of
+	// its options, after the sandbox itself is validated.
+	normalize func(Options) (Options, error)
+	args      func(Options) []string
 	// prepare readies what the sandboxed CLI reads before it is proved, such
 	// as Codex's runtime home and browser bridge.
 	prepare func(context.Context, Options, *launch) error
@@ -266,6 +283,7 @@ type sandboxSupport struct {
 
 var (
 	codexSandbox = &sandboxSupport{
+		normalize: normalizeCodexSandbox,
 		args: func(o Options) []string {
 			args := codexSandboxArgs(*o.Sandbox)
 			if o.Browser {
@@ -289,7 +307,8 @@ var (
 		},
 	}
 	claudeSandbox = &sandboxSupport{
-		args: claudeSandboxArgs,
+		normalize: normalizeClaudeSandbox,
+		args:      claudeSandboxArgs,
 		probe: func(ctx context.Context, o Options, l *launch) (loopbackEvidence, error) {
 			if err := probeClaudeSandbox(ctx, o); err != nil || !o.Sandbox.Loopback {
 				return loopbackEvidence{}, err
