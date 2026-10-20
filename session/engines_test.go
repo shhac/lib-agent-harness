@@ -25,7 +25,7 @@ func TestEngineRegistryIsComplete(t *testing.T) {
 			t.Errorf("%s: no entry", e)
 		case entry.dialect == nil || entry.normalizePolicy == nil || entry.initialize == nil || entry.event == nil || entry.args == nil:
 			t.Errorf("%s: incomplete entry", e)
-		case entry.resolveHome == nil && homeVariable(e) == "":
+		case describedHomeDir(e) == "":
 			t.Errorf("%s: no way to find its home", e)
 		}
 	}
@@ -46,4 +46,9 @@ func TestSandboxOnAnEngineWithoutOneIsRefused(t *testing.T) {
 			t.Errorf("%s: a sandbox was verified", e)
 		}
 	}
+}
+
+func describedHomeDir(e harness.Engine) string {
+	d, _ := harness.Describe(e)
+	return d.HomeDir
 }

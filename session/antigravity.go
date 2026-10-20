@@ -36,8 +36,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	harness "github.com/shhac/lib-agent-harness"
@@ -59,25 +57,6 @@ func antigravityArgs(o Options, nativeID string, resuming bool) []string {
 		args = append(args, "--effort="+o.Effort)
 	}
 	return args
-}
-
-// antigravityHome is the only home an Antigravity session can use: `~/.gemini`,
-// which `agy` derives from the user's home directory. A caller that names
-// another is refused rather than silently given this one.
-func antigravityHome(o Options) (Options, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return o, refuse(o, "home", RefusedHome, "home directory unavailable")
-	}
-	fixed := filepath.Join(home, ".gemini")
-	cli := &o.Provider.CLI
-	if cli.Home != "" {
-		if cli.Home, err = filepath.Abs(cli.Home); err != nil || filepath.Clean(cli.Home) != fixed {
-			return o, refuse(o, "home", RefusedHome, "Antigravity reads its configuration and login from ~/.gemini, and no variable moves it; leave Provider.CLI.Home empty")
-		}
-	}
-	cli.Home = fixed
-	return o, nil
 }
 
 // unsupportedAntigravity refuses what agy stream-json has no way to carry, so

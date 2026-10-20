@@ -37,8 +37,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -59,25 +57,6 @@ const fxAskingMode = "ask"
 // working directory travels with session/new, and the model, the effort and
 // the mode are set as the session's own configuration.
 func fxArgs() []string { return []string{"acp"} }
-
-// fxHome is the only home an fx session can use: the profile fx derives from
-// the user's home directory. fx has no variable that moves it, so a caller
-// that names another home is refused rather than silently given this one.
-func fxHome(o Options) (Options, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return o, refuse(o, "home", RefusedHome, "home directory unavailable")
-	}
-	fixed := filepath.Join(home, ".fx")
-	cli := &o.Provider.CLI
-	if cli.Home != "" {
-		if cli.Home, err = filepath.Abs(cli.Home); err != nil || filepath.Clean(cli.Home) != fixed {
-			return o, refuse(o, "home", RefusedHome, "fx reads its configuration and login from the user's home directory, and no variable moves it; leave Provider.CLI.Home empty")
-		}
-	}
-	cli.Home = fixed
-	return o, nil
-}
 
 // fxSessionParams creates, or resumes by id, a session in the working
 // directory. No MCP server is added: fx loads the project's own, and the

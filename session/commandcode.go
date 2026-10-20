@@ -38,7 +38,6 @@ package session
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"slices"
 
@@ -58,25 +57,6 @@ const commandCodeAskingMode = "default"
 const commandCodeListPages = 50
 
 func commandCodeArgs() []string { return []string{"acp"} }
-
-// commandCodeHome is the only home a Command Code session can use: the one
-// Command Code derives from the user's home directory. A caller that names
-// another is refused rather than silently given this one.
-func commandCodeHome(o Options) (Options, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return o, refuse(o, "home", RefusedHome, "home directory unavailable")
-	}
-	fixed := filepath.Join(home, ".commandcode")
-	cli := &o.Provider.CLI
-	if cli.Home != "" {
-		if cli.Home, err = filepath.Abs(cli.Home); err != nil || filepath.Clean(cli.Home) != fixed {
-			return o, refuse(o, "home", RefusedHome, "Command Code reads its configuration and login from the user's home directory, and no variable moves it; leave Provider.CLI.Home empty")
-		}
-	}
-	cli.Home = fixed
-	return o, nil
-}
 
 // unsupportedCommandCode refuses what cmd acp has no way to carry, so that
 // nothing a caller asked for is silently dropped.

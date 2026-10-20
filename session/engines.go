@@ -16,9 +16,8 @@ type engineEntry struct {
 	// dialect frames the engine's wire under the session's policy.
 	dialect func(Policy) dialect
 	// The default binary, home variable and home folder are the engine's
-	// harness.Descriptor. resolveHome, when set, replaces resolving the home
-	// from them.
-	resolveHome func(Options) (Options, error)
+	// harness.Descriptor; an engine with no home variable has only its fixed
+	// home folder.
 	// homeValue is the value given homeVariable, and false to leave it
 	// unset; nil gives the caller's home.
 	homeValue func(Options) (string, bool)
@@ -112,7 +111,7 @@ func init() {
 			account:       grokAccountRead,
 		},
 		harness.CommandCode: {
-			dialect: commandCodeDialect, resolveHome: commandCodeHome,
+			dialect: commandCodeDialect,
 
 			args:            func(Options, string, bool, *launch) []string { return commandCodeArgs() },
 			normalizePolicy: normalizeCommandCodePolicy, withheld: commandCodeManaged,
@@ -122,7 +121,7 @@ func init() {
 			composedSteer: "Command Code steering cancels the running prompt and sends another",
 		},
 		harness.Antigravity: {
-			dialect: antigravityDialect, resolveHome: antigravityHome,
+			dialect: antigravityDialect,
 
 			inspectElsewhere: "inspect an Antigravity login with account.Inspect",
 			args: func(o Options, nativeID string, resuming bool, _ *launch) []string {
@@ -135,7 +134,7 @@ func init() {
 			steer: (*Session).steerAntigravity,
 		},
 		harness.Fx: {
-			dialect: fxDialect, resolveHome: fxHome,
+			dialect: fxDialect,
 
 			args:            func(Options, string, bool, *launch) []string { return fxArgs() },
 			normalizePolicy: normalizeFxPolicy, withheld: fxManaged,

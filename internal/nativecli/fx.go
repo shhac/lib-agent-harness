@@ -1,10 +1,6 @@
 package nativecli
 
-import (
-	"os"
-	"path/filepath"
-	"strings"
-)
+import ()
 
 // FxEnvironment is the operating environment an fx launch runs with.
 //
@@ -27,19 +23,4 @@ func FxEnvironment(home string) ([]string, string) {
 
 // FxHomeProblem accepts the native fx profile and nothing else: the home
 // directory fx itself resolves, and no other.
-func FxHomeProblem(home string) string {
-	if home == "" {
-		return ""
-	}
-	if !filepath.IsAbs(home) || strings.ContainsRune(home, '\x00') {
-		return "fx_home_invalid"
-	}
-	userHome, err := os.UserHomeDir()
-	if err != nil {
-		return "fx_home_unresolved"
-	}
-	if filepath.Clean(home) != filepath.Join(userHome, ".fx") {
-		return "fx_home_unsupported"
-	}
-	return ""
-}
+func FxHomeProblem(home string) string { return FixedHomeProblem(home, ".fx", "fx") }

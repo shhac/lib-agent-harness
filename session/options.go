@@ -173,7 +173,6 @@ func otherEnginePolicy(o Options) error {
 // defaulting each from this process's environment.
 func normalizePaths(o Options) (Options, error) {
 	cli := &o.Provider.CLI
-	entry := engines[o.Provider.Engine]
 	described, _ := harness.Describe(o.Provider.Engine)
 	if cli.Binary == "" {
 		cli.Binary = described.Binary
@@ -188,8 +187,8 @@ func normalizePaths(o Options) (Options, error) {
 	if err != nil {
 		return o, refuse(o, "work_dir", RefusedWorkDir, "invalid working directory")
 	}
-	if entry.resolveHome != nil {
-		return entry.resolveHome(o)
+	if described.HomeVariable == "" {
+		return fixedHome(o, described)
 	}
 	if cli.Home == "" {
 		cli.Home = os.Getenv(described.HomeVariable)
@@ -421,4 +420,24 @@ func compatible(o Options, r Ref) bool {
 	}
 	expected := reference(o, r.ID)
 	return r.ID != "" && r == expected
+}
+
+// fixedHome is the only home a session can use for an engine whose CLI reads
+// no variable that moves it: the folder it derives from the user's home
+// directory. A caller that names another is refused rather than silently
+// given this one.
+func fixedHome(o Options, d harness.Descriptor) (Options, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return o, refuse(o, "home", RefusedHome, "home directory unavailable")
+	}
+	fixed := filepath.Join(home, d.HomeDir)
+	cli := &o.Provider.CLI
+	if cli.Home != "" {
+		if cli.Home, err = filepath.Abs(cli.Home); err != nil || filepath.Clean(cli.Home) != fixed {
+			return o, refuse(o, "home", RefusedHome, d.Label+" reads its configuration and login from ~/"+d.HomeDir+", and no variable moves it; leave Provider.CLI.Home empty")
+		}
+	}
+	cli.Home = fixed
+	return o, nil
 }

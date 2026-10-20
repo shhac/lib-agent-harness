@@ -107,18 +107,26 @@ var AntigravityReducedTelemetry = []string{
 // directory. agy derives ~/.gemini and ~/.gemini/antigravity-cli from
 // os.UserHomeDir() and reads no variable that moves only its own home.
 func AntigravityHomeProblem(home string) string {
+	return FixedHomeProblem(home, ".gemini", "antigravity")
+}
+
+// FixedHomeProblem accepts an empty home or dir under the user's home
+// directory, the only home a CLI that reads no variable to move it can use.
+// Any other names a home the CLI would not read, and is refused with a code
+// prefixed by the engine's name rather than ignored.
+func FixedHomeProblem(home, dir, engine string) string {
 	if home == "" {
 		return ""
 	}
 	if !filepath.IsAbs(home) || strings.ContainsRune(home, '\x00') {
-		return "antigravity_home_invalid"
+		return engine + "_home_invalid"
 	}
 	userHome, err := os.UserHomeDir()
 	if err != nil {
-		return "antigravity_home_unresolved"
+		return engine + "_home_unresolved"
 	}
-	if filepath.Clean(home) != filepath.Join(userHome, ".gemini") {
-		return "antigravity_home_unsupported"
+	if filepath.Clean(home) != filepath.Join(userHome, dir) {
+		return engine + "_home_unsupported"
 	}
 	return ""
 }
