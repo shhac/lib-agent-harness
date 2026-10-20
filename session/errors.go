@@ -217,81 +217,53 @@ const (
 	BridgeInWorkspace            = "bridge_in_workspace"
 )
 
+// capabilityMessages is what each capability failure code means, where its
+// text does not depend on more than the code.
+var capabilityMessages = map[string]string{
+	CapabilitySandboxToolMissing:                   "the required OS sandbox tool is missing; install a supported runtime",
+	CapabilityUnsupportedPlatform:                  "restricted worker sessions are not available on this platform",
+	CapabilityNativeToolsPresent:                   "the installed harness kept tools this session did not configure",
+	CapabilityHostedToolsMissing:                   "the installed harness did not offer the tools this session configured",
+	CapabilityInstructionsMerged:                   "the installed harness merged inherited instructions into its request",
+	CapabilityChangedModel:                         "the installed harness requested a different model",
+	CapabilityChangedEffort:                        "the installed harness requested a different reasoning effort",
+	CapabilityChangedPermissionMode:                "the installed harness did not accept the permission mode this session requires",
+	CapabilityProbeNoRequest:                       "the installed harness made no request during the capability check",
+	CapabilityProbeUnreadable:                      "the capability check could not read the harness's request",
+	CapabilityProbeTimeout:                         "the capability check did not finish in time",
+	CapabilityProbeFailed:                          "the capability check could not be run",
+	CapabilityCatalogUnavailable:                   "the installed harness did not supply a model catalog to restrict",
+	CapabilityCatalogRestriction:                   "the selected model could not be restricted in the installed harness catalog",
+	CapabilityServerNotLoaded:                      "the installed harness did not load this session's tool server",
+	CapabilityServerNameReserved:                   "the installed harness reserves this tool server name; choose another",
+	CapabilityLoginUnavailable:                     "the selected harness home has no file-backed login to share with a restricted session; log in to that home first",
+	CapabilityBrowserBridgeUnavailable:             "the browser bridge home (BrowserBridgeHome, or the CLI home) has no usable ChatGPT node_repl bridge; configure the ChatGPT app browser bridge and Chrome extension, then restart the CLI",
+	CapabilityBrowserSandboxUnproven:               "the node_repl JavaScript confinement proof could not complete; update Codex and the ChatGPT app, or leave Browser unset",
+	CapabilityBrowserSandboxNotEnforced:            "node_repl JavaScript escaped the session sandbox; update Codex and the ChatGPT app, or leave Browser unset",
+	CapabilitySandboxUnavailable:                   "the installed harness could not be run under the requested sandbox",
+	sandbox.CapabilityProcessInspectionUnavailable: "the command's own process metadata could not be proved; process inspection is unavailable",
+	CapabilityLoopbackClaimChanged:                 "Seatbelt interface bind observations no longer match the all-interface Loopback claim; re-audit the installed runtime",
+	CapabilitySandboxNotEnforced:                   "the installed harness's sandbox allowed writes or network access the session must not have",
+}
+
+// bwrapMessages say how to fix bubblewrap, when it is the missing tool.
+var bwrapMessages = map[string]string{
+	CapabilitySandboxToolMissing:           "bubblewrap is required; install it with apt install bubblewrap, dnf install bubblewrap or pacman -S bubblewrap",
+	CapabilitySandboxToolOutdated:          "bubblewrap 0.8.0 or later is required for --disable-userns; install the distribution's package or a newer build",
+	CapabilitySandboxNamespacesUnavailable: "bubblewrap cannot create unprivileged user namespaces; check kernel.unprivileged_userns_clone, user.max_user_namespaces and Ubuntu 24.04+'s kernel.apparmor_restrict_unprivileged_userns and AppArmor profile for bwrap",
+}
+
+// bridgePhrases name why the browser bridge was unavailable.
+var bridgePhrases = map[string]string{
+	BridgeHomeUnavailable:        "home unavailable",
+	BridgeNotDeclared:            "bridge not declared",
+	BridgeDeclarationUnsupported: "unsupported declaration",
+	BridgeInstallationMissing:    "installation missing",
+	BridgeInWorkspace:            "installation overlaps workspace",
+}
+
 func (e *CapabilityError) Error() string {
-	message := map[string]string{
-		CapabilitySandboxToolMissing:                   "the required OS sandbox tool is missing; install a supported runtime",
-		CapabilityUnsupportedPlatform:                  "restricted worker sessions are not available on this platform",
-		CapabilityNativeToolsPresent:                   "the installed harness kept tools this session did not configure",
-		CapabilityHostedToolsMissing:                   "the installed harness did not offer the tools this session configured",
-		CapabilityInstructionsMerged:                   "the installed harness merged inherited instructions into its request",
-		CapabilityChangedModel:                         "the installed harness requested a different model",
-		CapabilityChangedEffort:                        "the installed harness requested a different reasoning effort",
-		CapabilityChangedPermissionMode:                "the installed harness did not accept the permission mode this session requires",
-		CapabilityProbeNoRequest:                       "the installed harness made no request during the capability check",
-		CapabilityProbeUnreadable:                      "the capability check could not read the harness's request",
-		CapabilityProbeTimeout:                         "the capability check did not finish in time",
-		CapabilityProbeFailed:                          "the capability check could not be run",
-		CapabilityCatalogUnavailable:                   "the installed harness did not supply a model catalog to restrict",
-		CapabilityCatalogRestriction:                   "the selected model could not be restricted in the installed harness catalog",
-		CapabilityServerNotLoaded:                      "the installed harness did not load this session's tool server",
-		CapabilityServerNameReserved:                   "the installed harness reserves this tool server name; choose another",
-		CapabilityLoginUnavailable:                     "the selected harness home has no file-backed login to share with a restricted session; log in to that home first",
-		CapabilityBrowserBridgeUnavailable:             "the browser bridge home (BrowserBridgeHome, or the CLI home) has no usable ChatGPT node_repl bridge; configure the ChatGPT app browser bridge and Chrome extension, then restart the CLI",
-		CapabilityBrowserSandboxUnproven:               "the node_repl JavaScript confinement proof could not complete; update Codex and the ChatGPT app, or leave Browser unset",
-		CapabilityBrowserSandboxNotEnforced:            "node_repl JavaScript escaped the session sandbox; update Codex and the ChatGPT app, or leave Browser unset",
-		CapabilitySandboxUnavailable:                   "the installed harness could not be run under the requested sandbox",
-		sandbox.CapabilityProcessInspectionUnavailable: "the command's own process metadata could not be proved; process inspection is unavailable",
-		CapabilityLoopbackClaimChanged:                 "Seatbelt interface bind observations no longer match the all-interface Loopback claim; re-audit the installed runtime",
-		CapabilitySandboxNotEnforced:                   "the installed harness's sandbox allowed writes or network access the session must not have",
-	}[e.Code]
-	if e.Code == CapabilitySandboxNotEnforced && capabilityProofStep(e.ProofStep) != "" {
-		message = "the installed harness's sandbox allowed reads, execution, writes or network access the session must not have"
-	}
-	if e.Code == CapabilitySandboxNotEnforced && e.ProofStep == sandbox.ProofStepProcessInspection {
-		message = "process inspection could see processes outside the command's own tree"
-	}
-	if len(e.Tools) == 1 && e.Tools[0] == "bwrap" {
-		switch e.Code {
-		case CapabilitySandboxToolMissing:
-			message = "bubblewrap is required; install it with apt install bubblewrap, dnf install bubblewrap or pacman -S bubblewrap"
-		case CapabilitySandboxToolOutdated:
-			message = "bubblewrap 0.8.0 or later is required for --disable-userns; install the distribution's package or a newer build"
-		case CapabilitySandboxNamespacesUnavailable:
-			message = "bubblewrap cannot create unprivileged user namespaces; check kernel.unprivileged_userns_clone, user.max_user_namespaces and Ubuntu 24.04+'s kernel.apparmor_restrict_unprivileged_userns and AppArmor profile for bwrap"
-		}
-	}
-	if message == "" {
-		message = "the restricted session configuration could not be established"
-	}
-	if e.Code == CapabilitySandboxUnavailable && e.Reason == claudeLinuxInCommandLoopbackReason {
-		message = claudeLinuxInCommandLoopbackReason
-	}
-	if e.Code == CapabilitySandboxUnavailable && e.Reason == ClaudeLinuxSandboxRequiresSocat {
-		message = "claude_linux_sandbox_requires_socat: Claude Code's Linux sandbox requires socat; install it with apt install socat, dnf install socat or pacman -S socat"
-	}
-	if e.Code == CapabilitySandboxNotEnforced && e.Reason == claudeLinuxWiderScopeReason {
-		message = ClaudeLinuxLoopbackScopeWiderThanClaimed + ": Claude Linux must not reach the host's localhost under the per-command contract"
-	}
-	if e.Code == CapabilityBrowserToolsMissing {
-		message = "the installed harness did not advertise the browser tools"
-		switch e.Engine {
-		case harness.Codex:
-			message += "; configure the native Node REPL browser bridge in the selected CLI home, install the ChatGPT Chrome extension (https://chromewebstore.google.com/detail/chatgpt/hehggadaopoacecdllhhajmbjkdcmajg), and restart the CLI"
-		case harness.Claude:
-			message += "; enable Claude in Chrome, install its Chrome extension (https://chromewebstore.google.com/detail/claude/fcoeoabgfenejglbffodgkkbkcdhcgfn), and restart the CLI"
-		}
-	}
-	if e.Code == CapabilityBrowserBridgeUnavailable {
-		if phrase := map[string]string{
-			BridgeHomeUnavailable:        "home unavailable",
-			BridgeNotDeclared:            "bridge not declared",
-			BridgeDeclarationUnsupported: "unsupported declaration",
-			BridgeInstallationMissing:    "installation missing",
-			BridgeInWorkspace:            "installation overlaps workspace",
-		}[e.Reason]; phrase != "" {
-			message += " (" + phrase + ")"
-		}
-	}
+	message := capabilityMessage(e)
 	out := string(e.Engine) + ": " + message
 	if len(e.Tools) > 0 {
 		out += " (" + strings.Join(e.Tools, ", ") + ")"
@@ -308,6 +280,46 @@ func (e *CapabilityError) Error() string {
 	default:
 		return out + "; no session was started"
 	}
+}
+
+// capabilityMessage is what the failure means, most specific first: a fixed
+// reason the code carries, then the browser and bubblewrap cases, then the
+// sandbox proof step, then the code alone.
+func capabilityMessage(e *CapabilityError) string {
+	switch {
+	case e.Code == CapabilitySandboxNotEnforced && e.Reason == claudeLinuxWiderScopeReason:
+		return ClaudeLinuxLoopbackScopeWiderThanClaimed + ": Claude Linux must not reach the host's localhost under the per-command contract"
+	case e.Code == CapabilitySandboxUnavailable && e.Reason == ClaudeLinuxSandboxRequiresSocat:
+		return "claude_linux_sandbox_requires_socat: Claude Code's Linux sandbox requires socat; install it with apt install socat, dnf install socat or pacman -S socat"
+	case e.Code == CapabilitySandboxUnavailable && e.Reason == claudeLinuxInCommandLoopbackReason:
+		return claudeLinuxInCommandLoopbackReason
+	case e.Code == CapabilityBrowserToolsMissing:
+		message := "the installed harness did not advertise the browser tools"
+		switch e.Engine {
+		case harness.Codex:
+			message += "; configure the native Node REPL browser bridge in the selected CLI home, install the ChatGPT Chrome extension (https://chromewebstore.google.com/detail/chatgpt/hehggadaopoacecdllhhajmbjkdcmajg), and restart the CLI"
+		case harness.Claude:
+			message += "; enable Claude in Chrome, install its Chrome extension (https://chromewebstore.google.com/detail/claude/fcoeoabgfenejglbffodgkkbkcdhcgfn), and restart the CLI"
+		}
+		return message
+	case e.Code == CapabilitySandboxNotEnforced && e.ProofStep == sandbox.ProofStepProcessInspection:
+		return "process inspection could see processes outside the command's own tree"
+	case e.Code == CapabilitySandboxNotEnforced && capabilityProofStep(e.ProofStep) != "":
+		return "the installed harness's sandbox allowed reads, execution, writes or network access the session must not have"
+	}
+	if len(e.Tools) == 1 && e.Tools[0] == "bwrap" {
+		if message, ok := bwrapMessages[e.Code]; ok {
+			return message
+		}
+	}
+	message := capabilityMessages[e.Code]
+	if message == "" {
+		return "the restricted session configuration could not be established"
+	}
+	if phrase := bridgePhrases[e.Reason]; e.Code == CapabilityBrowserBridgeUnavailable && phrase != "" {
+		message += " (" + phrase + ")"
+	}
+	return message
 }
 func (e *CapabilityError) Unwrap() error { return ErrUnsupported }
 
