@@ -125,40 +125,45 @@ type supportKey struct {
 // promoted only by evidence from the installed harness; nothing promotes past
 // this table. A caller asks it instead of comparing engine names.
 func Support(e Engine, op Operation, f Feature) Capability {
+	return supportFor(runtime.GOOS, e, op, f)
+}
+
+// supportFor is Support's claim for the platform goos names.
+func supportFor(goos string, e Engine, op Operation, f Feature) Capability {
 	if f == ProcessInspection {
-		return processInspectionSupport(e, op, runtime.GOOS)
+		return processInspectionSupport(e, op, goos)
 	}
 	if f == LoopbackPorts {
-		return loopbackPortsSupport(e, op, runtime.GOOS)
+		return loopbackPortsSupport(e, op, goos)
 	}
 	if e.Transport() == "" {
 		return Capability{Unsupported, "unrecognized engine"}
 	}
 	if f == LoopbackLocalOnly {
 		if e == Claude && op == Session {
-			if runtime.GOOS == "darwin" {
+			if goos == "darwin" {
 				return Capability{Unsupported, LoopbackLocalOnlySeatbeltReason + "; Claude allowLocalBinding uses *:* and local-only binds are unproved"}
 			}
-			if runtime.GOOS == "linux" {
+			if goos == "linux" {
 				return Capability{Unsupported, "Claude Linux session local-only binds and inbound confinement have not been proved; standalone command namespace evidence does not establish this native-session capability"}
 			}
 			return Capability{Unsupported, "Claude allowLocalBinding permits binds on any interface; local-only binds are unproved on this platform"}
 		}
-		if runtime.GOOS == "darwin" && op == Session && e == OpenAICompatible {
+		if goos == "darwin" && op == Session && e == OpenAICompatible {
 			return Capability{Unsupported, LoopbackLocalOnlySeatbeltReason}
 		}
-		if runtime.GOOS == "linux" && e == OpenAICompatible && op == Session {
+		if goos == "linux" && e == OpenAICompatible && op == Session {
 			return Capability{Unsupported, "workbench sessions have no shared private loopback; standalone sandbox.Open offers LoopbackLocalOnly after proving private-namespace loopback"}
 		}
 		return Capability{Unsupported, "local-only loopback is not proved for this engine, operation and platform"}
 	}
 	if f != Available {
-		if operation := Support(e, op, Available); !operation.Usable() {
+		if operation := supportFor(goos, e, op, Available); !operation.Usable() {
 			return operation
 		}
 	}
 	if c, ok := supportTable[supportKey{e, op, f}]; ok {
-		return platform(e, op, f, c)
+		return platform(goos, e, op, f, c)
 	}
 	return Capability{Unsupported, "not offered by this engine"}
 }
@@ -166,14 +171,14 @@ func Support(e Engine, op Operation, f Feature) Capability {
 // platform applies what the operating system rules out: restricted and
 // sandboxed hosting of a CLI harness are unavailable on Windows. An API
 // session has no process to contain, so it is unaffected.
-func platform(e Engine, op Operation, f Feature, c Capability) Capability {
-	if runtime.GOOS == "linux" && e == Claude && op == Session && f == Loopback {
+func platform(goos string, e Engine, op Operation, f Feature, c Capability) Capability {
+	if goos == "linux" && e == Claude && op == Session && f == Loopback {
 		return Capability{Unknown, claudeLinuxLoopbackReason}
 	}
-	if runtime.GOOS == "darwin" && e == Claude && op == Session && f == Loopback {
+	if goos == "darwin" && e == Claude && op == Session && f == Loopback {
 		return Capability{Unknown, claudeLoopbackExposureReason}
 	}
-	if e == OpenAICompatible && op == Session && runtime.GOOS == "linux" {
+	if e == OpenAICompatible && op == Session && goos == "linux" {
 		switch f {
 		case Sandbox:
 			return Capability{Unknown, "Workbench.Commands proves bubblewrap 0.8.0+ without capabilities or nested user namespaces before launch or refuses the session"}
@@ -183,31 +188,31 @@ func platform(e Engine, op Operation, f Feature, c Capability) Capability {
 			return Capability{Composed, "Workbench.Commands runs each contained process group at nice 10"}
 		}
 	}
-	if e == OpenAICompatible && op == Session && (f == Sandbox || f == Loopback || f == Background) && runtime.GOOS != "darwin" {
+	if e == OpenAICompatible && op == Session && (f == Sandbox || f == Loopback || f == Background) && goos != "darwin" {
 		return Capability{Unsupported, "API commands require a proved macOS Seatbelt sandbox; this platform has no command sandbox"}
 	}
-	if e == OpenAICompatible && op == Session && (f == WorkspaceRead || f == WorkspaceWrite) && (runtime.GOOS == "linux" || runtime.GOOS == "darwin") {
+	if e == OpenAICompatible && op == Session && (f == WorkspaceRead || f == WorkspaceWrite) && (goos == "linux" || goos == "darwin") {
 		return Capability{Unsupported, "workbench file tools are off until their workspace check is verified"}
 	}
-	if e == OpenAICompatible && op == Session && f == WorkspaceWrite && runtime.GOOS == "windows" {
+	if e == OpenAICompatible && op == Session && f == WorkspaceWrite && goos == "windows" {
 		c.Reason += "; not directory-synced; new files inherit the directory ACL"
 	}
-	if (f == WorkspaceRead || f == WorkspaceWrite) && runtime.GOOS != "darwin" && runtime.GOOS != "linux" && runtime.GOOS != "windows" {
+	if (f == WorkspaceRead || f == WorkspaceWrite) && goos != "darwin" && goos != "linux" && goos != "windows" {
 		return Capability{Unsupported, "workspace mount checks are unavailable on this platform"}
 	}
-	if runtime.GOOS == "windows" && op == Session && e.Transport() == CLITransport && (f == RestrictTools || f == Sandbox || f == Tools || f == Loopback) {
+	if goos == "windows" && op == Session && e.Transport() == CLITransport && (f == RestrictTools || f == Sandbox || f == Tools || f == Loopback) {
 		if e == Codex && f == Loopback {
 			return Capability{Unsupported, "restricted and sandboxed hosting are unavailable on Windows; " + c.Reason}
 		}
 		return Capability{Unsupported, "restricted and sandboxed hosting are unavailable on Windows"}
 	}
-	if runtime.GOOS == "windows" && f == Background {
+	if goos == "windows" && f == Background {
 		return Capability{Unsupported, "background priority is not implemented on Windows"}
 	}
-	if runtime.GOOS == "windows" && e == CommandCode && op == Session {
+	if goos == "windows" && e == CommandCode && op == Session {
 		return Capability{Unsupported, "Command Code sessions are not verified on Windows, where cmd names the system command interpreter"}
 	}
-	if runtime.GOOS == "windows" && e == Grok && op == Complete {
+	if goos == "windows" && e == Grok && op == Complete {
 		return Capability{Unsupported, "Grok's restricted runtime home is unavailable on Windows"}
 	}
 	return c
