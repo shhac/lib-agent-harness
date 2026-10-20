@@ -2,6 +2,7 @@ package completion
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -372,5 +373,42 @@ func TestGrokLinesStopAtTheFirstNativeSurface(t *testing.T) {
 	}
 	if stream.ends != 0 {
 		t.Fatal("a line after the stop was judged")
+	}
+}
+
+// A stream or a single line beyond its limit stops the process as an output
+// failure, and a final line the process never terminated is still judged, so
+// a native tool call cannot escape by being the last thing written.
+func TestGrokLinesLimitsAndTheUnterminatedLine(t *testing.T) {
+	judge := func(line []byte) string {
+		if string(line) == "bad" {
+			return "stop"
+		}
+		return ""
+	}
+	stops := 0
+	long := &grokLines{stop: func() { stops++ }, observe: judge}
+	if _, err := long.Write(make([]byte, grokMaxLine+1)); !errors.Is(err, errOutputLimit) || !long.exceeded || stops != 1 {
+		t.Fatalf("a line past its limit: %v exceeded=%v stops=%d", err, long.exceeded, stops)
+	}
+	if _, err := long.Write([]byte("more\n")); err == nil {
+		t.Fatal("a stream past its limit accepted more")
+	}
+	whole := &grokLines{stop: func() { stops++ }, observe: judge}
+	chunk := append(make([]byte, grokMaxLine/2), '\n')
+	var err error
+	for written := 0; err == nil && written <= grokMaxStream; written += len(chunk) {
+		_, err = whole.Write(chunk)
+	}
+	if !errors.Is(err, errOutputLimit) || !whole.exceeded {
+		t.Fatalf("a stream past its limit: %v", err)
+	}
+	last := &grokLines{stop: func() {}, observe: judge}
+	if _, err := last.Write([]byte("fine\nbad")); err != nil {
+		t.Fatal(err)
+	}
+	last.flush()
+	if !last.stopped {
+		t.Fatal("an unterminated final line was not judged")
 	}
 }
