@@ -127,22 +127,7 @@ func openAPI(ctx context.Context, o Options, r *Ref) (*Session, error) {
 	if complete == nil {
 		complete = completion.Complete
 	}
-	if o.Workbench != nil {
-		names := []string{"read_file", "list_files", "search_files"}
-		if o.Workbench.Write {
-			names = append(names, "write_file", "edit_file")
-		}
-		if o.Workbench.Commands != nil {
-			names = append(names, "run_command")
-		}
-		for _, name := range names {
-			c := harness.Capability{Availability: harness.Composed, Reason: "library-hosted workspace tool"}
-			if reason := sandbox.ToolAvailability(name); reason != "" {
-				c = harness.Capability{Availability: harness.Unsupported, Reason: reason}
-			}
-			s.caps.WorkbenchTools = append(s.caps.WorkbenchTools, WorkbenchTool{Name: name, Capability: c})
-		}
-	}
+	s.caps.WorkbenchTools = append(s.caps.WorkbenchTools, workbenchCapabilities(o)...)
 	a := &apiSession{store: store, workspace: ws, complete: complete, tools: apiTools(o), system: o.Instructions.Text, resultLimit: o.Restriction.Tools.resultLimit(), records: records, responses: countResponses(records), released: make(chan struct{}), failed: s.fail}
 	if err = restoreAPIRecovery(a, ws, o, ref, r == nil); err != nil {
 		return nil, err

@@ -204,6 +204,31 @@ func workbenchDigest(o Options) any {
 	}{powers, uint32(mode.Perm())}
 }
 
+// workbenchCapabilities is what a session's workbench offers, tool by tool:
+// composed by the library, or unsupported where the platform rules a tool
+// out.
+func workbenchCapabilities(o Options) []WorkbenchTool {
+	if o.Workbench == nil {
+		return nil
+	}
+	names := []string{workbenchReadFile, workbenchListFiles, workbenchSearchFiles}
+	if o.Workbench.Write {
+		names = append(names, workbenchWriteFile, workbenchEditFile)
+	}
+	if o.Workbench.Commands != nil {
+		names = append(names, workbenchRunCommand)
+	}
+	tools := make([]WorkbenchTool, 0, len(names))
+	for _, name := range names {
+		c := harness.Capability{Availability: harness.Composed, Reason: "library-hosted workspace tool"}
+		if reason := sandbox.ToolAvailability(name); reason != "" {
+			c = harness.Capability{Availability: harness.Unsupported, Reason: reason}
+		}
+		tools = append(tools, WorkbenchTool{Name: name, Capability: c})
+	}
+	return tools
+}
+
 // workbenchDefinitions are the workbench tools the options switch on. Both
 // the request's tools and the host's admitted tools come from here.
 func workbenchDefinitions(o Options) []ToolDefinition {
