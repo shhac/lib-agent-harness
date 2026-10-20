@@ -115,10 +115,21 @@ func (s *Session) observeClaudeInit(m map[string]json.RawMessage) bool {
 		return false
 	}
 	host := hostedTools(s.options)
-	browser := s.options.Browser
-	if host == nil && !browser {
+	if host == nil && !s.options.Browser {
 		return false
 	}
+	if failure, judged := judgeClaudeInit(s.options, host, m); judged {
+		s.recordSurface(failure)
+	}
+	return true
+}
+
+// judgeClaudeInit judges a Claude init frame against the session's hosted
+// tools and browser, reporting false when there is nothing to judge: an
+// ordinary session with the browser keeps the owner's native and MCP tools.
+// A nil failure that was judged is a surface that passed.
+func judgeClaudeInit(o Options, host *ToolHost, m map[string]json.RawMessage) (*CapabilityError, bool) {
+	browser := o.Browser
 	var frame struct {
 		Tools   []string `json:"tools"`
 		Servers []struct {
@@ -127,8 +138,7 @@ func (s *Session) observeClaudeInit(m map[string]json.RawMessage) bool {
 		} `json:"mcp_servers"`
 	}
 	if json.Unmarshal(mustMarshal(m), &frame) != nil {
-		s.recordSurface(&CapabilityError{Engine: harness.Claude, Code: CapabilityProbeUnreadable, Phase: BeforeFirstPrompt})
-		return true
+		return &CapabilityError{Engine: harness.Claude, Code: CapabilityProbeUnreadable, Phase: BeforeFirstPrompt}, true
 	}
 	var required []string
 	if browser {
@@ -150,8 +160,7 @@ func (s *Session) observeClaudeInit(m map[string]json.RawMessage) bool {
 			if server == claudeBrowserServer && browser {
 				code = CapabilityBrowserToolsMissing
 			}
-			s.recordSurface(&CapabilityError{Engine: harness.Claude, Code: code, Phase: BeforeFirstPrompt, Tools: []string{server}})
-			return true
+			return &CapabilityError{Engine: harness.Claude, Code: code, Phase: BeforeFirstPrompt, Tools: []string{server}}, true
 		}
 	}
 	if browser {
@@ -159,11 +168,10 @@ func (s *Session) observeClaudeInit(m map[string]json.RawMessage) bool {
 			return slices.Contains(frame.Tools, "mcp__"+claudeBrowserServer+"__"+tool)
 		})
 		if !available {
-			s.recordSurface(&CapabilityError{Engine: harness.Claude, Code: CapabilityBrowserToolsMissing, Phase: BeforeFirstPrompt})
-			return true
+			return &CapabilityError{Engine: harness.Claude, Code: CapabilityBrowserToolsMissing, Phase: BeforeFirstPrompt}, true
 		}
-		if host == nil && s.options.Sandbox == nil {
-			return true // Ordinary sessions keep the owner's native and MCP tools.
+		if host == nil && o.Sandbox == nil {
+			return nil, false // Ordinary sessions keep the owner's native and MCP tools.
 		}
 	}
 	// Judged as identity, not as text: an advertised tool that did not arrive
@@ -172,10 +180,10 @@ func (s *Session) observeClaudeInit(m map[string]json.RawMessage) bool {
 	surface := requestSurface{}
 	var foreign []string
 	for _, name := range frame.Tools {
-		if s.options.Sandbox != nil && !strings.HasPrefix(name, "mcp__") {
+		if o.Sandbox != nil && !strings.HasPrefix(name, "mcp__") {
 			continue
 		}
-		if browser && browserTool(s.options, name) {
+		if browser && browserTool(o, name) {
 			continue
 		}
 		if host == nil {
@@ -189,15 +197,13 @@ func (s *Session) observeClaudeInit(m map[string]json.RawMessage) bool {
 		if len(foreign) > 0 {
 			failure = &CapabilityError{Engine: harness.Claude, Code: CapabilityNativeToolsPresent, Phase: BeforeFirstPrompt, Tools: foreign}
 		}
-		s.recordSurface(failure)
-		return true
+		return failure, true
 	}
 	failure := judgeSurfaces(harness.Claude, toolNames(host.Tools), []requestSurface{surface}, false)
 	if failure != nil {
 		failure.Phase = BeforeFirstPrompt
 	}
-	s.recordSurface(failure)
-	return true
+	return failure, true
 }
 
 // recordSurface stores the outcome of the startup cross-check. A mismatch ends
