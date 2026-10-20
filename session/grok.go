@@ -37,10 +37,6 @@ import (
 // grokProtocolVersion is the only Agent Client Protocol version spoken here.
 const grokProtocolVersion = 1
 
-func grokInitializeParams() map[string]any {
-	return map[string]any{"protocolVersion": grokProtocolVersion, "clientCapabilities": map[string]any{}}
-}
-
 // grokSessionParams creates, or resumes by id, a session in the working
 // directory with the session's instructions. No MCP server is added: the
 // operator's own configuration is Grok's to load.
@@ -120,7 +116,7 @@ func grokConfigMismatch(o Options, state grokSessionState) string {
 
 // initializeGrok opens the protocol and creates or resumes the session.
 func (s *Session) initializeGrok(ctx context.Context, resume bool) error {
-	body, err := s.transport.request(ctx, "initialize", grokInitializeParams())
+	body, err := s.transport.request(ctx, "initialize", acpInitializeParams(grokProtocolVersion))
 	if err != nil {
 		return err
 	}

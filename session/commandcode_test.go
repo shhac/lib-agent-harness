@@ -603,7 +603,7 @@ func TestCommandCodeModeUpdateBeforeTheWatchIsArmed(t *testing.T) {
 				return json.RawMessage(`{}`), nil
 			}}
 			s.transport = w
-			err := s.configureCommandCode(testContext(t), "cc-session-1", commandCodeSessionState{mode: "default", modes: []string{"default", "bypass"}, config: commandCodeConfig{model: "fixture-default"}})
+			err := s.configureCommandCode(testContext(t), "cc-session-1", commandCodeSessionState{mode: "default", modes: []string{"default", "bypass"}, config: acpConfig{model: "fixture-default"}})
 			if setMode == "report" {
 				if err != nil || s.commandCodeMode != commandCodeAskingMode || !s.commandCodeConfigured {
 					t.Fatalf("mode %q configured %v: %v", s.commandCodeMode, s.commandCodeConfigured, err)

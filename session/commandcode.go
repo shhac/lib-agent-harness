@@ -38,11 +38,9 @@ package session
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"slices"
-	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
 )
@@ -120,46 +118,11 @@ func commandCodeSessionParams(o Options, resume bool, id string) map[string]any 
 	return p
 }
 
-// commandCodeConfig is a session's model and effort as its configOptions
-// state them.
-type commandCodeConfig struct {
-	model, effort string
-	efforts       []string
-}
-
-func parseCommandCodeConfig(raw json.RawMessage) (commandCodeConfig, bool) {
-	var options []struct {
-		ID      string          `json:"id"`
-		Current json.RawMessage `json:"currentValue"`
-		Options []struct {
-			Value string `json:"value"`
-		} `json:"options"`
-	}
-	if json.Unmarshal(raw, &options) != nil {
-		return commandCodeConfig{}, false
-	}
-	var c commandCodeConfig
-	for _, option := range options {
-		switch option.ID {
-		case "model":
-			_ = json.Unmarshal(option.Current, &c.model)
-		case "effort":
-			if json.Unmarshal(option.Current, &c.effort) != nil {
-				c.effort = ""
-			}
-			for _, value := range option.Options {
-				c.efforts = append(c.efforts, value.Value)
-			}
-		}
-	}
-	return c, c.model != ""
-}
-
 // commandCodeSessionState is what session/new or session/resume reported.
 type commandCodeSessionState struct {
 	id, mode string
 	modes    []string
-	config   commandCodeConfig
+	config   acpConfig
 }
 
 func parseCommandCodeSession(raw json.RawMessage) (commandCodeSessionState, error) {
@@ -176,8 +139,8 @@ func parseCommandCodeSession(raw json.RawMessage) (commandCodeSessionState, erro
 	if json.Unmarshal(raw, &r) != nil || r.Modes == nil {
 		return commandCodeSessionState{}, ErrProtocol
 	}
-	config, ok := parseCommandCodeConfig(r.Config)
-	if !ok {
+	config, ok := parseACPConfig(r.Config)
+	if !ok || config.model == "" {
 		return commandCodeSessionState{}, ErrProtocol
 	}
 	state := commandCodeSessionState{id: r.SessionID, mode: r.Modes.Current, config: config}
@@ -191,7 +154,7 @@ func parseCommandCodeSession(raw json.RawMessage) (commandCodeSessionState, erro
 // puts it in the asking mode and applies the model and effort, checking each
 // against what the session then reports.
 func (s *Session) initializeCommandCode(ctx context.Context, resume bool) error {
-	body, err := s.transport.request(ctx, "initialize", map[string]any{"protocolVersion": commandCodeProtocolVersion, "clientCapabilities": map[string]any{}})
+	body, err := s.transport.request(ctx, "initialize", acpInitializeParams(commandCodeProtocolVersion))
 	if err != nil {
 		return err
 	}
@@ -226,7 +189,7 @@ func (s *Session) initializeCommandCode(ctx context.Context, resume bool) error 
 			return err
 		}
 		if !held {
-			s.closeCommandCodeSession(id)
+			s.closeACPSession(id)
 			return errConversationGone
 		}
 	}
@@ -242,7 +205,7 @@ func (s *Session) initializeCommandCode(ctx context.Context, resume bool) error 
 	}
 	if err = s.configureCommandCode(ctx, id, state); err != nil {
 		if !resume {
-			s.closeCommandCodeSession(id)
+			s.closeACPSession(id)
 		}
 		return err
 	}
@@ -315,7 +278,7 @@ func (s *Session) configureCommandCode(ctx context.Context, id string, state com
 		return &CapabilityError{Engine: harness.CommandCode, Code: CapabilityChangedPermissionMode, Phase: BeforeFirstPrompt}
 	}
 	if _, err := s.transport.request(ctx, "session/set_mode", map[string]any{"sessionId": id, "modeId": commandCodeAskingMode}); err != nil {
-		return commandCodeConfigRefused(err, CapabilityChangedPermissionMode)
+		return acpConfigRefused(harness.CommandCode, err, CapabilityChangedPermissionMode)
 	}
 	config := state.config
 	o := s.options
@@ -387,43 +350,15 @@ func (s *Session) commandCodeModeUpdate(m map[string]json.RawMessage) bool {
 	return true
 }
 
-func (s *Session) setCommandCodeOption(ctx context.Context, id, option, value, code string) (commandCodeConfig, error) {
-	body, err := s.transport.request(ctx, "session/set_config_option", map[string]any{"sessionId": id, "configId": option, "value": value})
+func (s *Session) setCommandCodeOption(ctx context.Context, id, option, value, code string) (acpConfig, error) {
+	config, err := s.setACPOption(ctx, id, option, value)
 	if err != nil {
-		return commandCodeConfig{}, commandCodeConfigRefused(err, code)
+		return acpConfig{}, acpConfigRefused(harness.CommandCode, err, code)
 	}
-	var r struct {
-		Config json.RawMessage `json:"configOptions"`
-	}
-	if json.Unmarshal(body, &r) != nil {
-		return commandCodeConfig{}, ErrProtocol
-	}
-	config, ok := parseCommandCodeConfig(r.Config)
-	if !ok {
-		return commandCodeConfig{}, ErrProtocol
+	if config.model == "" {
+		return acpConfig{}, ErrProtocol
 	}
 	return config, nil
-}
-
-// commandCodeConfigRefused turns Command Code's refusal of a setting into the
-// capability failure it means. Anything else, such as a lost transport, is
-// returned as it is.
-func commandCodeConfigRefused(err error, code string) error {
-	var refusal *acpRefusal
-	if errors.As(err, &refusal) && (refusal.code == acpInvalidParams || refusal.code == acpMethodMissing) {
-		return &CapabilityError{Engine: harness.CommandCode, Code: code, Phase: BeforeFirstPrompt}
-	}
-	return err
-}
-
-// closeCommandCodeSession closes a session this launch created or resumed as
-// empty and then refused before any prompt. Command Code lists only
-// conversations that have a message, so nothing of it remains. It is best
-// effort: the session is closing.
-func (s *Session) closeCommandCodeSession(id string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_, _ = s.transport.request(ctx, "session/close", map[string]any{"sessionId": id})
 }
 
 // commandCodeDialect is Command Code's ACP, answering permission requests by

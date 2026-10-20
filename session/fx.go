@@ -41,7 +41,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
 )
@@ -78,11 +77,6 @@ func fxHome(o Options) (Options, error) {
 	}
 	cli.Home = fixed
 	return o, nil
-}
-
-// fxInitializeParams opens the protocol.
-func fxInitializeParams() map[string]any {
-	return map[string]any{"protocolVersion": fxProtocolVersion, "clientCapabilities": map[string]any{}}
 }
 
 // fxSessionParams creates, or resumes by id, a session in the working
@@ -142,50 +136,12 @@ func fxForeignPolicy(o Options) error {
 	return nil
 }
 
-// fxConfig is a session's configuration as its configOptions state it: the
-// model, the effort, the mode, and the levels the effort accepts.
-type fxConfig struct {
-	model, effort, mode string
-	efforts             []string
-}
-
-// parseFxConfig reads the configuration options. The effort's own levels are
-// kept, because fx drops the effort option entirely for a model that does
-// not offer one.
-func parseFxConfig(raw json.RawMessage) (fxConfig, bool) {
-	var options []struct {
-		ID      string          `json:"id"`
-		Current json.RawMessage `json:"currentValue"`
-		Options []struct {
-			Value string `json:"value"`
-		} `json:"options"`
-	}
-	if json.Unmarshal(raw, &options) != nil {
-		return fxConfig{}, false
-	}
-	var c fxConfig
-	for _, option := range options {
-		switch option.ID {
-		case "model":
-			_ = json.Unmarshal(option.Current, &c.model)
-		case "effort":
-			_ = json.Unmarshal(option.Current, &c.effort)
-			for _, value := range option.Options {
-				c.efforts = append(c.efforts, value.Value)
-			}
-		case "mode":
-			_ = json.Unmarshal(option.Current, &c.mode)
-		}
-	}
-	return c, true
-}
-
 // fxSessionState is what session/new reported. A resumed session answers with
 // its configuration alone, so the id and the modes may be absent.
 type fxSessionState struct {
 	id     string
 	modes  []string
-	config fxConfig
+	config acpConfig
 }
 
 // parseFxSession reads the session's own report.
@@ -203,7 +159,7 @@ func parseFxSession(raw json.RawMessage) (fxSessionState, error) {
 	if json.Unmarshal(raw, &r) != nil {
 		return fxSessionState{}, ErrProtocol
 	}
-	config, ok := parseFxConfig(r.Config)
+	config, ok := parseACPConfig(r.Config)
 	if !ok {
 		return fxSessionState{}, ErrProtocol
 	}
@@ -220,7 +176,7 @@ func parseFxSession(raw json.RawMessage) (fxSessionState, error) {
 // it in the asking mode with the model and effort the caller asked for,
 // checking each against what the session then reports.
 func (s *Session) initializeFx(ctx context.Context, resume bool) error {
-	body, err := s.transport.request(ctx, "initialize", fxInitializeParams())
+	body, err := s.transport.request(ctx, "initialize", acpInitializeParams(fxProtocolVersion))
 	if err != nil {
 		return err
 	}
@@ -257,7 +213,7 @@ func (s *Session) initializeFx(ctx context.Context, resume bool) error {
 	}
 	if err = s.configureFx(ctx, id, state); err != nil {
 		if !resume {
-			s.closeFxSession(id)
+			s.closeACPSession(id)
 		}
 		return err
 	}
@@ -312,76 +268,37 @@ func (s *Session) configureFx(ctx context.Context, id string, state fxSessionSta
 // fx announces no mode change over the protocol, so a mode changed outside
 // the session is not observed; the session's own report is the evidence there
 // is.
-func (s *Session) setFxMode(ctx context.Context, id string, state fxSessionState) (fxConfig, error) {
+func (s *Session) setFxMode(ctx context.Context, id string, state fxSessionState) (acpConfig, error) {
 	if len(state.modes) > 0 && !slices.Contains(state.modes, fxAskingMode) {
 		// The session named the modes it can run in, and the asking one is
 		// not among them: there is no mode in which fx asks.
-		return fxConfig{}, &UnsupportedError{Engine: harness.Fx, Operation: "permission mode", Code: RefusedNotOffered, Capability: harness.Capability{Availability: harness.Unsupported, Reason: "the installed fx does not offer a mode that asks before every change"}}
+		return acpConfig{}, &UnsupportedError{Engine: harness.Fx, Operation: "permission mode", Code: RefusedNotOffered, Capability: harness.Capability{Availability: harness.Unsupported, Reason: "the installed fx does not offer a mode that asks before every change"}}
 	}
 	if state.config.mode == fxAskingMode {
 		return state.config, nil
 	}
-	next, err := s.setFxOptionRaw(ctx, id, "mode", fxAskingMode)
+	next, err := s.setACPOption(ctx, id, "mode", fxAskingMode)
 	if err != nil {
 		var refusal *acpRefusal
 		if errors.As(err, &refusal) && refusal.code == acpInvalidParams {
-			return fxConfig{}, &UnsupportedError{Engine: harness.Fx, Operation: "permission mode", Code: RefusedNotOffered, Capability: harness.Capability{Availability: harness.Unsupported, Reason: "the installed fx does not report the session's permission mode"}}
+			return acpConfig{}, &UnsupportedError{Engine: harness.Fx, Operation: "permission mode", Code: RefusedNotOffered, Capability: harness.Capability{Availability: harness.Unsupported, Reason: "the installed fx does not report the session's permission mode"}}
 		}
-		return fxConfig{}, fxConfigRefused(err, CapabilityChangedPermissionMode)
+		return acpConfig{}, acpConfigRefused(harness.Fx, err, CapabilityChangedPermissionMode)
 	}
 	if next.mode != fxAskingMode {
-		return fxConfig{}, &CapabilityError{Engine: harness.Fx, Code: CapabilityChangedPermissionMode, Phase: BeforeFirstPrompt}
+		return acpConfig{}, &CapabilityError{Engine: harness.Fx, Code: CapabilityChangedPermissionMode, Phase: BeforeFirstPrompt}
 	}
 	return next, nil
 }
 
 // setFxOption sets one configuration option and returns the configuration fx
 // then reports.
-func (s *Session) setFxOption(ctx context.Context, id, option, value, code string) (fxConfig, error) {
-	config, err := s.setFxOptionRaw(ctx, id, option, value)
+func (s *Session) setFxOption(ctx context.Context, id, option, value, code string) (acpConfig, error) {
+	config, err := s.setACPOption(ctx, id, option, value)
 	if err != nil {
-		return fxConfig{}, fxConfigRefused(err, code)
+		return acpConfig{}, acpConfigRefused(harness.Fx, err, code)
 	}
 	return config, nil
-}
-
-// setFxOptionRaw sets one configuration option and returns what fx reported,
-// with fx's own refusal unaltered, for the caller that reads it.
-func (s *Session) setFxOptionRaw(ctx context.Context, id, option, value string) (fxConfig, error) {
-	body, err := s.transport.request(ctx, "session/set_config_option", map[string]any{"sessionId": id, "configId": option, "value": value})
-	if err != nil {
-		return fxConfig{}, err
-	}
-	var r struct {
-		Config json.RawMessage `json:"configOptions"`
-	}
-	if json.Unmarshal(body, &r) != nil {
-		return fxConfig{}, ErrProtocol
-	}
-	config, ok := parseFxConfig(r.Config)
-	if !ok {
-		return fxConfig{}, ErrProtocol
-	}
-	return config, nil
-}
-
-// fxConfigRefused turns fx's refusal of a setting into the capability failure
-// it means. Anything else, such as a lost transport, is returned as it is.
-func fxConfigRefused(err error, code string) error {
-	var refusal *acpRefusal
-	if errors.As(err, &refusal) && (refusal.code == acpInvalidParams || refusal.code == acpMethodMissing) {
-		return &CapabilityError{Engine: harness.Fx, Code: code, Phase: BeforeFirstPrompt}
-	}
-	return err
-}
-
-// closeFxSession closes a session this launch created and then refused
-// before any prompt, so a refused configuration leaves no empty conversation
-// behind. It is best effort: the session is closing.
-func (s *Session) closeFxSession(id string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_, _ = s.transport.request(ctx, "session/close", map[string]any{"sessionId": id})
 }
 
 // fxDialect is fx's agent protocol, answering permission requests by the
