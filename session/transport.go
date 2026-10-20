@@ -2,7 +2,6 @@ package session
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/textbound"
 	"github.com/shhac/lib-agent-harness/process"
 )
 
@@ -43,7 +43,7 @@ type streamWire struct {
 	next      atomic.Uint64
 	event     func(map[string]json.RawMessage)
 	ended     func(error)
-	stderr    *boundedBuffer
+	stderr    *textbound.Prefix
 	exit      *ProcessError
 	diagnose  func(Diagnostic)
 	// dialect is how this engine frames its wire, resolved when it opened.
@@ -85,7 +85,7 @@ func newProcessWireArgs(ctx context.Context, o Options, args, env []string, onSt
 	// A harness's own standard error is the only local evidence of why a startup
 	// or a stream ended. Keep a bounded tail for the caller's diagnostic hook;
 	// it never enters an error value, for the same reason provider text does not.
-	stderr := &boundedBuffer{limit: 8 << 10}
+	stderr := &textbound.Prefix{Limit: 8 << 10}
 	cmd.Stderr = stderr
 	cmd.WaitDelay = 2 * time.Second
 	stdin, err := cmd.StdinPipe()
@@ -364,34 +364,20 @@ func runOnce(ctx context.Context, binary string, args []string, dir string, env 
 	defer p.Close()
 	cmd.Dir = dir
 	cmd.Env = env
-	out := &boundedBuffer{limit: 4 << 20}
+	out := &textbound.Prefix{Limit: runOnceLimit}
 	cmd.Stdout = out
 	cmd.Stderr = io.Discard
 	cmd.WaitDelay = 2 * time.Second
 	if err = p.Run(); err != nil {
 		return nil, err
 	}
+	// A cut document read as whole could pass for evidence it is not, so
+	// output beyond the limit is refused rather than parsed.
+	if out.Exceeded() {
+		return nil, ErrOutputLimit
+	}
 	return out.Bytes(), nil
 }
 
-// boundedBuffer keeps a prefix and reports the full length, so a caller can see
-// that output was cut rather than silently receiving a shortened copy.
-type boundedBuffer struct {
-	buf   bytes.Buffer
-	limit int
-	total int
-}
-
-func (b *boundedBuffer) Write(p []byte) (int, error) {
-	n := len(p)
-	b.total += n
-	if remaining := b.limit - b.buf.Len(); remaining > 0 {
-		if len(p) > remaining {
-			p = p[:remaining]
-		}
-		_, _ = b.buf.Write(p)
-	}
-	return n, nil
-}
-
-func (b *boundedBuffer) Bytes() []byte { return b.buf.Bytes() }
+// runOnceLimit bounds what one short CLI command may print.
+const runOnceLimit = 4 << 20

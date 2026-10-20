@@ -41,7 +41,7 @@ func isAntigravityAccountArgs(args []string) bool {
 // never reach it: its fixture is recognized by its argv, which no go test
 // command line contains, and reads its mode from the home it was given.
 func init() {
-	if os.Getenv("LIB_HARNESS_ACCOUNT_FIXTURE") != "1" && !slices.Equal(os.Args[1:], []string{"agent", "--no-leader", "stdio"}) && !isAntigravityAccountArgs(os.Args[1:]) {
+	if os.Getenv("LIB_HARNESS_ACCOUNT_FIXTURE") != "1" && !slices.Equal(os.Args[1:], []string{"agent", "--no-leader", "stdio"}) && !isAntigravityAccountArgs(os.Args[1:]) && !isFxAccountArgs(os.Args[1:]) {
 		return
 	}
 	os.Exit(fixture())
@@ -54,6 +54,8 @@ func fixture() int {
 		return grokFixture()
 	case isAntigravityAccountArgs(args):
 		return antigravityFixture(args[0])
+	case isFxAccountArgs(args):
+		return fxFixture(args[0])
 	case slices.Contains(args, "app-server"):
 		return sessionFixture(harness.Codex)
 	case slices.Contains(args, "--safe-mode"):

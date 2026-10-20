@@ -7,7 +7,6 @@ import (
 	"errors"
 	"io"
 	"os"
-	"os/exec"
 	"strconv"
 	"time"
 
@@ -110,7 +109,7 @@ func grokExchange(ctx context.Context, binary, dir string, env []string) (json.R
 	reader.Close()
 	exit := <-reaped
 	if out.err != nil && errors.Is(out.err, errGrokEnded) {
-		return nil, grokExit(exit)
+		return nil, processExit(harness.Grok, exit)
 	}
 	return out.raw, out.err
 }
@@ -182,21 +181,6 @@ var (
 	errGrokMethod   = errors.New("grok does not offer the method")
 	errGrokRejected = errors.New("grok refused the request")
 )
-
-// grokExit reports why the agent ended the exchange early.
-func grokExit(err error) error {
-	var status *exec.ExitError
-	switch {
-	case errors.As(err, &status) && status.ExitCode() >= 0:
-		code := status.ExitCode()
-		return &Error{Engine: harness.Grok, Code: CodeProcessExited, Family: harness.FailureProcess, ExitCode: &code}
-	case errors.As(err, &status):
-		return &Error{Engine: harness.Grok, Code: CodeProcessSignalled, Family: harness.FailureProcess}
-	case err != nil:
-		return &Error{Engine: harness.Grok, Code: CodeProcessStartFailed, Family: harness.FailureProcess}
-	}
-	return &Error{Engine: harness.Grok, Code: CodeProcessExited, Family: harness.FailureProcess}
-}
 
 func grokError(err error) error {
 	var typed *Error

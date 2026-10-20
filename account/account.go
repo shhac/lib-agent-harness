@@ -99,3 +99,20 @@ func explained(r harness.AccountReport, reason string) harness.AccountReport {
 	}
 	return r
 }
+
+// processExit says why an inspected CLI ended before it answered: its exit
+// status, a signal, or a process that never started. err nil means it exited
+// cleanly without answering.
+func processExit(engine harness.Engine, err error) *Error {
+	var status *exec.ExitError
+	switch {
+	case errors.As(err, &status) && status.ExitCode() >= 0:
+		code := status.ExitCode()
+		return &Error{Engine: engine, Code: CodeProcessExited, Family: harness.FailureProcess, ExitCode: &code}
+	case errors.As(err, &status):
+		return &Error{Engine: engine, Code: CodeProcessSignalled, Family: harness.FailureProcess}
+	case err != nil:
+		return &Error{Engine: engine, Code: CodeProcessStartFailed, Family: harness.FailureProcess}
+	}
+	return &Error{Engine: engine, Code: CodeProcessExited, Family: harness.FailureProcess}
+}

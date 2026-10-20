@@ -1,7 +1,6 @@
 package account
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,6 +11,7 @@ import (
 
 	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/nativecli"
+	"github.com/shhac/lib-agent-harness/internal/textbound"
 	"github.com/shhac/lib-agent-harness/process"
 )
 
@@ -85,37 +85,16 @@ func fxCommand(ctx context.Context, binary, dir string, env []string, args ...st
 	cmd.Dir = dir
 	cmd.Env = env
 	cmd.Stderr = io.Discard
-	var out fxOutput
-	out.limit = fxCommandLimit
-	cmd.Stdout = &out
+	out := &textbound.Prefix{Limit: fxCommandLimit}
+	cmd.Stdout = out
 	cmd.WaitDelay = 2 * time.Second
 	if err := proc.Run(); err != nil {
 		return nil, err
 	}
-	if out.total > fxCommandLimit {
+	if out.Exceeded() {
 		return nil, errFxInvalid
 	}
-	return out.buf.Bytes(), nil
-}
-
-// fxOutput keeps a bounded prefix of a command's output and counts the whole
-// of it, so a command that writes more than the limit is known to have done
-// so.
-type fxOutput struct {
-	buf   bytes.Buffer
-	limit int
-	total int
-}
-
-func (o *fxOutput) Write(p []byte) (int, error) {
-	o.total += len(p)
-	if remaining := o.limit - o.buf.Len(); remaining > 0 {
-		if len(p) > remaining {
-			p = p[:remaining]
-		}
-		o.buf.Write(p)
-	}
-	return len(p), nil
+	return out.Bytes(), nil
 }
 
 // parseFxStatus reads fx's status document. The sign-in is named by "auth";
@@ -182,15 +161,10 @@ func fxError(err error) *Error {
 		e.Code = CodeInvalidResponse
 	default:
 		var status *exec.ExitError
-		switch {
-		case errors.As(err, &status) && status.ExitCode() >= 0:
-			code := status.ExitCode()
-			e.Code, e.Family, e.ExitCode = CodeProcessExited, harness.FailureProcess, &code
-		case errors.As(err, &status):
-			e.Code, e.Family = CodeProcessSignalled, harness.FailureProcess
-		default:
-			e.Code, e.Family = CodeTransport, harness.FailureProcess
+		if errors.As(err, &status) {
+			return processExit(harness.Fx, err)
 		}
+		e.Code, e.Family = CodeTransport, harness.FailureProcess
 	}
 	return e
 }

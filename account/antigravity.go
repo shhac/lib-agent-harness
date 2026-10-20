@@ -8,7 +8,6 @@ import (
 	"io"
 	"math"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -151,7 +150,7 @@ func antigravityCommand(parent context.Context, binary, dir string, env []string
 		return nil, readErr
 	}
 	if len(bytes.TrimSpace(data)) == 0 {
-		return nil, antigravityExit(exit)
+		return nil, processExit(harness.Antigravity, exit)
 	}
 	return data, nil
 }
@@ -380,20 +379,6 @@ var (
 	errAntigravityRejected  = errors.New("antigravity refused the request")
 	errAntigravityLoggedOut = errors.New("antigravity asked for a login")
 )
-
-func antigravityExit(err error) error {
-	var status *exec.ExitError
-	switch {
-	case errors.As(err, &status) && status.ExitCode() >= 0:
-		code := status.ExitCode()
-		return &Error{Engine: harness.Antigravity, Code: CodeProcessExited, Family: harness.FailureProcess, ExitCode: &code}
-	case errors.As(err, &status):
-		return &Error{Engine: harness.Antigravity, Code: CodeProcessSignalled, Family: harness.FailureProcess}
-	case err != nil:
-		return &Error{Engine: harness.Antigravity, Code: CodeProcessStartFailed, Family: harness.FailureProcess}
-	}
-	return &Error{Engine: harness.Antigravity, Code: CodeProcessExited, Family: harness.FailureProcess}
-}
 
 func antigravityError(err error) error {
 	var typed *Error
