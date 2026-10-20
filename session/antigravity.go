@@ -59,27 +59,6 @@ func antigravityArgs(o Options, nativeID string, resuming bool) []string {
 	return args
 }
 
-// unsupportedAntigravity refuses what agy stream-json has no way to carry, so
-// that nothing a caller asked for is silently dropped.
-func unsupportedAntigravity(o Options) error {
-	engine := harness.Antigravity
-	if o.Instructions.Mode != "" || o.Instructions.Text != "" {
-		feature := harness.AppendInstructions
-		if o.Instructions.Mode == Replace {
-			feature = harness.ReplaceInstructions
-		}
-		if c := harness.Support(engine, harness.Session, feature); !c.Usable() {
-			return &UnsupportedError{Engine: engine, Operation: "instructions", Code: RefusedNotOffered, Capability: c}
-		}
-	}
-	if len(o.Skills.Provided) > 0 {
-		if c := harness.Support(engine, harness.Session, harness.ProvidedSkills); !c.Usable() {
-			return &UnsupportedError{Engine: engine, Operation: "skills", Code: RefusedNotOffered, Capability: c}
-		}
-	}
-	return nil
-}
-
 func normalizeAntigravityPolicy(o Options) (Options, error) {
 	switch o.Policy.AntigravityPermission {
 	case "":

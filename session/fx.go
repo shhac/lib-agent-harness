@@ -90,19 +90,6 @@ func normalizeFxPolicy(o Options) (Options, error) {
 	return o, nil
 }
 
-// unsupportedFx refuses what fx has no way to carry, so that nothing a
-// caller asked for is silently dropped. fx appends its session instructions to
-// its own system prompt, so a request to replace that prompt is refused
-// rather than answered with an append.
-func unsupportedFx(o Options) error {
-	engine := harness.Fx
-	if o.Instructions.Mode == Replace {
-		c := harness.Support(engine, harness.Session, harness.ReplaceInstructions)
-		return &UnsupportedError{Engine: engine, Operation: "instructions", Code: RefusedNotOffered, Capability: c}
-	}
-	return nil
-}
-
 // fxSessionState is what session/new reported. A resumed session answers with
 // its configuration alone, so the id and the modes may be absent.
 type fxSessionState struct {

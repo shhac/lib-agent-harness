@@ -58,27 +58,6 @@ const commandCodeListPages = 50
 
 func commandCodeArgs() []string { return []string{"acp"} }
 
-// unsupportedCommandCode refuses what cmd acp has no way to carry, so that
-// nothing a caller asked for is silently dropped.
-func unsupportedCommandCode(o Options) error {
-	engine := harness.CommandCode
-	if o.Instructions.Mode != "" || o.Instructions.Text != "" {
-		feature := harness.AppendInstructions
-		if o.Instructions.Mode == Replace {
-			feature = harness.ReplaceInstructions
-		}
-		if c := harness.Support(engine, harness.Session, feature); !c.Usable() {
-			return &UnsupportedError{Engine: engine, Operation: "instructions", Code: RefusedNotOffered, Capability: c}
-		}
-	}
-	if len(o.Skills.Provided) > 0 {
-		if c := harness.Support(engine, harness.Session, harness.ProvidedSkills); !c.Usable() {
-			return &UnsupportedError{Engine: engine, Operation: "skills", Code: RefusedNotOffered, Capability: c}
-		}
-	}
-	return nil
-}
-
 func normalizeCommandCodePolicy(o Options) (Options, error) {
 	switch o.Policy.CommandCodePermission {
 	case "":

@@ -100,28 +100,20 @@ func supported(o Options) error {
 
 // unsupportedMode refuses a restricted or sandboxed Grok, Command Code,
 // Antigravity or fx session, and Command Code, Antigravity or fx
-// instructions and provided skills, with the capability's own reason. Codex and
-// Claude refuse these on their own terms, including on a platform without
-// containment.
+// instructions and provided skills they cannot carry, with the capability's
+// own reason. Grok's instructions are unverified rather than refused, so it
+// skips that check. Codex and Claude refuse these on their own terms,
+// including on a platform without containment.
 func unsupportedMode(o Options) error {
 	engine := o.Provider.Engine
-	if engine != harness.Grok && engine != harness.CommandCode && engine != harness.Antigravity && engine != harness.Fx {
+	switch engine {
+	case harness.CommandCode, harness.Antigravity, harness.Fx:
+		if err := unsupportedCarriage(o); err != nil {
+			return err
+		}
+	case harness.Grok:
+	default:
 		return nil
-	}
-	if engine == harness.CommandCode {
-		if err := unsupportedCommandCode(o); err != nil {
-			return err
-		}
-	}
-	if engine == harness.Antigravity {
-		if err := unsupportedAntigravity(o); err != nil {
-			return err
-		}
-	}
-	if engine == harness.Fx {
-		if err := unsupportedFx(o); err != nil {
-			return err
-		}
 	}
 	if o.Restriction != nil {
 		if c := harness.Support(engine, harness.Session, harness.RestrictTools); c.Availability == harness.Unsupported {
@@ -131,6 +123,28 @@ func unsupportedMode(o Options) error {
 	if o.Sandbox != nil {
 		if c := harness.Support(engine, harness.Session, harness.Sandbox); c.Availability == harness.Unsupported {
 			return &UnsupportedError{Engine: engine, Operation: "sandbox", Code: RefusedNotOffered, Capability: c}
+		}
+	}
+	return nil
+}
+
+// unsupportedCarriage refuses instructions or provided skills the engine's
+// session cannot carry as asked, such as a replaced system prompt an engine
+// only appends to, so that nothing a caller asked for is silently dropped.
+func unsupportedCarriage(o Options) error {
+	engine := o.Provider.Engine
+	if o.Instructions.Mode != "" || o.Instructions.Text != "" {
+		feature := harness.AppendInstructions
+		if o.Instructions.Mode == Replace {
+			feature = harness.ReplaceInstructions
+		}
+		if c := harness.Support(engine, harness.Session, feature); !c.Usable() {
+			return &UnsupportedError{Engine: engine, Operation: "instructions", Code: RefusedNotOffered, Capability: c}
+		}
+	}
+	if len(o.Skills.Provided) > 0 {
+		if c := harness.Support(engine, harness.Session, harness.ProvidedSkills); !c.Usable() {
+			return &UnsupportedError{Engine: engine, Operation: "skills", Code: RefusedNotOffered, Capability: c}
 		}
 	}
 	return nil
