@@ -8,15 +8,12 @@ import (
 	"encoding/json"
 	"io"
 	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/nativecli"
-	"github.com/shhac/lib-agent-harness/internal/restrict"
 	"github.com/shhac/lib-agent-harness/process"
 )
 
@@ -239,91 +236,6 @@ var nativeEngines = map[harness.Engine]nativeEngine{
 	},
 }
 
-func codexArgs(c Config, r Request, report *codexReport) []string {
-	args := []string{"exec"}
-	if r.ResumeSession != "" {
-		args = append(args, "resume")
-	}
-	if c.Model != "" {
-		args = append(args, "--model", c.Model)
-	}
-	args = append(args, "--json")
-	if r.ResumeSession == "" {
-		if c.Codex.Sandbox != "" {
-			args = append(args, "--sandbox", c.Codex.Sandbox)
-		}
-		if r.WorkDir != "" {
-			args = append(args, "--cd", r.WorkDir)
-		}
-		args = append(args, "--skip-git-repo-check")
-	} else {
-		args = append(args, "--skip-git-repo-check")
-		if c.Codex.Sandbox != "" {
-			args = append(args, "-c", codexOverride("sandbox_mode", c.Codex.Sandbox))
-		}
-	}
-	if r.AppendInstructions != "" {
-		args = append(args, "-c", codexOverride("developer_instructions", r.AppendInstructions))
-	}
-	if report != nil {
-		args = append(args, "--output-schema", report.schema, "--output-last-message", report.output)
-	}
-	args = append(args, c.Args...)
-	if c.Browser {
-		args = append(args, nativecli.CodexBrowserArgs()...)
-	}
-	if c.Effort != "" {
-		args = append(args, "-c", codexOverride("model_reasoning_effort", c.Effort))
-	}
-	args = append(args, "--")
-	if r.ResumeSession != "" {
-		args = append(args, r.ResumeSession)
-	}
-	return append(args, r.Prompt)
-}
-
-func claudeArgs(c Config, r Request) []string {
-	args := []string{"-p"}
-	if r.ResumeSession != "" {
-		args = append(args, "--resume", r.ResumeSession)
-	}
-	args = append(args, "--output-format", "stream-json", "--verbose")
-	if r.Schema != "" {
-		args = append(args, "--json-schema", jsonCompact(r.Schema))
-	}
-	if r.AppendInstructions != "" {
-		args = append(args, "--append-system-prompt", r.AppendInstructions)
-	}
-	if c.Model != "" {
-		args = append(args, "--model", c.Model)
-	}
-	if c.Effort != "" {
-		args = append(args, "--effort", c.Effort)
-	}
-	if c.Claude.PermissionMode != "" {
-		args = append(args, "--permission-mode", c.Claude.PermissionMode)
-	}
-	if c.Browser {
-		args = append(args, "--chrome")
-	}
-	if len(c.Claude.AllowedTools) > 0 {
-		args = append(args, "--allowedTools", strings.Join(c.Claude.AllowedTools, ","))
-	}
-	if c.Claude.MaxBudgetUSD > 0 {
-		args = append(args, "--max-budget-usd", strconv.FormatFloat(c.Claude.MaxBudgetUSD, 'f', -1, 64))
-	}
-	args = append(args, c.Args...)
-	return append(args, "--", r.Prompt)
-}
-
-// codexOverride encodes a `-c` override as the TOML Codex parses. Invalid UTF-8
-// becomes U+FFFD byte by byte, which is what the JSON encoding used here before
-// did, so no value Args accepted before is refused now or means something else.
-func codexOverride(key, value string) string {
-	encoded, _ := restrict.TOMLString(string([]rune(value)))
-	return key + "=" + encoded
-}
-
 // execute starts exactly one CLI invocation. There is no automatic retry.
 func execute(ctx context.Context, c Config, args []string, workDir string, stdout, stderr io.Writer) error {
 	bin := c.Provider.CLI.Binary
@@ -544,17 +456,4 @@ func Version(ctx context.Context, c Config) (string, error) {
 		err = processError(engine, err)
 	}
 	return strings.TrimSpace(out.String()), err
-}
-
-func isDefaultClaudeHome(home string, env []string) bool {
-	userHome := ""
-	for _, entry := range env {
-		if strings.HasPrefix(entry, "HOME=") {
-			userHome = strings.TrimPrefix(entry, "HOME=")
-		}
-	}
-	if userHome == "" {
-		userHome, _ = os.UserHomeDir()
-	}
-	return userHome != "" && filepath.Clean(home) == filepath.Join(userHome, ".claude")
 }

@@ -7,6 +7,21 @@ import (
 	"github.com/shhac/lib-agent-harness/internal/nativecli"
 )
 
+// GrokOptions are Grok's own execution options.
+type GrokOptions struct {
+	Sandbox        string
+	PermissionMode string
+	// Tools are the built-in tools to allow. Nil keeps Grok's default set. An
+	// empty non-nil list is refused: Grok has no verified way to say "none",
+	// and omitting the flag would allow every tool.
+	Tools     []string
+	Telemetry GrokTelemetryPolicy
+}
+
+func (o GrokOptions) set() bool {
+	return o.Sandbox != "" || o.PermissionMode != "" || o.Tools != nil || o.Telemetry != GrokTelemetryDefault
+}
+
 // GrokTelemetryPolicy selects Grok's client-side telemetry policy, as
 // GrokOptions.Telemetry. Default leaves Grok's environment and
 // behaviour unchanged. Reduced opts out of Grok product telemetry and related
