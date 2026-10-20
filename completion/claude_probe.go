@@ -56,8 +56,9 @@ func probeClaude(ctx context.Context, cfg Config, bin string, args []string, dir
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = io.WriteString(w, `{"type":"error","error":{"type":"invalid_request_error","message":"local capability probe; no inference performed"}}`)
 	})}
-	go server.Serve(listener)
-	defer server.Close()
+	done := make(chan struct{})
+	go func() { defer close(done); _ = server.Serve(listener) }()
+	defer func() { server.Close(); <-done }()
 	// Dummy auth and rebased OS directories prevent native account discovery,
 	// including Windows USERPROFILE/APPDATA/LOCALAPPDATA and macOS USER.
 	probeEnv := nativecli.Isolated(env, runtime.GOOS, dir)
