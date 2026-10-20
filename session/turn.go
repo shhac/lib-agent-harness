@@ -37,9 +37,13 @@ type Result struct {
 	// NativeError preserves a native failure indication, including Claude's
 	// error_during_execution result after a requested interruption. Correlation
 	// proves the turn ended, not that interruption was the sole failure cause.
-	NativeError          bool
-	TurnID, Text, Status string
-	Usage                Usage
+	NativeError bool
+	TurnID      string
+	Text        string
+	// Status is how the turn ended: "completed", "failed", "interrupted", or
+	// "rejected" when the engine refused to start it.
+	Status string
+	Usage  Usage
 	// Observed accumulates each model response's reported usage during this
 	// turn. It survives a failed or interrupted turn, where the provider's own
 	// terminal accounting is often absent or zero despite work having happened.

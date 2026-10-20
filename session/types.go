@@ -344,7 +344,7 @@ type SteerResult struct {
 type Event struct {
 	// ErrorFacts describes a library-owned tool failure without provider text.
 	ErrorFacts *harness.Facts `json:"error_facts,omitempty"`
-	Kind       string         `json:"kind"` // text_delta, text, tool_started, tool_completed, status, usage, context, quota, credits, account
+	Kind       string         `json:"kind"` // text_delta, text, tool_started, tool_completed, tool_refused, compaction_completed, status, usage, context, quota, credits, account
 	TurnID     string         `json:"turn_id"`
 	ItemID     string         `json:"item_id,omitempty"`
 	Text       string         `json:"text,omitempty"`
