@@ -259,3 +259,57 @@ func TestWriteBackWithoutARuntimeHomeReturnsNothing(t *testing.T) {
 		t.Fatal("the source login changed")
 	}
 }
+
+// Configuration may not take the place of the library's own bookkeeping
+// either: the shared-login record or the lock.
+func TestConfigurationCannotNameTheRecordOrTheLock(t *testing.T) {
+	for _, name := range []string{Record, lockFile} {
+		source, runtime := private(t), private(t)
+		put(t, source, credential, `"login"`)
+		h := home(source, runtime)
+		h.Files = map[string][]byte{name: []byte("x")}
+		if code(h.Prepare()) != CodeConfigWrite {
+			t.Errorf("configuration overwrote %s", name)
+		}
+	}
+}
+
+// A runtime home that is a link to elsewhere is refused before anything is
+// written through it.
+func TestRuntimeHomeThatIsALinkIsRefused(t *testing.T) {
+	source, elsewhere := private(t), private(t)
+	put(t, source, credential, `"login"`)
+	runtime := filepath.Join(private(t), "runtime")
+	if err := os.Symlink(elsewhere, runtime); err != nil {
+		t.Fatal(err)
+	}
+	if code(home(source, runtime).Prepare()) != CodeRuntimeUnusable {
+		t.Fatal("a linked runtime home was used")
+	}
+	if entries, _ := os.ReadDir(elsewhere); len(entries) != 0 {
+		t.Fatalf("something was written through the link: %v", entries)
+	}
+}
+
+// A runtime home that already holds the source's login but no record of
+// sharing it gains the record, and the login is not rewritten.
+func TestMatchingLoginWithoutARecordGainsOne(t *testing.T) {
+	source, runtime := private(t), private(t)
+	put(t, source, credential, `"login"`)
+	put(t, runtime, credential, `"login"`)
+	before, err := os.Stat(filepath.Join(runtime, credential))
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if err := home(source, runtime).Prepare(); err != nil {
+		t.Fatal(err)
+	}
+	if readRecord(runtime) == nil {
+		t.Fatal("no record of the shared login was written")
+	}
+	after, err := os.Stat(filepath.Join(runtime, credential))
+	if err != nil || !after.ModTime().Equal(before.ModTime()) || text(t, runtime) != `"login"` {
+		t.Fatalf("an identical login was rewritten: %v", err)
+	}
+}
