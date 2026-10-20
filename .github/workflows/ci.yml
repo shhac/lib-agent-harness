@@ -150,7 +150,9 @@ jobs:
           subprocess.run(['tar', '-xf', str(tarball), '-C', 'upstream',
                           '--strip-components=1'], check=True)
           PY
-          meson setup upstream/build upstream --prefix="$RUNNER_TEMP/bwrap-0.8.0" --buildtype=release
+          # 0.8.0 predates C23, where bool is a keyword (gcc 15's default), so
+          # build it as the C it was written in.
+          CFLAGS=-std=gnu17 meson setup upstream/build upstream --prefix="$RUNNER_TEMP/bwrap-0.8.0" --buildtype=release
           meson compile -C upstream/build
           meson install -C upstream/build
           echo "$RUNNER_TEMP/bwrap-0.8.0/bin" >> "$GITHUB_PATH"

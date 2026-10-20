@@ -10,6 +10,7 @@ import (
 func TestFixedHomeProblem(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	for name, c := range map[string]struct {
 		home, want string
 	}{

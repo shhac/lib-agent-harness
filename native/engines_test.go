@@ -30,6 +30,7 @@ func TestNativeEngineTableIsComplete(t *testing.T) {
 func TestFixedHomeRefusalCodes(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	other := filepath.Join(home, "elsewhere")
 	for _, c := range []struct {
 		engine       harness.Engine
