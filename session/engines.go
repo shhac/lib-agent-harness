@@ -115,7 +115,7 @@ func init() {
 
 			args:            func(Options, string, bool, *launch) []string { return commandCodeArgs() },
 			normalizePolicy: normalizeCommandCodePolicy, withheld: commandCodeManaged,
-			refuseAddition: refuseCommandCodeAddition,
+			refuseAddition: refuseManagedAddition("Command Code", commandCodeManaged),
 			initialize:     (*Session).initializeCommandCode, sessionNotice: (*Session).commandCodeModeUpdate, event: (*Session).commandCodeEvent,
 			startTurn: acpStartTurn(harness.CommandCode, readCommandCodePromptEnd), interrupt: (*Session).interruptACP,
 			composedSteer: "Command Code steering cancels the running prompt and sends another",
@@ -128,7 +128,7 @@ func init() {
 				return antigravityArgs(o, nativeID, resuming)
 			},
 			normalizePolicy: normalizeAntigravityPolicy, withheld: antigravityManaged,
-			refuseAddition: refuseAntigravityAddition, overrides: antigravityOverrides,
+			refuseAddition: refuseManagedAddition("Antigravity", antigravityManaged), overrides: antigravityOverrides,
 			initialize: (*Session).initializeAntigravity, sessionNotice: (*Session).observeAntigravityInit, event: (*Session).antigravityEvent,
 			startTurn: (*Session).startAntigravityTurn, interrupt: (*Session).interruptAntigravity,
 			steer: (*Session).steerAntigravity,
@@ -138,7 +138,7 @@ func init() {
 
 			args:            func(Options, string, bool, *launch) []string { return fxArgs() },
 			normalizePolicy: normalizeFxPolicy, withheld: fxManaged,
-			refuseAddition: refuseFxAddition,
+			refuseAddition: refuseManagedAddition("fx", fxManaged),
 			initialize:     (*Session).initializeFx, event: (*Session).fxEvent,
 			startTurn: acpStartTurn(harness.Fx, readFxPromptEnd), interrupt: (*Session).interruptACP,
 			composedSteer:    "fx steering cancels the running prompt and sends another",

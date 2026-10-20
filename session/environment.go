@@ -119,19 +119,6 @@ func fxProtected(upper string) bool {
 	return false
 }
 
-// refuseFxAddition refuses every FX_ addition but the protective ones: fx
-// resolves its own sign-in, and the operator's own settings carry over, but a
-// caller sets fx's controls only through Policy.
-func refuseFxAddition(o Options, key, upper string) error {
-	if fxProtected(upper) {
-		return nil
-	}
-	if strings.HasPrefix(upper, "FX_") {
-		return refuse(o, "env", RefusedEnvManaged, "environment addition "+key+" is managed by the harness; fx resolves its own sign-in")
-	}
-	return nil
-}
-
 // sandboxInherited is all a sandboxed session inherits from this process:
 // enough to find the CLI, its login and a shell, and nothing the process
 // happened to have exported.
@@ -224,11 +211,17 @@ func refuseCodexAddition(o Options, key, upper string) error {
 	return nil
 }
 
-func refuseCommandCodeAddition(o Options, key, _ string) error {
-	if commandCodeManaged(key) {
-		return refuse(o, "env", RefusedEnvManaged, "environment addition "+key+" would change how Command Code runs outside the session's policy")
+// refuseManagedAddition refuses a caller's addition of a variable managed
+// reports, for an engine whose inheritance and addition rules are the same
+// set. Each engine wires it explicitly, so changing what an engine inherits
+// is never also a silent change to what a caller may add.
+func refuseManagedAddition(label string, managed func(key string) bool) func(o Options, key, upper string) error {
+	return func(o Options, key, _ string) error {
+		if managed(key) {
+			return refuse(o, "env", RefusedEnvManaged, "environment addition "+key+" would change how "+label+" runs outside the session's policy")
+		}
+		return nil
 	}
-	return nil
 }
 
 // refuseGrokAddition refuses every GROK_ and XAI_ addition, more than a Grok

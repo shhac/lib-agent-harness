@@ -103,13 +103,6 @@ func antigravityManaged(key string) bool {
 		strings.HasPrefix(upper, "JETSKI_")
 }
 
-func refuseAntigravityAddition(o Options, key, _ string) error {
-	if antigravityManaged(key) {
-		return refuse(o, "env", RefusedEnvManaged, "environment addition "+key+" would change how Antigravity runs outside the session's policy")
-	}
-	return nil
-}
-
 func antigravityOverrides(_ Options, env []string) []string {
 	return nativecli.Override(env, nativecli.AntigravityReducedTelemetry...)
 }
