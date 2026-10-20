@@ -192,3 +192,14 @@ func readBwrapStatus(r io.Reader, onStart func()) (started bool, code int, settl
 }
 
 func init() { sandboxhook.CanaryRuns = workbenchCanaryRuns.Load }
+
+// commandOutputLimit is how much of each stream a command keeps: its share of
+// the session's result budget, or for a standalone sandbox the most a skill
+// script returns, and never less than nothing.
+func commandOutputLimit(budget int, standalone bool) int {
+	limit := (budget - 1024) / 12
+	if standalone {
+		limit = skills.MaxOutputBytes
+	}
+	return max(0, min(limit, skills.MaxOutputBytes))
+}

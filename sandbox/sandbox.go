@@ -9,6 +9,9 @@ import (
 	"time"
 )
 
+// maxLiveCommands bounds the commands one sandbox runs at once.
+const maxLiveCommands = 64
+
 // CommandRequest runs a shell command in a relative workspace directory.
 // Timeout defaults to Options.Timeout (two minutes when unset) and may only
 // shorten it for Run. The standalone ceiling is MaxStandaloneTimeout.
@@ -176,7 +179,7 @@ func (s *Sandbox) admit(ctx context.Context, req CommandRequest, start bool) (*S
 	if code != "" {
 		return nil, commandError(code)
 	}
-	if len(s.active) >= 64 {
+	if len(s.active) >= maxLiveCommands {
 		return nil, commandError(CommandProcessLimit)
 	}
 	runCtx, cancel := context.WithCancel(ctx)

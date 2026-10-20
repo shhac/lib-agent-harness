@@ -13,7 +13,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/shhac/lib-agent-harness/internal/skills"
 	"github.com/shhac/lib-agent-harness/process"
 )
 
@@ -77,7 +76,7 @@ func newCommandSandbox(config commandConfig) (*commandSandbox, error) {
 		}
 		clear(launched[len(live):])
 		launched = live
-		full := len(launched) >= 64
+		full := len(launched) >= maxLiveCommands
 		mu.Unlock()
 		if full {
 			return CommandResult{}, commandError("command_process_limit")
@@ -115,13 +114,7 @@ func newCommandSandbox(config commandConfig) (*commandSandbox, error) {
 		if o.Background {
 			p.Background()
 		}
-		limit := (budget - 1024) / 12
-		if config.standalone {
-			limit = skills.MaxOutputBytes
-		}
-		if limit > skills.MaxOutputBytes {
-			limit = skills.MaxOutputBytes
-		}
+		limit := commandOutputLimit(budget, config.standalone)
 		stdout, stderr := &workbenchOutput{limit: limit}, &workbenchOutput{limit: limit}
 		_, _ = stderr.Write([]byte(workbenchPathReport(dropped, limit)))
 		captureFailure := func() CommandResult {
@@ -165,7 +158,7 @@ func newCommandSandbox(config commandConfig) (*commandSandbox, error) {
 			_ = errWrite.Close()
 		})
 		mu.Lock()
-		if closing || len(launched) >= 64 {
+		if closing || len(launched) >= maxLiveCommands {
 			code := CommandProcessLimit
 			if closing {
 				code = CommandSandboxClosed

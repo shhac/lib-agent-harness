@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/shhac/lib-agent-harness/internal/skills"
 	"github.com/shhac/lib-agent-harness/process"
 )
 
@@ -87,16 +86,7 @@ func newCommandSandbox(config commandConfig) (*commandSandbox, error) {
 		cmd.Env = commandEnv
 		cmd.ExtraFiles = []*os.File{status}
 		cmd.WaitDelay = 2 * time.Second
-		limit := (budget - 1024) / 12
-		if config.standalone {
-			limit = skills.MaxOutputBytes
-		}
-		if limit > skills.MaxOutputBytes {
-			limit = skills.MaxOutputBytes
-		}
-		if limit < 0 {
-			limit = 0
-		}
+		limit := commandOutputLimit(budget, config.standalone)
 		stdout, stderr := &workbenchOutput{limit: limit}, &workbenchOutput{limit: limit}
 		_, _ = stderr.Write([]byte(workbenchPathReport(dropped, limit)))
 		captureFailure := func() CommandResult {
@@ -115,7 +105,7 @@ func newCommandSandbox(config commandConfig) (*commandSandbox, error) {
 			p.Close()
 			return CommandResult{}, context.Canceled
 		}
-		if len(live) >= 64 {
+		if len(live) >= maxLiveCommands {
 			mu.Unlock()
 			p.Close()
 			return CommandResult{}, commandError(CommandProcessLimit)
