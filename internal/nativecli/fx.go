@@ -1,7 +1,5 @@
 package nativecli
 
-import ()
-
 // FxEnvironment is the operating environment an fx launch runs with.
 //
 // fx keeps its profile in ~/.fx, which it derives from the user's home
