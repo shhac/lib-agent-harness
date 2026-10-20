@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
+	"strings"
 
 	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/rawjson"
@@ -35,14 +36,8 @@ const (
 )
 
 func (e *acpRefusal) Error() string {
-	name := "grok"
-	switch e.engine {
-	case harness.CommandCode:
-		name = "command code"
-	case harness.Fx:
-		name = "fx"
-	}
-	return name + " refused the request: " + e.code
+	d, _ := harness.Describe(e.engine)
+	return strings.ToLower(d.Label) + " refused the request: " + e.code
 }
 
 func (e *acpRefusal) Unwrap() error {
