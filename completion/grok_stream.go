@@ -20,6 +20,7 @@ import (
 	"github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/apihttp"
 	"github.com/shhac/lib-agent-harness/internal/rawjson"
+	"github.com/shhac/lib-agent-harness/internal/tokens"
 	"github.com/shhac/lib-agent-harness/process"
 )
 
@@ -223,32 +224,10 @@ func (s *grokStream) accounting() Result {
 // grokUsage adds both cache figures back into Input, which counts every prompt
 // token. Absent, negative or overflowing figures leave the usage unknown.
 func grokUsage(report *grokUsageReport) harness.Usage {
-	if report == nil || report.Input == nil || report.Output == nil {
+	if report == nil {
 		return harness.Usage{}
 	}
-	cacheRead, cacheWrite := valueOrZero(report.CacheRead), valueOrZero(report.CacheWrite)
-	input, ok := sumTokens(*report.Input, cacheRead, cacheWrite)
-	if !ok {
-		return harness.Usage{}
-	}
-	if _, ok = sumTokens(input, *report.Output); !ok {
-		return harness.Usage{}
-	}
-	usage := harness.Usage{
-		Known:      true,
-		Input:      input,
-		Output:     *report.Output,
-		CacheRead:  cacheRead,
-		CacheWrite: cacheWrite,
-		CacheKnown: report.CacheRead != nil && report.CacheWrite != nil,
-	}
-	if reasoning := report.Reasoning; reasoning != nil {
-		if *reasoning < 0 {
-			return harness.Usage{}
-		}
-		usage.Reasoning, usage.ReasoningKnown = *reasoning, true
-	}
-	return usage
+	return tokens.CacheExclusive(tokens.Report{Input: report.Input, Output: report.Output, CacheRead: report.CacheRead, CacheWrite: report.CacheWrite, Reasoning: report.Reasoning})
 }
 
 // grokCostTicksPerUSD: Grok states cost exactly in ticks of 10^-10 USD.

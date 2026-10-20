@@ -3,10 +3,10 @@ package completion
 import (
 	"bytes"
 	"encoding/json"
-	"math"
 
 	"github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/claudeproto"
+	"github.com/shhac/lib-agent-harness/internal/tokens"
 )
 
 // tokenReport is every token field either CLI's terminal report may carry.
@@ -89,27 +89,16 @@ func terminalAccounting(engine harness.Engine, data []byte) Result {
 // is known only when both cache fields are present; an absent one contributes
 // nothing rather than making the report incomplete.
 func claudeUsage(report *tokenReport) harness.Usage {
-	if report == nil || report.Input == nil || report.Output == nil {
+	if report == nil {
 		return harness.Usage{}
 	}
-	cacheRead, cacheWrite := valueOrZero(report.CacheRead), valueOrZero(report.CacheWrite)
-	input, ok := sumTokens(*report.Input, cacheRead, cacheWrite)
-	if !ok {
-		return harness.Usage{}
+	r := tokens.Report{Input: report.Input, Output: report.Output, CacheRead: report.CacheRead, CacheWrite: report.CacheWrite}
+	if report.Output != nil {
+		if reasoning, ok := report.OutputDetails.Reasoning(*report.Output); ok {
+			r.Reasoning = &reasoning
+		}
 	}
-	if _, ok := sumTokens(input, *report.Output); !ok {
-		return harness.Usage{}
-	}
-	usage := harness.Usage{
-		Known:      true,
-		Input:      input,
-		Output:     *report.Output,
-		CacheRead:  cacheRead,
-		CacheWrite: cacheWrite,
-		CacheKnown: report.CacheRead != nil && report.CacheWrite != nil,
-	}
-	usage.Reasoning, usage.ReasoningKnown = report.OutputDetails.Reasoning(usage.Output)
-	return usage
+	return tokens.CacheExclusive(r)
 }
 
 // codexUsage reads a turn.completed report. Codex's input_tokens already
@@ -117,26 +106,10 @@ func claudeUsage(report *tokenReport) harness.Usage {
 // reasoning_output_tokens; a part larger than its whole is inconsistent.
 // Codex caching is implicit, so there is never a cache write to report.
 func codexUsage(report *tokenReport) harness.Usage {
-	if report == nil || report.Input == nil || report.Output == nil {
+	if report == nil {
 		return harness.Usage{}
 	}
-	if _, ok := sumTokens(*report.Input, *report.Output); !ok {
-		return harness.Usage{}
-	}
-	usage := harness.Usage{Known: true, Input: *report.Input, Output: *report.Output}
-	if cached := report.CachedInput; cached != nil {
-		if *cached < 0 || *cached > usage.Input {
-			return harness.Usage{}
-		}
-		usage.CacheRead, usage.CacheKnown = *cached, true
-	}
-	if reasoning := report.ReasoningOutput; reasoning != nil {
-		if *reasoning < 0 || *reasoning > usage.Output {
-			return harness.Usage{}
-		}
-		usage.Reasoning, usage.ReasoningKnown = *reasoning, true
-	}
-	return usage
+	return tokens.CacheInclusive(tokens.Report{Input: report.Input, Output: report.Output, CacheRead: report.CachedInput, CacheWrite: tokens.NoCacheWrite(report.CachedInput), Reasoning: report.ReasoningOutput})
 }
 
 // claudeCost is the valuation Claude states on its single terminal result. An
@@ -191,25 +164,4 @@ func terminalEvent(engine harness.Engine, eventType string) bool {
 		return eventType == "turn.completed"
 	}
 	return false
-}
-
-func valueOrZero(value *int64) int64 {
-	if value == nil {
-		return 0
-	}
-	return *value
-}
-
-// sumTokens accepts counts only when each is non-negative and they sum without
-// overflow. Anything else is unknown rather than a repaired number, because a
-// repaired number cannot be told from a measured one once it is stored.
-func sumTokens(parts ...int64) (int64, bool) {
-	var total int64
-	for _, part := range parts {
-		if part < 0 || part > math.MaxInt64-total {
-			return 0, false
-		}
-		total += part
-	}
-	return total, true
 }

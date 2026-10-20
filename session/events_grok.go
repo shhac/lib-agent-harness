@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/tokens"
 )
 
 // Grok's session/update dialect, and the prompt response that ends a turn.
@@ -121,15 +122,10 @@ func parseGrokTurnUsage(raw json.RawMessage) Usage {
 		Write     *int64 `json:"cacheCreationTokens"`
 		Reasoning *int64 `json:"reasoningTokens"`
 	}
-	if len(raw) == 0 || json.Unmarshal(raw, &c) != nil || c.Input == nil || c.Output == nil {
+	if len(raw) == 0 || json.Unmarshal(raw, &c) != nil {
 		return Usage{}
 	}
-	read, write, reasoning := valueOr(c.Read), valueOr(c.Write), valueOr(c.Reasoning)
-	input, output := *c.Input, *c.Output
-	if input < 0 || output < 0 || read < 0 || write < 0 || reasoning < 0 || read > input || write > input-read || reasoning > output {
-		return Usage{}
-	}
-	return Usage{Usage: harness.Usage{Known: true, Input: input, Output: output, CacheRead: read, CacheWrite: write, Reasoning: reasoning, CacheKnown: c.Read != nil && c.Write != nil, ReasoningKnown: c.Reasoning != nil}}
+	return Usage{Usage: tokens.CacheInclusive(tokens.Report{Input: c.Input, Output: c.Output, CacheRead: c.Read, CacheWrite: c.Write, Reasoning: c.Reasoning})}
 }
 
 // parseGrokResponseUsage reads one response's figures, whose input_tokens
@@ -143,20 +139,8 @@ func parseGrokResponseUsage(raw json.RawMessage) Usage {
 		Write     *int64 `json:"cache_creation_input_tokens"`
 		Reasoning *int64 `json:"reasoning_tokens"`
 	}
-	if len(raw) == 0 || json.Unmarshal(raw, &c) != nil || c.Input == nil || c.Output == nil {
+	if len(raw) == 0 || json.Unmarshal(raw, &c) != nil {
 		return Usage{}
 	}
-	read, write, reasoning := valueOr(c.Read), valueOr(c.Write), valueOr(c.Reasoning)
-	input, output := *c.Input, *c.Output
-	if input < 0 || output < 0 || read < 0 || write < 0 || reasoning < 0 || reasoning > output || input > maxInt64-read || input+read > maxInt64-write {
-		return Usage{}
-	}
-	return Usage{Usage: harness.Usage{Known: true, Input: input + read + write, Output: output, CacheRead: read, CacheWrite: write, Reasoning: reasoning, CacheKnown: c.Read != nil && c.Write != nil, ReasoningKnown: c.Reasoning != nil}}
-}
-
-func valueOr(p *int64) int64 {
-	if p == nil {
-		return 0
-	}
-	return *p
+	return Usage{Usage: tokens.CacheExclusive(tokens.Report{Input: c.Input, Output: c.Output, CacheRead: c.Read, CacheWrite: c.Write, Reasoning: c.Reasoning})}
 }

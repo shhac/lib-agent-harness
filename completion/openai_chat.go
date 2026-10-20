@@ -9,6 +9,7 @@ import (
 	"github.com/shhac/lib-agent-harness/internal/apihttp"
 	"github.com/shhac/lib-agent-harness/internal/jsonschema"
 	"github.com/shhac/lib-agent-harness/internal/rawjson"
+	"github.com/shhac/lib-agent-harness/internal/tokens"
 )
 
 type chatRequest struct {
@@ -304,24 +305,16 @@ func chatUsage(data []byte) harness.Usage {
 	if report.Prompt == nil || report.Completion == nil {
 		return harness.Usage{}
 	}
-	total, ok := sumTokens(*report.Prompt, *report.Completion)
-	if !ok || (report.Total != nil && *report.Total != total) {
-		return harness.Usage{}
-	}
-	usage := harness.Usage{Known: true, Input: *report.Prompt, Output: *report.Completion}
+	r := tokens.Report{Input: report.Prompt, Output: report.Completion}
 	if report.PromptDetails != nil && report.PromptDetails.Cached != nil {
-		cached := *report.PromptDetails.Cached
-		if cached < 0 || cached > usage.Input {
-			return harness.Usage{}
-		}
-		usage.CacheRead, usage.CacheKnown = cached, true
+		r.CacheRead, r.CacheWrite = report.PromptDetails.Cached, tokens.NoCacheWrite(report.PromptDetails.Cached)
 	}
-	if report.CompletionDetails != nil && report.CompletionDetails.Reasoning != nil {
-		reasoning := *report.CompletionDetails.Reasoning
-		if reasoning < 0 || reasoning > usage.Output {
-			return harness.Usage{}
-		}
-		usage.Reasoning, usage.ReasoningKnown = reasoning, true
+	if report.CompletionDetails != nil {
+		r.Reasoning = report.CompletionDetails.Reasoning
+	}
+	usage := tokens.CacheInclusive(r)
+	if report.Total != nil && (!usage.Known || *report.Total != usage.Total()) {
+		return harness.Usage{}
 	}
 	return usage
 }

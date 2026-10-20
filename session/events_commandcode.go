@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/tokens"
 )
 
 // Command Code's session/update dialect, and the prompt response that ends a
@@ -70,13 +71,8 @@ func parseCommandCodeTurnUsage(raw json.RawMessage) Usage {
 		Read   *int64 `json:"cacheReadTokens"`
 		Write  *int64 `json:"cacheWriteTokens"`
 	}
-	if len(raw) == 0 || json.Unmarshal(raw, &c) != nil || c.Input == nil || c.Output == nil {
+	if len(raw) == 0 || json.Unmarshal(raw, &c) != nil {
 		return Usage{}
 	}
-	read, write := valueOr(c.Read), valueOr(c.Write)
-	input, output := *c.Input, *c.Output
-	if input < 0 || output < 0 || read < 0 || write < 0 || read > input || write > input-read {
-		return Usage{}
-	}
-	return Usage{Usage: harness.Usage{Known: true, Input: input, Output: output, CacheRead: read, CacheWrite: write, CacheKnown: c.Read != nil && c.Write != nil}}
+	return Usage{Usage: tokens.CacheInclusive(tokens.Report{Input: c.Input, Output: c.Output, CacheRead: c.Read, CacheWrite: c.Write})}
 }

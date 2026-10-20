@@ -8,6 +8,7 @@ import (
 
 	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/rawjson"
+	"github.com/shhac/lib-agent-harness/internal/tokens"
 )
 
 // Antigravity's stream-json turn events (`step_update`, `error`, `result`).
@@ -234,18 +235,9 @@ func parseAntigravityUsage(raw json.RawMessage) Usage {
 	if json.Unmarshal(raw, &c) != nil || c.Input == nil || c.Output == nil {
 		return Usage{}
 	}
-	read, reasoning := valueOr(c.Read), valueOr(c.Reasoning)
-	input, output := *c.Input, *c.Output
-	if input < 0 || output < 0 || read < 0 || reasoning < 0 || input > maxInt64-read || output > maxInt64-reasoning {
-		return Usage{}
+	output := c.Output
+	if c.Reasoning != nil {
+		output = tokens.Sum(c.Output, c.Reasoning)
 	}
-	return Usage{Usage: harness.Usage{
-		Known:          true,
-		Input:          input + read,
-		Output:         output + reasoning,
-		CacheRead:      read,
-		Reasoning:      reasoning,
-		CacheKnown:     c.Read != nil,
-		ReasoningKnown: c.Reasoning != nil,
-	}}
+	return Usage{Usage: tokens.CacheExclusive(tokens.Report{Input: c.Input, Output: output, CacheRead: c.Read, CacheWrite: tokens.NoCacheWrite(c.Read), Reasoning: c.Reasoning})}
 }

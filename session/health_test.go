@@ -3,6 +3,7 @@ package session
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -216,7 +217,7 @@ func TestUsageIsReportedInTheSharedShape(t *testing.T) {
 }
 
 func TestUsageAccumulationRefusesToWrap(t *testing.T) {
-	near := Usage{Usage: harness.Usage{Known: true, Input: maxInt64 - 1}}
+	near := Usage{Usage: harness.Usage{Known: true, Input: math.MaxInt64 - 1}}
 	if got := near.add(Usage{Usage: harness.Usage{Known: true, Input: 5}}); got.Known {
 		t.Errorf("an unrepresentable total was reported as known: %+v", got)
 	}

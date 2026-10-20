@@ -8,6 +8,7 @@ import (
 	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/claudeproto"
 	"github.com/shhac/lib-agent-harness/internal/rawjson"
+	"github.com/shhac/lib-agent-harness/internal/tokens"
 )
 
 // Claude's stream-json dialect. Kept apart from Codex's because the two
@@ -232,26 +233,11 @@ func parseClaudeUsage(raw json.RawMessage) Usage {
 	if json.Unmarshal(raw, &counts) != nil {
 		return Usage{}
 	}
-	read, write := int64(0), int64(0)
-	if counts.CacheRead != nil {
-		read = *counts.CacheRead
+	report := tokens.Report{Input: &counts.Input, Output: &counts.Output, CacheRead: counts.CacheRead, CacheWrite: counts.CacheWrite}
+	if reasoning, ok := counts.Details.Reasoning(counts.Output); ok {
+		report.Reasoning = &reasoning
 	}
-	if counts.CacheWrite != nil {
-		write = *counts.CacheWrite
-	}
-	if counts.Input > maxInt64-read || counts.Input+read > maxInt64-write {
-		return Usage{}
-	}
-	usage := Usage{Usage: harness.Usage{
-		Known:      true,
-		Input:      counts.Input + read + write,
-		Output:     counts.Output,
-		CacheRead:  read,
-		CacheWrite: write,
-		CacheKnown: counts.CacheRead != nil && counts.CacheWrite != nil,
-	}}
-	usage.Reasoning, usage.ReasoningKnown = counts.Details.Reasoning(counts.Output)
-	return usage
+	return Usage{Usage: tokens.CacheExclusive(report)}
 }
 
 func validClaudeUsage(raw json.RawMessage) bool {

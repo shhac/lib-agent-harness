@@ -14,6 +14,7 @@ import (
 	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/catalog"
 	"github.com/shhac/lib-agent-harness/internal/claudeproto"
+	"github.com/shhac/lib-agent-harness/internal/tokens"
 )
 
 // MaxFrameBytes bounds one native JSON-line frame, including discarded tool
@@ -404,26 +405,8 @@ func (u Usage) add(next Usage) Usage {
 	if !next.Known {
 		return u
 	}
-	columns := [][2]int64{{u.Input, next.Input}, {u.Output, next.Output}, {u.CacheRead, next.CacheRead}, {u.CacheWrite, next.CacheWrite}, {u.Reasoning, next.Reasoning}}
-	for _, c := range columns {
-		if c[1] < 0 || c[0] > maxInt64-c[1] {
-			return Usage{}
-		}
-	}
-	return Usage{Usage: harness.Usage{
-		Known:      true,
-		Input:      u.Input + next.Input,
-		Output:     u.Output + next.Output,
-		CacheRead:  u.CacheRead + next.CacheRead,
-		CacheWrite: u.CacheWrite + next.CacheWrite,
-		Reasoning:  u.Reasoning + next.Reasoning,
-		CacheKnown: (!u.Known || u.CacheKnown) && next.CacheKnown,
-		// Known only while every response reported it, as the cache split is.
-		ReasoningKnown: (!u.Known || u.ReasoningKnown) && next.ReasoningKnown,
-	}}
+	return Usage{Usage: tokens.Add(u.Usage, next.Usage)}
 }
-
-const maxInt64 = int64(^uint64(0) >> 1)
 
 type Result struct {
 	// NativeError preserves a native failure indication, including Claude's
