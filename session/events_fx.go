@@ -9,7 +9,6 @@ package session
 
 import (
 	"encoding/json"
-	"strconv"
 
 	harness "github.com/shhac/lib-agent-harness"
 )
@@ -30,99 +29,35 @@ func readFxPromptEnd(body json.RawMessage, interruptRequested bool) (acpTurnEnd,
 
 // fxEvent routes one notification for the active turn.
 func (s *Session) fxEvent(t *Turn, ref Ref, m map[string]json.RawMessage) {
-	if str(m, "method") != "session/update" {
-		return
-	}
-	var p struct {
-		SessionID string                     `json:"sessionId"`
-		Update    map[string]json.RawMessage `json:"update"`
-	}
-	if json.Unmarshal(m["params"], &p) != nil || p.Update == nil || ref.ID == "" || p.SessionID != ref.ID {
-		return
-	}
-	switch str(p.Update, "sessionUpdate") {
-	case "agent_message_chunk":
-		var content struct{ Type, Text string }
-		if json.Unmarshal(p.Update["content"], &content) == nil && content.Type == "text" && content.Text != "" {
-			s.text(t, fxMessageItem(t, p.Update), content.Text, false)
-		}
-	case "tool_call":
-		id := str(p.Update, "toolCallId")
-		if id == "" {
-			return
-		}
-		// Text after a tool call is a new message: the turn's result is the
-		// text that follows the last one.
-		t.mu.Lock()
-		t.fxResponse++
-		t.mu.Unlock()
-		status := str(p.Update, "status")
-		if status == "" {
-			status = "pending"
-		}
-		s.emit(t, s.withToolPayload(Event{Kind: "tool_started", ItemID: id, Tool: fxToolName(p.Update), Status: status}, p.Update["rawInput"], ""))
-	case "tool_call_update":
-		id, status := str(p.Update, "toolCallId"), str(p.Update, "status")
-		if id != "" && (status == "completed" || status == "failed") {
-			s.emit(t, withImages(s.withToolPayload(Event{Kind: "tool_completed", ItemID: id, Status: status}, p.Update["rawInput"], grokToolOutput(p.Update)), grokToolImages(p.Update)))
-		}
-	case "usage_update":
-		s.fxContext(t, p.Update)
+	if str(m, "method") == "session/update" {
+		s.acpUpdate(t, ref, m["params"], fxUpdates)
 	}
 }
 
-// fxMessageItem names the text item a message chunk belongs to. fx gives each
-// message a stable id, which is used when it has one; otherwise the chunks
-// of a turn share one item.
-func fxMessageItem(t *Turn, update map[string]json.RawMessage) string {
-	if id := str(update, "messageId"); id != "" {
-		return id
-	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return "response-" + strconv.Itoa(t.fxResponse)
+// fxUpdates names each message by the stable id fx gives it, and otherwise
+// starts a new one after each tool call. fx states the context window and
+// the occupancy in one update, so the occupancy is measured rather than
+// estimated.
+var fxUpdates = acpUpdates{
+	messageItem: func(t *Turn, update map[string]json.RawMessage) string {
+		if id := str(update, "messageId"); id != "" {
+			return id
+		}
+		return acpCountedItem("response-")(t, update)
+	},
+	newMessageAfterTool: true, toolName: fxToolName,
+	context: func(s *Session, t *Turn, update map[string]json.RawMessage) {
+		s.acpContext(t, update, harness.Measured, "fx's own count of the conversation's context")
+	},
 }
 
 // fxToolName is the tool's own identifier, never its title, which carries
 // paths and commands.
 func fxToolName(update map[string]json.RawMessage) string {
-	if name := str(update, "name"); name != "" {
+	if name := str(update, "name"); acpToolIdentifier.MatchString(name) {
 		return name
 	}
-	return "tool"
-}
-
-// fxContext publishes the context the session occupies, and the window it
-// occupies it in. fx states both in one update, so the occupancy is measured
-// rather than estimated.
-func (s *Session) fxContext(t *Turn, update map[string]json.RawMessage) {
-	var u struct {
-		Used *int64 `json:"used"`
-		Size *int64 `json:"size"`
-	}
-	if json.Unmarshal(mustMarshal(update), &u) != nil || u.Used == nil || *u.Used < 0 {
-		return
-	}
-	s.mu.Lock()
-	model, capacity := s.fxModel, s.fxCapacity
-	s.mu.Unlock()
-	if capacity == 0 && u.Size != nil && *u.Size > 0 {
-		capacity = *u.Size
-		s.mu.Lock()
-		s.fxCapacity = capacity
-		s.mu.Unlock()
-	}
-	used := *u.Used
-	c := ContextSnapshot{Model: model, UsedTokens: &used}
-	c.Observation = observation("usage_update", harness.Measured)
-	c.Reason = "fx's own count of the conversation's context"
-	if u.Size != nil && *u.Size > 0 {
-		size := *u.Size
-		c.CapacityTokens = &size
-		c.ModelCapacityTokens = cloneValue(&size)
-	}
-	setContextPercent(&c)
-	s.observeContext(c, t)
+	return ""
 }
 
 // parseFxTurnUsage reads the turn's accounting from a prompt response. Its

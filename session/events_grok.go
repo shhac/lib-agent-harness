@@ -2,11 +2,8 @@ package session
 
 import (
 	"encoding/json"
-	"strconv"
-	"strings"
 
 	harness "github.com/shhac/lib-agent-harness"
-	"github.com/shhac/lib-agent-harness/internal/rawjson"
 )
 
 // Grok's session/update dialect, and the prompt response that ends a turn.
@@ -23,109 +20,19 @@ const grokPermissionRejected = "permission_rejected"
 // grokEvent routes one notification for the active turn. Streamed content is
 // ACP's session/update; per-response usage is Grok's own extension envelope.
 func (s *Session) grokEvent(t *Turn, ref Ref, m map[string]json.RawMessage) {
-	method := str(m, "method")
-	if method != "session/update" && method != "_x.ai/session_notification" {
-		return
-	}
-	var p struct {
-		SessionID string                     `json:"sessionId"`
-		Update    map[string]json.RawMessage `json:"update"`
-	}
-	if json.Unmarshal(m["params"], &p) != nil || p.Update == nil || ref.ID == "" || p.SessionID != ref.ID {
-		return
-	}
-	kind := str(p.Update, "sessionUpdate")
-	if method == "_x.ai/session_notification" {
-		if kind == "response_completed" {
-			s.grokResponseCompleted(t, p.Update)
-		}
-		return
-	}
-	switch kind {
-	case "agent_message_chunk":
-		var content struct{ Type, Text string }
-		if json.Unmarshal(p.Update["content"], &content) == nil && content.Type == "text" && content.Text != "" {
-			t.mu.Lock()
-			item := "response-" + strconv.Itoa(t.grokResponse)
-			t.mu.Unlock()
-			s.text(t, item, content.Text, false)
-		}
-	case "tool_call":
-		id := str(p.Update, "toolCallId")
-		if id == "" {
-			return
-		}
-		status := str(p.Update, "status")
-		if status == "" {
-			status = "pending"
-		}
-		s.emit(t, s.withToolPayload(Event{Kind: "tool_started", ItemID: id, Tool: grokToolName(p.Update), Status: status}, p.Update["rawInput"], ""))
-	case "tool_call_update":
-		id, status := str(p.Update, "toolCallId"), str(p.Update, "status")
-		if id != "" && (status == "completed" || status == "failed") {
-			s.emit(t, withImages(s.withToolPayload(Event{Kind: "tool_completed", ItemID: id, Status: status}, p.Update["rawInput"], grokToolOutput(p.Update)), grokToolImages(p.Update)))
+	switch str(m, "method") {
+	case "session/update":
+		s.acpUpdate(t, ref, m["params"], grokUpdates)
+	case "_x.ai/session_notification":
+		if kind, update, ok := acpSessionUpdate(m["params"], ref); ok && kind == "response_completed" {
+			s.grokResponseCompleted(t, update)
 		}
 	}
 }
 
-// grokToolImages are the image blocks among an ACP tool call's content, which
-// wraps each block: {"type":"content","content":{"type":"image",...}}.
-func grokToolImages(update map[string]json.RawMessage) toolImages {
-	var images toolImages
-	var blocks []struct {
-		Type    string           `json:"type"`
-		Content toolContentBlock `json:"content"`
-	}
-	if json.Unmarshal(update["content"], &blocks) != nil {
-		return images
-	}
-	for _, b := range blocks {
-		if b.Type == "content" && b.Content.Type == "image" {
-			images.add(b.Content)
-		}
-	}
-	return images
-}
-
-// grokToolOutput is an ACP tool call's result: its rawOutput, as text when it
-// is a string and as JSON text otherwise, or failing that the text of its
-// content blocks. Image blocks are reported as images; another block with no
-// text, such as a diff, keeps the content's JSON text rather than dropping it.
-func grokToolOutput(update map[string]json.RawMessage) string {
-	if raw := update["rawOutput"]; !rawjson.Absent(raw) {
-		var text string
-		if json.Unmarshal(raw, &text) == nil {
-			return text
-		}
-		return string(raw)
-	}
-	var blocks []struct {
-		Type    string `json:"type"`
-		Content struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
-	}
-	raw := update["content"]
-	if rawjson.Absent(raw) || json.Unmarshal(raw, &blocks) != nil {
-		return toolResultText(raw)
-	}
-	if len(blocks) == 0 {
-		return ""
-	}
-	var parts []string
-	for _, b := range blocks {
-		switch {
-		case b.Type == "content" && b.Content.Type == "image":
-			// Reported as an image by grokToolImages.
-		case b.Type == "content" && b.Content.Type == "text":
-			parts = append(parts, b.Content.Text)
-		default:
-			return string(raw)
-		}
-	}
-	return strings.Join(parts, "\n")
-}
+// grokUpdates names a turn's text by the model response it belongs to, which
+// grokResponseCompleted advances.
+var grokUpdates = acpUpdates{messageItem: acpCountedItem("response-"), toolName: grokToolName}
 
 // grokResponseCompleted publishes one model response's usage while the turn
 // runs, estimates the context from it, and closes that response's text.
@@ -134,7 +41,7 @@ func (s *Session) grokResponseCompleted(t *Turn, update map[string]json.RawMessa
 	s.observeRequestUsage(t, usage)
 	s.grokContext(t, usage)
 	t.mu.Lock()
-	t.grokResponse++
+	t.acpMessage++
 	t.mu.Unlock()
 }
 
@@ -146,7 +53,7 @@ func (s *Session) grokContext(t *Turn, u Usage) {
 		return
 	}
 	s.mu.Lock()
-	model, capacity := s.grokModel, s.grokCapacity
+	model, capacity := s.acpModel, s.grokCapacity
 	s.mu.Unlock()
 	used := u.Input
 	c := ContextSnapshot{Model: model, UsedTokens: &used}

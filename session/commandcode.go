@@ -349,7 +349,7 @@ func (s *Session) configureCommandCode(ctx context.Context, id string, state com
 	if s.commandCodeMode != commandCodeAskingMode {
 		return &CapabilityError{Engine: harness.CommandCode, Code: CapabilityChangedPermissionMode, Phase: BeforeFirstPrompt}
 	}
-	s.commandCodeModel, s.commandCodeConfigured = config.model, true
+	s.acpModel, s.commandCodeConfigured = config.model, true
 	return nil
 }
 

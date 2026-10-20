@@ -2,7 +2,6 @@ package session
 
 import (
 	"encoding/json"
-	"strconv"
 
 	harness "github.com/shhac/lib-agent-harness"
 )
@@ -30,48 +29,18 @@ func readCommandCodePromptEnd(body json.RawMessage, interruptRequested bool) (ac
 
 // commandCodeEvent routes one notification for the active turn.
 func (s *Session) commandCodeEvent(t *Turn, ref Ref, m map[string]json.RawMessage) {
-	if str(m, "method") != "session/update" {
-		return
+	if str(m, "method") == "session/update" {
+		s.acpUpdate(t, ref, m["params"], commandCodeUpdates)
 	}
-	var p struct {
-		SessionID string                     `json:"sessionId"`
-		Update    map[string]json.RawMessage `json:"update"`
-	}
-	if json.Unmarshal(m["params"], &p) != nil || p.Update == nil || ref.ID == "" || p.SessionID != ref.ID {
-		return
-	}
-	switch str(p.Update, "sessionUpdate") {
-	case "agent_message_chunk":
-		var content struct{ Type, Text string }
-		if json.Unmarshal(p.Update["content"], &content) == nil && content.Type == "text" && content.Text != "" {
-			t.mu.Lock()
-			item := "message-" + strconv.Itoa(t.commandCodeMessage)
-			t.mu.Unlock()
-			s.text(t, item, content.Text, false)
-		}
-	case "tool_call":
-		id := str(p.Update, "toolCallId")
-		if id == "" {
-			return
-		}
-		// Text after a tool call is a new message: the turn's result is the
-		// text that follows the last one.
-		t.mu.Lock()
-		t.commandCodeMessage++
-		t.mu.Unlock()
-		status := str(p.Update, "status")
-		if status == "" {
-			status = "pending"
-		}
-		s.emit(t, s.withToolPayload(Event{Kind: "tool_started", ItemID: id, Tool: commandCodeToolName(p.Update), Status: status}, p.Update["rawInput"], ""))
-	case "tool_call_update":
-		id, status := str(p.Update, "toolCallId"), str(p.Update, "status")
-		if id != "" && (status == "completed" || status == "failed") {
-			s.emit(t, withImages(s.withToolPayload(Event{Kind: "tool_completed", ItemID: id, Status: status}, p.Update["rawInput"], grokToolOutput(p.Update)), grokToolImages(p.Update)))
-		}
-	case "usage_update":
-		s.commandCodeContext(t, p.Update)
-	}
+}
+
+// commandCodeUpdates starts a new message after each tool call, and reads
+// Command Code's own estimate of the context.
+var commandCodeUpdates = acpUpdates{
+	messageItem: acpCountedItem("message-"), newMessageAfterTool: true, toolName: commandCodeToolName,
+	context: func(s *Session, t *Turn, update map[string]json.RawMessage) {
+		s.acpContext(t, update, harness.Estimated, "Command Code's own count of the conversation's context")
+	},
 }
 
 // commandCodeToolKinds are the Agent Client Protocol's tool kinds.
@@ -88,32 +57,6 @@ func commandCodeToolName(update map[string]json.RawMessage) string {
 		return kind
 	}
 	return "tool"
-}
-
-// commandCodeContext reads Command Code's own figures for the session's
-// context: used tokens against the model's window.
-func (s *Session) commandCodeContext(t *Turn, update map[string]json.RawMessage) {
-	var u struct {
-		Used *int64 `json:"used"`
-		Size *int64 `json:"size"`
-	}
-	if json.Unmarshal(mustMarshal(update), &u) != nil || u.Used == nil || *u.Used < 0 {
-		return
-	}
-	s.mu.Lock()
-	model := s.commandCodeModel
-	s.mu.Unlock()
-	used := *u.Used
-	c := ContextSnapshot{Model: model, UsedTokens: &used}
-	c.Observation = observation("usage_update", harness.Estimated)
-	c.Reason = "Command Code's own count of the conversation's context"
-	if u.Size != nil && *u.Size > 0 {
-		size := *u.Size
-		c.CapacityTokens = &size
-		c.ModelCapacityTokens = cloneValue(&size)
-	}
-	setContextPercent(&c)
-	s.observeContext(c, t)
 }
 
 // parseCommandCodeTurnUsage reads a turn's own accounting. Command Code sums

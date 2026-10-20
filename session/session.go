@@ -41,12 +41,11 @@ type Session struct {
 	// actually carried and never one a compaction set while it was starting.
 	contextPending    ContextReason
 	contextGeneration uint64
-	// grokModel and grokCapacity are the model a Grok session reported opening
-	// with and the context window its model state states for it, 0 if none.
-	grokModel    string
+	// acpModel is the model an ACP session (Grok, Command Code, fx) reported
+	// running, and grokCapacity the context window a Grok session's model
+	// state states for it, 0 if none.
+	acpModel     string
 	grokCapacity int64
-	// commandCodeModel is the model a Command Code session reported running.
-	commandCodeModel string
 	// commandCodeWatch is the Command Code session whose permission mode is
 	// being watched, commandCodeMode the mode it last reported, and
 	// commandCodeConfigured whether it was put in the asking mode.
@@ -58,10 +57,6 @@ type Session struct {
 	commandCodeConfigured bool
 	commandCodeEarly      struct{ session, mode string }
 	antigravityInit       chan antigravityInitState
-	// fxModel is the model an fx session reported, and fxCapacity the context
-	// window its own usage update stated, 0 if none.
-	fxModel    string
-	fxCapacity int64
 	// removeSkillFiles removes the private plugin this launch wrote, once
 	// the session is over.
 	removeSkillFiles func()

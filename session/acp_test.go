@@ -85,3 +85,26 @@ func TestGrokPermissionSelectionIsItsOwn(t *testing.T) {
 		t.Errorf("deny chose an allow: %v", got)
 	}
 }
+
+// A tool is named by an identifier its engine states, never by text that
+// could carry a path or a command.
+func TestACPToolNamesAreIdentifiers(t *testing.T) {
+	for name, c := range map[string]struct {
+		read   func(map[string]json.RawMessage) string
+		update string
+		want   string
+	}{
+		"fx name":              {fxToolName, `{"name":"write_file"}`, "write_file"},
+		"fx command as a name": {fxToolName, `{"name":"rm -rf /tmp/x"}`, ""},
+		"command code title":   {commandCodeToolName, `{"title":"Read /etc/passwd","kind":"read"}`, "read"},
+		"grok title":           {grokToolName, `{"title":"cat /etc/passwd"}`, "tool"},
+	} {
+		var update map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(c.update), &update); err != nil {
+			t.Fatal(err)
+		}
+		if got := c.read(update); got != c.want {
+			t.Errorf("%s: %q", name, got)
+		}
+	}
+}

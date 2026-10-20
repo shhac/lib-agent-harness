@@ -456,15 +456,10 @@ type Turn struct {
 	awaitingCompactID  bool
 	pending            []map[string]json.RawMessage
 	pendingBytes       int
-	// grokResponse counts Grok's completed model responses in this turn; it
-	// names the response the next streamed text belongs to.
-	grokResponse int
-	// commandCodeMessage counts the tool calls Command Code started in this
-	// turn; it names the message the next streamed text belongs to.
-	commandCodeMessage int
-	// fxResponse counts fx's message groups in this turn; it names the group
-	// the next streamed text belongs to.
-	fxResponse int
+	// acpMessage counts an ACP turn's messages: Grok's completed model
+	// responses, or the tool calls Command Code and fx started. It names the
+	// message the next streamed text belongs to.
+	acpMessage int
 	// antigravityTools tracks which Antigravity tool step IDs have emitted
 	// tool_started and tool_completed in this turn.
 	antigravityTools map[string]bool

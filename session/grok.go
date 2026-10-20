@@ -163,7 +163,7 @@ func (s *Session) initializeGrok(ctx context.Context, resume bool) error {
 	}
 	s.mu.Lock()
 	s.ref.ID = id
-	s.grokModel, s.grokCapacity = state.model, state.capacity
+	s.acpModel, s.grokCapacity = state.model, state.capacity
 	s.mu.Unlock()
 	return nil
 }

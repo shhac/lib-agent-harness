@@ -299,7 +299,7 @@ func (s *Session) configureFx(ctx context.Context, id string, state fxSessionSta
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.fxModel = config.model
+	s.acpModel = config.model
 	return nil
 }
 
