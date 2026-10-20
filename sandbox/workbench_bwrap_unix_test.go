@@ -220,7 +220,7 @@ func simulateBwrap(t *testing.T, args []string) {
 			i++
 			p := args[i]
 			for _, bind := range binds {
-				if lexicallyWithin(bind, p) {
+				if Within(bind, p) {
 					t.Fatalf("directory %s inside active bind %s", p, bind)
 				}
 			}

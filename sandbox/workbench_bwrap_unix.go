@@ -45,13 +45,13 @@ func bwrapSystemDirs() []string {
 }
 
 func bwrapSystemContains(system, dir string) bool {
-	if lexicallyWithin(system, dir) {
+	if Within(system, dir) {
 		return true
 	}
 	if _, e := os.Stat(system); os.IsNotExist(e) {
 		return false
 	}
-	return nested(system, dir)
+	return Nested(system, dir)
 }
 
 func linuxSystemPlacement(p string) bool {

@@ -78,7 +78,7 @@ print('ports-ran', flush=True)
 
 func portScript(attempts []portAttempt) string {
 	data, _ := json.Marshal(attempts)
-	return "LC_ALL=C /usr/bin/python3 -c " + workbenchShellQuote(portClient) + " " + workbenchShellQuote(string(data)) + "\n"
+	return "LC_ALL=C /usr/bin/python3 -c " + sandboxprobe.ShellQuote(portClient) + " " + sandboxprobe.ShellQuote(string(data)) + "\n"
 }
 
 func judgePortCanary(output string, attempts []portAttempt, inbound bool) error {
@@ -89,7 +89,7 @@ func judgePortCanary(output string, attempts []portAttempt, inbound bool) error 
 			return &ProofError{Code: CapabilitySandboxNotEnforced, Step: proofStepSelectedPortNetwork}
 		}
 	}
-	if !lines["ports-ran"] || !lines[canaryRan] {
+	if !lines["ports-ran"] || !lines[sandboxprobe.CanaryRan] {
 		return &ProofError{Code: CapabilitySandboxUnavailable, Step: proofStepSelectedPortNetwork}
 	}
 	if inbound && (!lines["inbound"] || !lines["receipt"]) {
@@ -116,7 +116,7 @@ type selectedPortDeps struct {
 }
 
 func proveSelectedPorts(ctx context.Context, o Options, system []string) (selectedPortEvidence, error) {
-	return proveSelectedPortsWith(ctx, o, system, selectedPortDeps{sandboxprobe.DiscoverAndProveControl, offMachineWitness, portClientReady})
+	return proveSelectedPortsWith(ctx, o, system, selectedPortDeps{sandboxprobe.DiscoverAndProveControl, sandboxprobe.OffMachineWitness, portClientReady})
 }
 func proveSelectedPortsWith(ctx context.Context, o Options, system []string, deps selectedPortDeps) (evidence selectedPortEvidence, resultErr error) {
 	var chosen sandboxprobe.ControlTarget
@@ -174,11 +174,11 @@ func proveSelectedPortsWith(ctx context.Context, o Options, system []string, dep
 		}
 	}
 	l := workbenchLayout{Work: filepath.Join(root, "work"), Home: filepath.Join(root, "home"), Tmp: filepath.Join(root, "tmp"), System: system, Read: o.Read, Write: o.Write, Loopback: true}
-	a, err := freeLoopbackPort()
+	a, err := sandboxprobe.FreeLoopbackPort()
 	if err != nil {
 		return fail(ProofStepFixture)
 	}
-	listener, wg, reached, err := countingListener("127.0.0.1:0")
+	listener, wg, reached, err := sandboxprobe.CountingListener("127.0.0.1:0")
 	if err != nil {
 		return fail(ProofStepFixture)
 	}
@@ -187,7 +187,7 @@ func proveSelectedPortsWith(ctx context.Context, o Options, system []string, dep
 	if a == b || a == 8340 || b == 8340 {
 		return fail(ProofStepFixture)
 	}
-	ipv6, wg6, reached6, err := countingListener(net.JoinHostPort("::1", strconv.Itoa(b)))
+	ipv6, wg6, reached6, err := sandboxprobe.CountingListener(net.JoinHostPort("::1", strconv.Itoa(b)))
 	if err != nil {
 		return fail(proofStepIPv6ControlUnavailable)
 	}
@@ -312,7 +312,7 @@ func proveSelectedPortsWith(ctx context.Context, o Options, system []string, dep
 	if free != 0 {
 		// Prove reach under the actual list after the disposable inside server
 		// has settled. Never connect to a service occupying a selected port.
-		ln, workers, received, err := countingListener(net.JoinHostPort("127.0.0.1", strconv.Itoa(free)))
+		ln, workers, received, err := sandboxprobe.CountingListener(net.JoinHostPort("127.0.0.1", strconv.Itoa(free)))
 		if err != nil {
 			return fail(proofStepSelectedPortNetwork)
 		}
@@ -404,7 +404,7 @@ func excludedListeners(port int) (func(), func() bool, error) {
 
 func unselectedPort(ports []int) (int, error) {
 	for i := 0; i < 32; i++ {
-		port, err := freeLoopbackPort()
+		port, err := sandboxprobe.FreeLoopbackPort()
 		if err != nil {
 			return 0, err
 		}
@@ -466,7 +466,7 @@ func runPortStage(ctx context.Context, l workbenchLayout, attempts []portAttempt
 	inbound := workbenchInboundProbe{}
 	if bind != 0 {
 		inbound = workbenchInboundProbe{Port: bind, Nonce: process.NewToken(), Message: "port-inbound"}
-		script = "/usr/bin/python3 -c " + workbenchShellQuote(inboundPortClient) + " " + strconv.Itoa(bind) + " " + workbenchShellQuote(inbound.Nonce) + "\necho ports-ran\necho canary-ran\n"
+		script = "/usr/bin/python3 -c " + sandboxprobe.ShellQuote(inboundPortClient) + " " + strconv.Itoa(bind) + " " + sandboxprobe.ShellQuote(inbound.Nonce) + "\necho ports-ran\necho canary-ran\n"
 		output, err = runWorkbenchProbe(ctx, l, script, false, inbound)
 		if ctx.Err() != nil {
 			return &ProofError{Code: CapabilityProbeTimeout, Step: proofStepSelectedPortNetwork}

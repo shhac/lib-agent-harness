@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/shhac/lib-agent-harness/internal/sandboxhook"
+	"github.com/shhac/lib-agent-harness/internal/sandboxprobe"
 	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
@@ -75,7 +76,7 @@ func TestCommandSandboxRunSkipsRefusedCapabilities(t *testing.T) {
 	for _, mode := range modes {
 		for _, strict := range []bool{false, true} {
 			// Env refuses AGENT_HARNESS_* and does not inherit it, even in CI.
-			command := workbenchShellQuote(binary) + " -test.v -test.run='^TestCommandSandboxFixture$' -- " + mode
+			command := sandboxprobe.ShellQuote(binary) + " -test.v -test.run='^TestCommandSandboxFixture$' -- " + mode
 			if strict {
 				command = testenv.NoSkipVariable + "=1 " + command
 			} else {

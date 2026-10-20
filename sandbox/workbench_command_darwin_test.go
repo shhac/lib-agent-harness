@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shhac/lib-agent-harness/internal/sandboxprobe"
 	"github.com/shhac/lib-agent-harness/internal/testenv"
 	"github.com/shhac/lib-agent-harness/process"
 )
@@ -190,7 +191,7 @@ func TestWorkbenchCanaryWithoutSandboxReportsEscapes(t *testing.T) {
 	// All filesystem and socket escapes use disposable fixtures. The two
 	// privileged witnesses use synthetic success here; only the real canary
 	// establishes keychain and disk-image denial against the installed OS.
-	listener, wg, reached, err := countingListener("127.0.0.1:0")
+	listener, wg, reached, err := sandboxprobe.CountingListener("127.0.0.1:0")
 	testenv.SkipIfRefused(t, "the canary's local network witness", err)
 	defer func() { listener.Close(); wg.Wait() }()
 	dir, err := os.MkdirTemp(".", ".wbc-")
@@ -265,7 +266,7 @@ func TestWorkbenchCanaryWithoutSandboxReportsEscapes(t *testing.T) {
 	for _, line := range strings.Split(out.text(), "\n") {
 		seen[line] = true
 	}
-	names := []string{"inside", "nested", "tmp", "tmpdir", "sibling", "gitdir", "gitcase", "gitmove", "gitlink", "githardlink", "reserved-temp", "home", "real-home", "outside", "runtime", "readset", "readset-write", "link", "socket", "network", "localhost", "keychain", "mount", canaryRan}
+	names := []string{"inside", "nested", "tmp", "tmpdir", "sibling", "gitdir", "gitcase", "gitmove", "gitlink", "githardlink", "reserved-temp", "home", "real-home", "outside", "runtime", "readset", "readset-write", "link", "socket", "network", "localhost", "keychain", "mount", sandboxprobe.CanaryRan}
 	for _, label := range []string{"outside-data", "runtime-data", "real-home-data"} {
 		if strings.Contains(script, "try "+label+" ") {
 			names = append(names, label)
@@ -458,7 +459,7 @@ func TestWorkbenchWidenedProfileFailsProof(t *testing.T) {
 	writeFile(t, outside, "marker")
 	l := workbenchLayout{Work: work, Home: t.TempDir(), Tmp: t.TempDir(), System: workbenchSystemDirs(), Write: true}
 	for _, tc := range []struct{ name, rule, script string }{
-		{"read root", "(allow file-read* (subpath \"/\"))", "cat " + workbenchShellQuote(outside) + " >/dev/null 2>&1 && echo outside; echo canary-ran"},
+		{"read root", "(allow file-read* (subpath \"/\"))", "cat " + sandboxprobe.ShellQuote(outside) + " >/dev/null 2>&1 && echo outside; echo canary-ran"},
 		{"read owners", "(allow file-read* (subpath \"/Users\"))", "try() { name=$1; shift; if ( \"$@\" ) >/dev/null 2>&1; then echo \"$name\"; fi; }; " + workbenchReadWitnesses(root, mustWorkbenchHome(t)) + "echo canary-ran"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

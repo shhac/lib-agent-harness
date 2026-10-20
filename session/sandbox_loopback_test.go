@@ -24,7 +24,7 @@ import (
 )
 
 func TestJudgeLoopback(t *testing.T) {
-	proved := strings.Join([]string{loopbackReached, loopbackBound, canaryRan}, "\n")
+	proved := strings.Join([]string{sandboxprobe.LoopbackReached, sandboxprobe.LoopbackBound, canaryRan}, "\n")
 	for _, tc := range []struct {
 		name        string
 		output      string
@@ -32,12 +32,12 @@ func TestJudgeLoopback(t *testing.T) {
 		code        string
 	}{
 		{"proved", proved, true, ""},
-		{"off-machine reached", proved + "\n" + loopbackOutside, true, CapabilitySandboxNotEnforced},
+		{"off-machine reached", proved + "\n" + sandboxprobe.LoopbackOutside, true, CapabilitySandboxNotEnforced},
 		{"loopback listener never saw the canary", proved, false, CapabilitySandboxUnavailable},
-		{"no bind", loopbackReached + "\n" + canaryRan, true, CapabilitySandboxUnavailable},
-		{"no loopback", loopbackBound + "\n" + canaryRan, true, CapabilitySandboxUnavailable},
+		{"no bind", sandboxprobe.LoopbackReached + "\n" + canaryRan, true, CapabilitySandboxUnavailable},
+		{"no loopback", sandboxprobe.LoopbackBound + "\n" + canaryRan, true, CapabilitySandboxUnavailable},
 		{"no client", canaryNoClient + "\n" + proved, true, CapabilitySandboxUnavailable},
-		{"did not finish", loopbackReached + "\n" + loopbackBound, true, CapabilitySandboxUnavailable},
+		{"did not finish", sandboxprobe.LoopbackReached + "\n" + sandboxprobe.LoopbackBound, true, CapabilitySandboxUnavailable},
 		{"refused by permissions", "Permission to use Bash has been denied", false, CapabilitySandboxUnavailable},
 	} {
 		err := judgeLoopback(tc.output, tc.loopReached)
@@ -60,27 +60,27 @@ func TestLoopbackCanaryUnsandboxedIsCaught(t *testing.T) {
 	if _, err := exec.LookPath("nc"); err != nil {
 		t.Skip("no nc on this machine")
 	}
-	loop, loopWait, loopReached, err := countingListener("127.0.0.1:0")
+	loop, loopWait, loopReached, err := sandboxprobe.CountingListener("127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { loop.Close(); loopWait.Wait() }()
-	witness, witnessWait, _, err := countingListener("127.0.0.1:0")
+	witness, witnessWait, _, err := sandboxprobe.CountingListener("127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { witness.Close(); witnessWait.Wait() }()
-	bindPort, err := freeLoopbackPort()
+	bindPort, err := sandboxprobe.FreeLoopbackPort()
 	if err != nil {
 		t.Fatal(err)
 	}
-	script := loopbackCanary(loop.Addr().(*net.TCPAddr).Port, "127.0.0.1", witness.Addr().(*net.TCPAddr).Port, bindPort)
+	script := sandboxprobe.LoopbackCanary(loop.Addr().(*net.TCPAddr).Port, "127.0.0.1", witness.Addr().(*net.TCPAddr).Port, bindPort)
 	output, err := exec.Command("/bin/sh", "-c", script).Output()
 	if err != nil {
 		t.Fatalf("%v: %s", err, output)
 	}
 	time.Sleep(300 * time.Millisecond)
-	for _, want := range []string{loopbackReached, loopbackBound, loopbackOutside, canaryRan} {
+	for _, want := range []string{sandboxprobe.LoopbackReached, sandboxprobe.LoopbackBound, sandboxprobe.LoopbackOutside, canaryRan} {
 		if !strings.Contains(string(output), want+"\n") {
 			t.Errorf("canary output %q lacks %q", output, want)
 		}
@@ -157,7 +157,7 @@ func flatCanary(script string) bool {
 }
 
 func TestLoopbackCanaryIsFlat(t *testing.T) {
-	if !flatCanary(loopbackCanary(1, "192.0.2.1", 443, 2)) {
+	if !flatCanary(sandboxprobe.LoopbackCanary(1, "192.0.2.1", 443, 2)) {
 		t.Fatal("legacy canary is not flat")
 	}
 	for _, bad := range []string{"(echo x)", "f() { echo x; }", "{ echo x; }", "exit 0", "echo $(id)", "echo `id`", "echo x | cat", "/usr/bin/perl -e 'print 1'", "python3 -c 'print(1)'", "sh -c 'echo x'"} {

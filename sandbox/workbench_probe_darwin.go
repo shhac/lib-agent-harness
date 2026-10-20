@@ -17,6 +17,7 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/sandboxprobe"
 	"github.com/shhac/lib-agent-harness/process"
 )
 
@@ -197,7 +198,7 @@ func probeWorkbenchObserved(ctx context.Context, o Options, system []string, evi
 	if err != nil {
 		return unavailable
 	}
-	witness, ok := offMachineWitness(ctx)
+	witness, ok := sandboxprobe.OffMachineWitness(ctx)
 	if !ok {
 		return unavailable
 	}
@@ -226,7 +227,7 @@ func probeWorkbenchObserved(ctx context.Context, o Options, system []string, evi
 	if keychain == "" {
 		return unavailable
 	}
-	keychainCheck := "/usr/bin/security show-keychain-info " + workbenchShellQuote(keychain)
+	keychainCheck := "/usr/bin/security show-keychain-info " + sandboxprobe.ShellQuote(keychain)
 	cmdCheck, procCheck, e := process.Command(ctx, "/bin/sh", "-c", keychainCheck)
 	if e != nil {
 		return unavailable
@@ -237,7 +238,7 @@ func probeWorkbenchObserved(ctx context.Context, o Options, system []string, evi
 	if e != nil {
 		return unavailable
 	}
-	listener, wg, reached, err := countingListener("127.0.0.1:0")
+	listener, wg, reached, err := sandboxprobe.CountingListener("127.0.0.1:0")
 	if err != nil {
 		return unavailable
 	}
@@ -349,7 +350,7 @@ func probeWorkbenchObserved(ctx context.Context, o Options, system []string, evi
 	}
 	script := workbenchCanary(l, root, read, socket, image, mount, witness, port)
 	script += workbenchReadWitnesses(root, ownerHome)
-	script += "try keychain /bin/sh -c " + workbenchShellQuote(keychainCheck) + "\n"
+	script += "try keychain /bin/sh -c " + sandboxprobe.ShellQuote(keychainCheck) + "\n"
 	inbound := workbenchInboundProbe{}
 	var attempts []interfaceAttempt
 	if l.Loopback {
@@ -367,13 +368,13 @@ func probeWorkbenchObserved(ctx context.Context, o Options, system []string, evi
 			evidence.Detail = "binds on all local interfaces: observed allowed; host inbound witness reached"
 		}
 
-		bind, e := freeLoopbackPort()
+		bind, e := sandboxprobe.FreeLoopbackPort()
 		if e != nil {
 			return unavailable
 		}
-		script += "\n" + loopbackCanary(port, witness, 443, bind)
+		script += "\n" + sandboxprobe.LoopbackCanary(port, witness, 443, bind)
 		script += "\nkill \"$!\" >/dev/null 2>&1; wait \"$!\" 2>/dev/null\n"
-		inbound.Port, err = freeLoopbackPort()
+		inbound.Port, err = sandboxprobe.FreeLoopbackPort()
 		if err != nil {
 			return unavailable
 		}
@@ -390,7 +391,7 @@ func probeWorkbenchObserved(ctx context.Context, o Options, system []string, evi
 			return unavailable
 		}
 		witness := workbenchInboundProbe{Host: host, Port: interfacePort, Nonce: process.NewToken()}
-		witnessScript := fmt.Sprintf("printf %s | /usr/bin/nc -l %s %d >/dev/null 2>&1 &\nsleep 3\nkill \"$!\" >/dev/null 2>&1; wait \"$!\" 2>/dev/null\necho canary-ran\n", workbenchShellQuote(witness.Nonce+"\n"), workbenchShellQuote(host), interfacePort)
+		witnessScript := fmt.Sprintf("printf %s | /usr/bin/nc -l %s %d >/dev/null 2>&1 &\nsleep 3\nkill \"$!\" >/dev/null 2>&1; wait \"$!\" 2>/dev/null\necho canary-ran\n", sandboxprobe.ShellQuote(witness.Nonce+"\n"), sandboxprobe.ShellQuote(host), interfacePort)
 		witnessOut, e := runWorkbenchProbe(ctx, l, witnessScript, false, witness)
 		if ctx.Err() != nil {
 			return executionProofError(ctx, "", ctx.Err())
@@ -406,7 +407,7 @@ func probeWorkbenchObserved(ctx context.Context, o Options, system []string, evi
 	}
 	if err != nil {
 		lines, _ := workbenchCanaryLines(output)
-		if workbenchCanaryEscaped(lines, loopbackOutside) {
+		if workbenchCanaryEscaped(lines, sandboxprobe.LoopbackOutside) {
 			return workbenchCapability(CapabilitySandboxNotEnforced)
 		}
 		return unavailable
@@ -550,7 +551,7 @@ func runWorkbenchProbe(ctx context.Context, l workbenchLayout, script string, ex
 }
 
 func workbenchCanary(l workbenchLayout, root, read, socket, image, mount, witness string, port int) string {
-	q := workbenchShellQuote
+	q := sandboxprobe.ShellQuote
 	try := func(label, command string) string { return "try " + label + " /bin/sh -c " + q(command) + "\n" }
 	s := "try() { name=$1; shift; if ( \"$@\" ) >/dev/null 2>&1; then echo \"$name\"; fi; }\n"
 	s += try("inside", "echo x > inside")
@@ -593,14 +594,14 @@ func judgeWorkbench(output string, write, loopback, reached bool) error {
 	if !loopback && reached {
 		return workbenchCapability(CapabilitySandboxNotEnforced)
 	}
-	if loopback && lines[loopbackOutside] {
+	if loopback && lines[sandboxprobe.LoopbackOutside] {
 		return workbenchCapability(CapabilitySandboxNotEnforced)
 	}
-	if last != canaryRan || !lines[canaryRan] || lines[canaryNoClient] || !lines["tmp"] || !lines["tmpdir"] || !lines["system"] || !lines["readset"] || (write && (!lines["inside"] || !lines["nested"])) {
+	if last != sandboxprobe.CanaryRan || !lines[sandboxprobe.CanaryRan] || lines[sandboxprobe.CanaryNoClient] || !lines["tmp"] || !lines["tmpdir"] || !lines["system"] || !lines["readset"] || (write && (!lines["inside"] || !lines["nested"])) {
 		return workbenchCapability(CapabilitySandboxUnavailable)
 	}
 	if loopback {
-		if !lines[loopbackReached] || !lines[loopbackBound] || !lines["inbound"] || lines[loopbackOutside] || !reached {
+		if !lines[sandboxprobe.LoopbackReached] || !lines[sandboxprobe.LoopbackBound] || !lines["inbound"] || lines[sandboxprobe.LoopbackOutside] || !reached {
 			return workbenchCapability(CapabilitySandboxNotEnforced)
 		}
 	}
@@ -610,11 +611,11 @@ func judgeWorkbench(output string, write, loopback, reached bool) error {
 // macOS nc's zero-I/O scan (-z) does not support Unix sockets. A real connect
 // with bounded lifetime and EOF input exercises the installed socket client.
 func workbenchUnixConnect(socket string) string {
-	return "/usr/bin/nc -U -w 2 " + workbenchShellQuote(socket) + " </dev/null"
+	return "/usr/bin/nc -U -w 2 " + sandboxprobe.ShellQuote(socket) + " </dev/null"
 }
 
 func workbenchReadWitnesses(root, home string) string {
-	q := workbenchShellQuote
+	q := sandboxprobe.ShellQuote
 	s := "try real-home /bin/sh -c " + q("/bin/ls -A "+q(home)) + "\n"
 	for _, witness := range []struct{ label, path, command string }{
 		{"outside-data", filepath.Join(root, "private", "marker"), "cat"},
@@ -660,7 +661,7 @@ func workbenchNativeCanary(ctx context.Context, l workbenchLayout) (workbenchLay
 	if native.readsDirectory("/bin/echo") {
 		return l, "", executionProofError(ctx, ProofStepFixture, nil)
 	}
-	q := workbenchShellQuote
+	q := sandboxprobe.ShellQuote
 	s := "export LC_ALL=C\n/bin/sh -c 'echo native-positive'\n/bin/echo outside-native-started 2>" + q(filepath.Join(l.Tmp, "native-error")) + "\nstatus=$?\n[ \"$status\" = 126 ] && /usr/bin/grep -Eq 'Operation not permitted|Permission denied' " + q(filepath.Join(l.Tmp, "native-error")) + " && echo native-execution-refused\necho native-canary-ran\n"
 	return native, s, nil
 }

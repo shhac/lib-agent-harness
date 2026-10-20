@@ -136,10 +136,10 @@ func normalizeWorkbenchCommands(o Options, standalone bool) (Options, error) {
 	if resolved, e := filepath.EvalSymlinks(home); e == nil {
 		home = resolved
 	}
-	if home == "" || nested(o.WorkDir, home) {
+	if home == "" || Nested(o.WorkDir, home) {
 		return o, refusal("work_dir", RefusedWorkDir, "a command workspace must not contain the owner's home")
 	}
-	read, problem := readDirs(c.Read)
+	read, problem := sandboxbridge.ReadDirs(c.Read)
 	if problem != "" {
 		return o, refusal("commands", RefusedSandboxRead, problem)
 	}
@@ -162,12 +162,12 @@ func normalizeWorkbenchCommands(o Options, standalone bool) (Options, error) {
 			return o, refusal("commands", RefusedSandboxRead, "command read paths must be existing directories")
 		}
 		for _, alias := range workbenchDataAliases(home) {
-			if nested(dir, alias) {
+			if Nested(dir, alias) {
 				return o, refusal("commands", RefusedSandboxRead, "command read paths must not reopen the owner's home through a data-volume alias")
 			}
 		}
 		for _, alias := range workbenchDataAliases(runtimeHome) {
-			if nested(dir, alias) || nested(alias, dir) {
+			if Nested(dir, alias) || Nested(alias, dir) {
 				return o, refusal("runtime_home", RefusedRuntimeHome, "command read paths must not overlap the runtime home")
 			}
 		}
@@ -197,14 +197,14 @@ func normalizeWorkbenchCommands(o Options, standalone bool) (Options, error) {
 
 // Paths have already been resolved, including /var/run aliases.
 func linuxCommandSocketRead(dir string) bool {
-	return lexicallyWithin(dir, "/run") || lexicallyWithin("/run", dir) || lexicallyWithin(dir, "/tmp")
+	return Within(dir, "/run") || Within("/run", dir) || Within(dir, "/tmp")
 }
 
 func workbenchDataAliases(p string) []string {
 	aliases := []string{p}
 	const data = "/System/Volumes/Data"
 	other := filepath.Join(data, p)
-	if lexicallyWithin(data, p) {
+	if Within(data, p) {
 		other = strings.TrimPrefix(p, data)
 	}
 	a, err := os.Stat(p)
@@ -265,10 +265,3 @@ func workbenchEnvCredential(key string) bool {
 	}
 	return false
 }
-
-func readDirs(dirs []string) ([]string, string) {
-	return sandboxbridge.ReadDirs(dirs)
-}
-
-func nested(a, b string) bool          { return Nested(a, b) }
-func lexicallyWithin(a, b string) bool { return Within(a, b) }

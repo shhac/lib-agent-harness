@@ -95,8 +95,6 @@ func sandboxClaudeTools(write, web bool) []string {
 	return tools
 }
 
-func sandboxReadDirs(dirs []string) ([]string, string) { return sandboxbridge.ReadDirs(dirs) }
-
 // normalizeSandbox freezes the caller's sandbox and rejects every setting a
 // sandbox would otherwise have to silently override. o.Policy is the caller's,
 // before defaults are applied.
@@ -135,7 +133,7 @@ func normalizeSandbox(o Options) (Options, error) {
 	if !restrictedPlatform() {
 		return o, &CapabilityError{Engine: o.Provider.Engine, Code: CapabilitySandboxUnavailable, Phase: BeforeLaunch}
 	}
-	read, problem := sandboxReadDirs(o.Sandbox.Read)
+	read, problem := sandboxbridge.ReadDirs(o.Sandbox.Read)
 	if problem != "" {
 		return o, refuse(o, "sandbox", RefusedSandboxRead, problem)
 	}

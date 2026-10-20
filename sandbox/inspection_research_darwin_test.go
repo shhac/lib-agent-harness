@@ -12,6 +12,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/shhac/lib-agent-harness/internal/sandboxprobe"
 	"github.com/shhac/lib-agent-harness/internal/testenv"
 	"github.com/shhac/lib-agent-harness/process"
 	"golang.org/x/sys/unix"
@@ -107,7 +108,7 @@ echo target=$target label=$label
 status=$?; echo helper-status=$status; [ "$status" != 126 ] || echo research-exec-denied
 done
 /bin/ps -A -o pid,command; status=$?; echo listing-status=$status; [ "$status" != 126 ] || echo research-exec-denied
-`, outsidePID, peers[0], peers[1], outsidePID, peers[0], workbenchShellQuote(binary))
+`, outsidePID, peers[0], peers[1], outsidePID, peers[0], sandboxprobe.ShellQuote(binary))
 		cmd := exec.CommandContext(ctx, "/usr/bin/sandbox-exec", "-p", profile, "/bin/sh", "-c", script)
 		cmd.Dir = root
 		cmd.Env = workbenchProbeEnvironment(l)

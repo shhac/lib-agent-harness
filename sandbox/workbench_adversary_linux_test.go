@@ -14,6 +14,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/shhac/lib-agent-harness/internal/sandboxprobe"
 	"github.com/shhac/lib-agent-harness/process"
 	"golang.org/x/sys/unix"
 )
@@ -180,7 +181,7 @@ func TestWorkbenchLinuxAdversarialMounts(t *testing.T) {
 				args = filtered
 			}
 			// /tmp/x must exist before the raw mount; it is on the sandbox's tmpfs.
-			args = append(args, "--chdir", l.Work, "--", "/bin/sh", "-c", "mkdir /tmp/x; exec "+workbenchShellQuote(helper)+" -test.run=^TestWorkbenchLinuxRawSyscallHelper$")
+			args = append(args, "--chdir", l.Work, "--", "/bin/sh", "-c", "mkdir /tmp/x; exec "+sandboxprobe.ShellQuote(helper)+" -test.run=^TestWorkbenchLinuxRawSyscallHelper$")
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 			cmd, p, e := process.Command(ctx, binary, args...)

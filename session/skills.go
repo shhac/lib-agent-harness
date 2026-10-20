@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/sandboxbridge"
 	"github.com/shhac/lib-agent-harness/internal/skills"
 )
 
@@ -151,7 +152,7 @@ func normalizeSkills(o Options) (Options, error) {
 	}
 	o.SkillRun.Env = slices.Clone(o.SkillRun.Env)
 	if plan.delivery == instructionSkills && o.Sandbox != nil && o.Provider.Engine == harness.Claude {
-		if _, problem := sandboxReadDirs(skillRoots(loaded)); problem != "" {
+		if _, problem := sandboxbridge.ReadDirs(skillRoots(loaded)); problem != "" {
 			return o, refuse(o, "skills", RefusedSandboxRead, "a provided skill directory would reopen the home directory to the sandbox")
 		}
 	}

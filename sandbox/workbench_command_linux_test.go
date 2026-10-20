@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shhac/lib-agent-harness/internal/sandboxprobe"
 	"github.com/shhac/lib-agent-harness/internal/testenv"
 	"github.com/shhac/lib-agent-harness/process"
 )
@@ -81,7 +82,7 @@ func TestWorkbenchLinuxStructuralProof(t *testing.T) {
 	// Each failed or unreadable observation must fail the conjunction. The
 	// socket's own parent is absent inside, which already proves it out of
 	// reach, so its check is broken by naming a path the sandbox can see.
-	for _, replacement := range [][2]string{{"/proc/self/ns/net", "/proc/absent"}, {"/proc/net/dev", "/proc/absent"}, {linuxSocketAbsent(socket), linuxSocketAbsent("/etc/passwd")}, {workbenchShellQuote(namespace), "\"$n\""}} {
+	for _, replacement := range [][2]string{{"/proc/self/ns/net", "/proc/absent"}, {"/proc/net/dev", "/proc/absent"}, {linuxSocketAbsent(socket), linuxSocketAbsent("/etc/passwd")}, {sandboxprobe.ShellQuote(namespace), "\"$n\""}} {
 		broken := strings.Replace(script, replacement[0], replacement[1], 1)
 		output, e := runLinuxProbe(ctx, binary, l, "( "+broken+" ) && echo proved; exit 0", false)
 		if e != nil || strings.Contains(output, "proved") {
@@ -188,7 +189,7 @@ func TestWorkbenchLinuxCleanup(t *testing.T) {
 			defer cancel()
 			// Both the shell and descendants inherit the durable session token.
 			marker := "workbench-settle-" + process.NewToken()
-			command := "/bin/sh -c 'sleep 300 & wait' " + workbenchShellQuote(marker) + " & echo ready > ready; while [ ! -e release ]; do sleep .02; done"
+			command := "/bin/sh -c 'sleep 300 & wait' " + sandboxprobe.ShellQuote(marker) + " & echo ready > ready; while [ ! -e release ]; do sleep .02; done"
 			type outcome struct {
 				r ToolResult
 				e error

@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/shhac/lib-agent-harness/internal/sandboxprobe"
 	"github.com/shhac/lib-agent-harness/process"
 )
 
@@ -83,17 +84,17 @@ func proveWorkbenchDiagnosed(ctx context.Context, o Options, diagnose func(strin
 
 func linuxShape(path string) string {
 	cover := "/"
-	if lexicallyWithin("/tmp", path) {
+	if Within("/tmp", path) {
 		cover = "/tmp"
 	}
-	if lexicallyWithin("/run", path) {
+	if Within("/run", path) {
 		cover = "/run"
 	}
 	home, _ := os.UserHomeDir()
 	if resolved, e := filepath.EvalSymlinks(home); e == nil {
 		home = resolved
 	}
-	return fmt.Sprintf("%s:%t:%d", cover, lexicallyWithin(home, path), strings.Count(filepath.Clean(path), "/"))
+	return fmt.Sprintf("%s:%t:%d", cover, Within(home, path), strings.Count(filepath.Clean(path), "/"))
 }
 
 func workbenchLinuxProbeKey(o Options, binary, version string, w workbenchLinuxWitness) (string, error) {
@@ -167,11 +168,11 @@ func linuxProbePath(actual string) (path, root string, err error) {
 	if resolved, e := filepath.EvalSymlinks(home); e == nil {
 		home = resolved
 	}
-	if lexicallyWithin(home, actual) {
+	if Within(home, actual) {
 		base = home
-	} else if lexicallyWithin("/tmp", actual) {
+	} else if Within("/tmp", actual) {
 		base = "/tmp"
-	} else if lexicallyWithin("/run", actual) {
+	} else if Within("/run", actual) {
 		base = "/run"
 	}
 	root, err = os.MkdirTemp(base, "wb-proof-")
@@ -245,7 +246,7 @@ func linuxConnect(ctx context.Context, command string) bool {
 	return p.Run() == nil
 }
 func linuxTCP(host string, port int) string {
-	return "/usr/bin/bash -c " + workbenchShellQuote("exec 3<>/dev/tcp/"+host+"/"+strconv.Itoa(port))
+	return "/usr/bin/bash -c " + sandboxprobe.ShellQuote("exec 3<>/dev/tcp/"+host+"/"+strconv.Itoa(port))
 }
 
 func linuxSocketWitness(ctx context.Context, command string, observed <-chan struct{}) (string, error) {
@@ -298,7 +299,7 @@ func probeWorkbenchLinuxDiagnosed(ctx context.Context, o Options, binary, versio
 		}
 		path := ""
 		for _, ancestor := range targets {
-			if existing, ok := mapped[ancestor]; ok && lexicallyWithin(ancestor, actual) {
+			if existing, ok := mapped[ancestor]; ok && Within(ancestor, actual) {
 				suffix, e := filepath.Rel(ancestor, actual)
 				if e != nil {
 					return result, unavailable
@@ -350,7 +351,7 @@ func probeWorkbenchLinuxDiagnosed(ctx context.Context, o Options, binary, versio
 	}
 	hiddenBase := "/tmp"
 	for _, actual := range o.Read {
-		if lexicallyWithin(actual, "/tmp") {
+		if Within(actual, "/tmp") {
 			hiddenBase = mapped[actual]
 			break
 		}
@@ -416,7 +417,7 @@ func probeWorkbenchLinuxDiagnosed(ctx context.Context, o Options, binary, versio
 	}
 	startSocket(unixListener, acceptDone)
 	w := workbenchLinuxWitness{Network: "structural", Localhost: "structural", Socket: "structural"}
-	socketCommand := "/usr/bin/nc -U -w 2 " + workbenchShellQuote(socket) + " </dev/null"
+	socketCommand := "/usr/bin/nc -U -w 2 " + sandboxprobe.ShellQuote(socket) + " </dev/null"
 	w.Socket, e = linuxSocketWitness(ctx, socketCommand, socketReached)
 	if e != nil {
 		return result, e
@@ -432,7 +433,7 @@ func probeWorkbenchLinuxDiagnosed(ctx context.Context, o Options, binary, versio
 	startSocket(unixListener, acceptDone)
 	network, local := "", ""
 	if _, e := os.Stat("/usr/bin/bash"); e == nil {
-		witness, ok := offMachineWitness(ctx)
+		witness, ok := sandboxprobe.OffMachineWitness(ctx)
 		if !ok {
 			return result, unavailable
 		}
@@ -464,7 +465,7 @@ func probeWorkbenchLinuxDiagnosed(ctx context.Context, o Options, binary, versio
 	script := linuxWorkbenchCanary(l, hidden, read, socket, namespace, w, network, local, runtimeMarker)
 	// Workspace parents are private tmpfs directories. A write there may
 	// succeed inside; only a corresponding host file would escape confinement.
-	script += "try sibling-tmpfs /bin/sh -c " + workbenchShellQuote("echo x > "+workbenchShellQuote(sibling)) + "\n"
+	script += "try sibling-tmpfs /bin/sh -c " + sandboxprobe.ShellQuote("echo x > "+sandboxprobe.ShellQuote(sibling)) + "\n"
 	if o.Background {
 		script += "[ \"$(ps -o ni= -p $$ | tr -d ' ')\" = 10 ] && echo background\n"
 	}

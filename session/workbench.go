@@ -133,7 +133,7 @@ func normalizeWorkbench(o Options) (Options, error) {
 	if err != nil {
 		return o, refuse(o, "runtime_home", RefusedRuntimeHome, "the runtime home could not be resolved")
 	}
-	if nested(work, home) || nested(home, work) {
+	if sandbox.Nested(work, home) || sandbox.Nested(home, work) {
 		return o, refuse(o, "work_dir", RefusedWorkDir, "the workspace and the runtime home must not contain one another")
 	}
 	for _, tool := range o.Restriction.Tools.Tools {
@@ -152,9 +152,6 @@ func normalizeWorkbench(o Options) (Options, error) {
 	o.WorkDir = work
 	return normalizeWorkbenchCommands(o)
 }
-
-func nested(outer, inner string) bool          { return sandbox.Nested(outer, inner) }
-func lexicallyWithin(outer, inner string) bool { return sandbox.Within(outer, inner) }
 
 // workbenchDigest is what a resume must match: the workspace and the
 // workbench's powers. Env and Timeout change no power, so they stay out. The

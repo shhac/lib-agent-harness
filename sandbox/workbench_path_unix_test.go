@@ -18,6 +18,7 @@ import (
 	"time"
 
 	harness "github.com/shhac/lib-agent-harness"
+	"github.com/shhac/lib-agent-harness/internal/sandboxprobe"
 	"github.com/shhac/lib-agent-harness/internal/skills"
 	"github.com/shhac/lib-agent-harness/internal/testenv"
 	"github.com/shhac/lib-agent-harness/process"
@@ -258,7 +259,7 @@ func TestWorkbenchPathEnvironmentAndFallback(t *testing.T) {
 			continue
 		}
 		entries, err := os.ReadDir(path)
-		if err != nil || len(entries) != 0 || !lexicallyWithin(root, path) {
+		if err != nil || len(entries) != 0 || !Within(root, path) {
 			t.Fatal(path, err)
 		}
 		if err := os.WriteFile(filepath.Join(root, "cwd-tool"), []byte("#!/bin/sh\necho unsafe\n"), 0700); err != nil {
@@ -528,7 +529,7 @@ func TestCommandSandboxReadablePathRunAndStart(t *testing.T) {
 	t.Log("public Open succeeded after platform proof")
 	for _, start := range []bool{false, true} {
 		var result CommandResult
-		request := CommandRequest{Command: workbenchShellQuote(script) + "; exit 7"}
+		request := CommandRequest{Command: sandboxprobe.ShellQuote(script) + "; exit 7"}
 		if start {
 			started, err := s.Start(context.Background(), request)
 			if err != nil {
@@ -558,7 +559,7 @@ func TestCommandSandboxReadablePathRunAndStart(t *testing.T) {
 		}
 		t.Logf("shared command start=%v result=%+v", start, result)
 	}
-	result, err := s.Run(context.Background(), CommandRequest{Command: workbenchShellQuote(filepath.Join(hidden, "node"))})
+	result, err := s.Run(context.Background(), CommandRequest{Command: sandboxprobe.ShellQuote(filepath.Join(hidden, "node"))})
 	if err != nil || result.ExitCode == 0 || strings.Contains(result.Stdout, "unsafe") {
 		t.Fatal(result, err)
 	}
@@ -568,7 +569,7 @@ func TestCommandSandboxReadablePathRunAndStart(t *testing.T) {
 	t.Setenv("PATH", hidden+":"+read+":/usr/bin:/bin:"+os.Getenv("PATH"))
 	opts.Env = nil
 	inherited := openTestCommandSandbox(t, opts)
-	result, err = inherited.Run(context.Background(), CommandRequest{Command: workbenchShellQuote(script)})
+	result, err = inherited.Run(context.Background(), CommandRequest{Command: sandboxprobe.ShellQuote(script)})
 	if err != nil || result.Stdout != "readable\n" || strings.Count(result.Stderr, "[harness PATH:") != 1 {
 		t.Fatal(result, err)
 	}

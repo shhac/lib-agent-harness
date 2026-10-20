@@ -135,7 +135,7 @@ func (w *workbenchHost) runCommand(ctx context.Context, raw json.RawMessage) (To
 		}
 		timeout = time.Duration(*in.Seconds) * time.Second
 	}
-	rel, code := resolveName(in.Dir, true)
+	rel, code := sandbox.ResolveName(in.Dir, true)
 	if code != "" {
 		return fail(code)
 	}

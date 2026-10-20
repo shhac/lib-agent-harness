@@ -1,13 +1,11 @@
 package session
 
 import (
-	"io/fs"
 	"os"
 
 	"github.com/shhac/lib-agent-harness/internal/sandboxbridge"
 )
 
-func privateStateDir(info fs.FileInfo) bool { return sandboxbridge.PrivateStateDir(info) }
 func lockSession(dir string) (*os.File, error) {
 	f, err := sandboxbridge.LockState(dir)
 	return f, fromSandbox(err, Options{})

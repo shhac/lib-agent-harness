@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/shhac/lib-agent-harness/internal/sandboxprobe"
 )
 
 func TestProcessInspectionCanaryReal(t *testing.T) {
@@ -239,7 +241,7 @@ func TestProcessInspectionSeparateCommandsReal(t *testing.T) {
 			t.Logf("control=%s transcript:\n%s", inspectionControl(result.Stdout), inspectionDiagnostic(result.Stdout, marker))
 			t.Fatal(err)
 		}
-		result, err = s.Run(ctx, CommandRequest{Command: fmt.Sprintf("INSPECTION_TARGET=%d INSPECTION_HOST_NS=%s ./inspection-helper -test.run=^TestProcessInspectionProcHelper$", pid, workbenchShellQuote(ns))})
+		result, err = s.Run(ctx, CommandRequest{Command: fmt.Sprintf("INSPECTION_TARGET=%d INSPECTION_HOST_NS=%s ./inspection-helper -test.run=^TestProcessInspectionProcHelper$", pid, sandboxprobe.ShellQuote(ns))})
 		if err != nil || result.ExitCode != 0 || !strings.Contains(result.Stdout, "proc-interfaces-proved") {
 			t.Fatalf("%+v %v", result, err)
 		}

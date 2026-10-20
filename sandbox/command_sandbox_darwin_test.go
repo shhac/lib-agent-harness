@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shhac/lib-agent-harness/internal/sandboxprobe"
 	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
@@ -28,7 +29,7 @@ func TestCommandSandboxInboundEvidence(t *testing.T) {
 func TestCommandSandboxStartedServerWithoutLoopback(t *testing.T) {
 	testenv.RequireLoopback(t) // Provider fixtures and canaries need a real loopback bind.
 	s := openTestCommandSandbox(t, commandSandboxOptions(t, false))
-	port, err := freeLoopbackPort()
+	port, err := sandboxprobe.FreeLoopbackPort()
 	if err != nil {
 		t.Fatal(err)
 	}

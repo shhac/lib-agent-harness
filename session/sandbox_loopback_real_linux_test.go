@@ -64,17 +64,17 @@ func TestClaudeLoopbackInterfaceRealProofLinux(t *testing.T) {
 	}
 	l := &launch{extra: sandboxArgs(o)}
 	ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
-	witness, ok := offMachineWitness(ctx)
+	witness, ok := sandboxprobe.OffMachineWitness(ctx)
 	cancel()
 	if !ok {
 		t.Fatal("off-machine witness unavailable; no scope claim possible")
 	}
-	listener, wait, reached, err := countingListener("127.0.0.1:0")
+	listener, wait, reached, err := sandboxprobe.CountingListener("127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { listener.Close(); wait.Wait() }()
-	port, err := freeLoopbackPort()
+	port, err := sandboxprobe.FreeLoopbackPort()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestClaudeLoopbackInterfaceRealProofLinux(t *testing.T) {
 		}
 		return output, received, err
 	}
-	output, received, err := run(loopbackCanary(listener.Addr().(*net.TCPAddr).Port, witness, 443, port))
+	output, received, err := run(sandboxprobe.LoopbackCanary(listener.Addr().(*net.TCPAddr).Port, witness, 443, port))
 	if err != nil {
 		if e, ok := err.(*CapabilityError); !ok || e.Code != CapabilityProbeTimeout {
 			t.Fatal("host-local base setup failed: ", err)

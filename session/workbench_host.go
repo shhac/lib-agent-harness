@@ -70,7 +70,6 @@ func (w *workbenchHost) stuckError() error {
 	return nil
 }
 
-func resolveName(name string, dir bool) (string, string) { return sandbox.ResolveName(name, dir) }
 func workbenchError(tool, code, rel string) ToolResult {
 	r := sandbox.ToolError(tool, code, rel)
 	return ToolResult{Content: r.Content, IsError: r.IsError}

@@ -28,37 +28,24 @@ import (
 
 const loopbackCanaryID = "toolu_harness_loopback_canary"
 
-const loopbackReached = sandboxprobe.LoopbackReached
-const loopbackBound = sandboxprobe.LoopbackBound
-const loopbackOutside = sandboxprobe.LoopbackOutside
-
-func loopbackCanary(a int, b string, c, d int) string { return sandboxprobe.LoopbackCanary(a, b, c, d) }
-func offMachineWitness(ctx context.Context) (string, bool) {
-	return sandboxprobe.OffMachineWitness(ctx)
-}
-func countingListener(a string) (net.Listener, *sync.WaitGroup, func() bool, error) {
-	return sandboxprobe.CountingListener(a)
-}
-func freeLoopbackPort() (int, error) { return sandboxprobe.FreeLoopbackPort() }
-
 // probeClaudeLoopback runs the canary through the session's own arguments in
 // a disposable home with a dummy credential.
 func probeClaudeLoopback(ctx context.Context, o Options, l *launch) (loopbackEvidence, error) {
 	unavailable := &CapabilityError{Engine: harness.Claude, Code: CapabilitySandboxUnavailable, Phase: BeforeLaunch}
-	witness, ok := offMachineWitness(ctx)
+	witness, ok := sandboxprobe.OffMachineWitness(ctx)
 	if !ok {
 		return loopbackEvidence{}, unavailable
 	}
-	loop, loopWait, loopReached, err := countingListener("127.0.0.1:0")
+	loop, loopWait, loopReached, err := sandboxprobe.CountingListener("127.0.0.1:0")
 	if err != nil {
 		return loopbackEvidence{}, unavailable
 	}
 	defer func() { loop.Close(); loopWait.Wait() }()
-	bindPort, err := freeLoopbackPort()
+	bindPort, err := sandboxprobe.FreeLoopbackPort()
 	if err != nil {
 		return loopbackEvidence{}, unavailable
 	}
-	canary := loopbackCanary(loop.Addr().(*net.TCPAddr).Port, witness, 443, bindPort)
+	canary := sandboxprobe.LoopbackCanary(loop.Addr().(*net.TCPAddr).Port, witness, 443, bindPort)
 
 	output, err := runClaudeLoopbackCanary(ctx, o, l, canary)
 	if err != nil {
@@ -177,10 +164,10 @@ func judgeClaudeLoopback(output string, loopReached bool, attempts []sandboxprob
 	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
 		lines[strings.TrimSpace(line)] = true
 	}
-	if lines[loopbackOutside] {
+	if lines[sandboxprobe.LoopbackOutside] {
 		return loopbackEvidence{}, &CapabilityError{Engine: harness.Claude, Code: CapabilitySandboxNotEnforced, Phase: BeforeLaunch}
 	}
-	if !lines[canaryRan] || lines[canaryNoClient] || !lines[loopbackReached] || !lines[loopbackBound] || !loopReached {
+	if !lines[canaryRan] || lines[canaryNoClient] || !lines[sandboxprobe.LoopbackReached] || !lines[sandboxprobe.LoopbackBound] || !loopReached {
 		return loopbackEvidence{}, &CapabilityError{Engine: harness.Claude, Code: CapabilitySandboxUnavailable, Phase: BeforeLaunch}
 	}
 	evidence := loopbackEvidence{}

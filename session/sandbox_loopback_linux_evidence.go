@@ -105,16 +105,16 @@ func judgeClaudeLinuxScope(ctx context.Context, output string, reached bool) (st
 	fail := func(code string) (string, error) {
 		return "", &CapabilityError{Engine: harness.Claude, Code: code, Phase: BeforeLaunch}
 	}
-	if lines[loopbackOutside] {
+	if lines[sandboxprobe.LoopbackOutside] {
 		return fail(CapabilitySandboxNotEnforced)
 	}
 	if ctx.Err() != nil {
 		return fail(CapabilityProbeTimeout)
 	}
-	if !lines[canaryRan] || lines[canaryNoClient] || lines[loopbackReached] != reached {
+	if !lines[canaryRan] || lines[canaryNoClient] || lines[sandboxprobe.LoopbackReached] != reached {
 		return fail(CapabilitySandboxUnavailable)
 	}
-	if !lines[loopbackBound] {
+	if !lines[sandboxprobe.LoopbackBound] {
 		return "", &CapabilityError{Engine: harness.Claude, Code: CapabilitySandboxUnavailable, Phase: BeforeLaunch, Reason: claudeLinuxInCommandLoopbackReason}
 	}
 	if reached {
@@ -128,7 +128,7 @@ func judgeClaudeLinuxInterfaces(output string, attempts []sandboxprobe.Interface
 		return nil, "unavailable", &CapabilityError{Engine: harness.Claude, Code: code, Phase: BeforeLaunch}
 	}
 	for _, line := range strings.Split(output, "\n") {
-		if strings.TrimSpace(line) == loopbackOutside {
+		if strings.TrimSpace(line) == sandboxprobe.LoopbackOutside {
 			rows, _ := sandboxprobe.JudgeInterfaceAttempts(output, attempts, sandboxprobe.InterfaceAllLocal)
 			return rows, "unavailable", &CapabilityError{Engine: harness.Claude, Code: CapabilitySandboxNotEnforced, Phase: BeforeLaunch}
 		}
@@ -183,7 +183,7 @@ func judgeClaudeLinuxOwnerProof(productionErr, baseErr error, scope, recordedSco
 		}
 	}
 	for _, line := range strings.Split(ncOutput, "\n") {
-		if strings.TrimSpace(line) == loopbackOutside {
+		if strings.TrimSpace(line) == sandboxprobe.LoopbackOutside {
 			return &CapabilityError{Engine: harness.Claude, Code: CapabilitySandboxNotEnforced, Phase: BeforeLaunch}
 		}
 	}

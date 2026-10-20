@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shhac/lib-agent-harness/internal/sandboxprobe"
 	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
@@ -37,7 +38,7 @@ func TestBwrapInterruptedPrerequisiteTrials(t *testing.T) {
 			l := linuxTestLayout(t)
 			path := t.TempDir()
 			marker := filepath.Join(path, "ready")
-			block := "echo ready > " + workbenchShellQuote(marker) + "\nexec /bin/sleep 30\n"
+			block := "echo ready > " + sandboxprobe.ShellQuote(marker) + "\nexec /bin/sleep 30\n"
 			script := "#!/bin/sh\nif [ \"$1\" = --version ]; then\n"
 			if stage == "version" {
 				script += block

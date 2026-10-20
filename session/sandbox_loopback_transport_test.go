@@ -105,7 +105,7 @@ func TestClaudeLinuxCandidateTransportAndSettlement(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := &launch{extra: sandboxArgs(o)}
-	output, received, err := runClaudeLoopbackCanaryObserved(ctx, o, l, loopbackCanary(1, "192.0.2.1", 443, 2))
+	output, received, err := runClaudeLoopbackCanaryObserved(ctx, o, l, sandboxprobe.LoopbackCanary(1, "192.0.2.1", 443, 2))
 	if err != nil || !received {
 		t.Fatalf("tool-result=%t err=%v", received, err)
 	}

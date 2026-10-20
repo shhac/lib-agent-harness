@@ -5,6 +5,8 @@ package sandbox
 import (
 	"path/filepath"
 	"strings"
+
+	"github.com/shhac/lib-agent-harness/internal/sandboxprobe"
 )
 
 type workbenchLinuxWitness struct{ Network, Localhost, Socket string }
@@ -37,7 +39,7 @@ func workbenchCanaryEscaped(lines map[string]bool, extra ...string) bool {
 }
 
 func linuxStructuralWitness(namespace, socket string) string {
-	q := workbenchShellQuote
+	q := sandboxprobe.ShellQuote
 	// Every unreadable or failed component is a failure, never partial proof.
 	return "n=$(readlink /proc/self/ns/net) && [ -n \"$n\" ] && [ \"$n\" != " + q(namespace) + " ] && awk 'BEGIN { n=0; bad=0 } NR>2 { if ($1 != \"lo:\") bad=1; n++ } END { exit (bad || n != 1 || NR < 3) }' /proc/net/dev && ( " + linuxSocketAbsent(socket) + " )"
 }
@@ -45,7 +47,7 @@ func linuxStructuralWitness(namespace, socket string) string {
 // test -e alone confuses ENOENT with EACCES. Inspect the path top-down:
 // absence counts only after a readable, searchable parent has been proved.
 func linuxSocketAbsent(socket string) string {
-	q := workbenchShellQuote
+	q := sandboxprobe.ShellQuote
 	check := "[ ! -e " + q(socket) + " ] && [ ! -L " + q(socket) + " ]"
 	for p := filepath.Dir(socket); p != "/"; p = filepath.Dir(p) {
 		name := q(p)
@@ -55,7 +57,7 @@ func linuxSocketAbsent(socket string) string {
 }
 
 func linuxWorkbenchCanary(l workbenchLayout, hidden, read, socket, namespace string, w workbenchLinuxWitness, network, local string, runtimeMarker ...string) string {
-	q := workbenchShellQuote
+	q := sandboxprobe.ShellQuote
 	s := "try() { name=$1; shift; if ( \"$@\" ) >/dev/null 2>&1; then echo \"$name\"; fi; }\n"
 	try := func(label, cmd string) { s += "try " + label + " /bin/sh -c " + q(cmd) + "\n" }
 	try("inside", "echo x > inside")
@@ -140,7 +142,7 @@ func judgeLinuxWorkbench(output string, write, reached, background bool, loopbac
 			return workbenchCapability(CapabilitySandboxUnavailable)
 		}
 	}
-	if last != canaryRan || !lines[canaryRan] {
+	if last != sandboxprobe.CanaryRan || !lines[sandboxprobe.CanaryRan] {
 		return workbenchCapability(CapabilitySandboxUnavailable)
 	}
 	return nil

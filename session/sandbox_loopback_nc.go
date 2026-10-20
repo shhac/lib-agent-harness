@@ -238,7 +238,7 @@ func judgeNCInterfaces(output string, witnesses []*ncInterfaceWitness) ([]string
 		return nil, &CapabilityError{Engine: harness.Claude, Code: code, Phase: BeforeLaunch}
 	}
 	for _, line := range strings.Split(output, "\n") {
-		if strings.TrimSpace(line) == loopbackOutside {
+		if strings.TrimSpace(line) == sandboxprobe.LoopbackOutside {
 			return failure(CapabilitySandboxNotEnforced)
 		}
 	}
@@ -246,7 +246,7 @@ func judgeNCInterfaces(output string, witnesses []*ncInterfaceWitness) ([]string
 	ran := false
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
-		if line == loopbackOutside {
+		if line == sandboxprobe.LoopbackOutside {
 			return failure(CapabilitySandboxNotEnforced)
 		}
 		if line == "nc-interface-ran" {

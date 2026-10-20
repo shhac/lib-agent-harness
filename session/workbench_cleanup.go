@@ -3,6 +3,8 @@ package session
 import (
 	"context"
 	"encoding/json"
+
+	"github.com/shhac/lib-agent-harness/sandbox"
 )
 
 // Cleanup is limited to directories of calls recorded without a definite
@@ -27,7 +29,7 @@ func (w *workbenchHost) cleanupWrites(records []record) error {
 			if json.Unmarshal([]byte(call.Function.Arguments), &in) != nil {
 				continue
 			}
-			rel, code := resolveName(in.Path, false)
+			rel, code := sandbox.ResolveName(in.Path, false)
 			if code != "" {
 				continue
 			}

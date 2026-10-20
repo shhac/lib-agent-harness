@@ -149,11 +149,9 @@ func load(skill harness.Skill) (Skill, error) {
 		return Skill{}, fail(CodeNameMismatch)
 	}
 	description := strings.Join(strings.Fields(fields["description"]), " ")
-	if description == "" || utf8.RuneCountInString(description) > MaxDescription || strings.IndexFunc(description, control) >= 0 {
+	if description == "" || utf8.RuneCountInString(description) > MaxDescription || strings.IndexFunc(description, wsfile.Control) >= 0 {
 		return Skill{}, fail(CodeDescriptionInvalid)
 	}
 	s.Description = description
 	return s, nil
 }
-
-func control(r rune) bool { return wsfile.Control(r) }

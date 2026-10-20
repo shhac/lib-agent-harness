@@ -173,7 +173,7 @@ func TestSelectedPortCanaryStillEscapes(t *testing.T) {
 	defer cancel()
 	o := commandSandboxOptions(t, false)
 	o.Loopback = true
-	port, err := freeLoopbackPort()
+	port, err := sandboxprobe.FreeLoopbackPort()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestSelectedPortCanaryStillEscapes(t *testing.T) {
 		selectedPortPrerequisite(t, "off-machine DNS control", fmt.Errorf("%s", reason))
 	}
 	o.LoopbackControl = control.Addr
-	if _, ok := offMachineWitness(ctx); !ok {
+	if _, ok := sandboxprobe.OffMachineWitness(ctx); !ok {
 		selectedPortPrerequisite(t, "off-machine witness", errors.New("unavailable"))
 	}
 	evidence, err := proveSelectedPorts(ctx, o, system)

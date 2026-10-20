@@ -36,6 +36,7 @@ import (
 	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/catalog"
 	"github.com/shhac/lib-agent-harness/completion"
+	"github.com/shhac/lib-agent-harness/internal/sandboxbridge"
 	"github.com/shhac/lib-agent-harness/internal/skills"
 	"github.com/shhac/lib-agent-harness/sandbox"
 )
@@ -276,7 +277,7 @@ func normalizeRuntimeHome(o Options) (Options, error) {
 	if err != nil || !info.IsDir() {
 		return o, refuse(o, "runtime_home", RefusedRuntimeHome, "the runtime home must be an existing directory")
 	}
-	if !privateStateDir(info) {
+	if !sandboxbridge.PrivateStateDir(info) {
 		return o, refuse(o, "runtime_home", RefusedRuntimeHome, "the runtime home must be readable only by its owner")
 	}
 	o.RuntimeHome = home

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/shhac/lib-agent-harness/internal/sandboxprobe"
 )
 
 // Darwin fingerprints sandbox-exec in the proof cache, not in runner creation.
@@ -57,7 +59,7 @@ func TestWorkbenchExecutionFixtureRunsAtDisposablePaths(t *testing.T) {
 	}
 	t.Log("outside script/native controls succeeded")
 	good := filepath.Join(l.Read[0], "toolchain")
-	cmd := exec.CommandContext(ctx, filepath.Join(good, "shell"), "-c", "echo readable-exec; "+workbenchShellQuote(filepath.Join(l.Tmp, "env-node")))
+	cmd := exec.CommandContext(ctx, filepath.Join(good, "shell"), "-c", "echo readable-exec; "+sandboxprobe.ShellQuote(filepath.Join(l.Tmp, "env-node")))
 	cmd.Env = append(workbenchProbeEnvironment(l), "PATH="+good+":/usr/bin:/bin")
 	output, err := cmd.CombinedOutput()
 	if err != nil || string(output) != "readable-exec\nreadable-node\n" {
@@ -113,7 +115,7 @@ func TestWorkbenchExecutionCanaryReal(t *testing.T) {
 	if err := os.Symlink(filepath.Join(root, "hidden", "nvm", "bin"), alias); err != nil {
 		t.Fatal(err)
 	}
-	switched := strings.ReplaceAll(script, workbenchShellQuote(filepath.Join(root, "hidden", "nvm", "bin", "node")), workbenchShellQuote(filepath.Join(retained, "node")))
+	switched := strings.ReplaceAll(script, sandboxprobe.ShellQuote(filepath.Join(root, "hidden", "nvm", "bin", "node")), sandboxprobe.ShellQuote(filepath.Join(retained, "node")))
 	output, err = runWorkbenchProbe(ctx, l, switched, false, workbenchInboundProbe{})
 	if err != nil {
 		t.Fatal(err)
@@ -157,7 +159,7 @@ func TestWorkbenchExecutionCanaryReal(t *testing.T) {
 	if err := os.Symlink("/bin", nativeAlias); err != nil {
 		t.Fatal(err)
 	}
-	switchedNative := strings.Replace(nativeScript, "/bin/echo outside-native-started", workbenchShellQuote(filepath.Join(nativeAlias, "echo"))+" outside-native-started", 1)
+	switchedNative := strings.Replace(nativeScript, "/bin/echo outside-native-started", sandboxprobe.ShellQuote(filepath.Join(nativeAlias, "echo"))+" outside-native-started", 1)
 	output, err = runWorkbenchProbe(ctx, nativeLayout, switchedNative, false, workbenchInboundProbe{})
 	if err != nil {
 		t.Fatal(err)

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shhac/lib-agent-harness/internal/sandboxprobe"
 	"github.com/shhac/lib-agent-harness/process"
 )
 
@@ -191,5 +192,5 @@ done
 /usr/bin/ps -ww -o pid=,args= -p "$outside" 2>/dev/null
 /usr/bin/ps eww -p "$outside" 2>/dev/null
 printf '\ninspection-ran\n'
-`, workbenchShellQuote(outsideNS), inspectionStatusCheck("/proc/$$/status", "\"$$\"", true), outside, inspectionStatusCheck("/proc/$outside/status", "\"$outside\"", false), inspectionStatusCheck("\"$entry/status\"", "\"${entry##*/}\"", false))
+`, sandboxprobe.ShellQuote(outsideNS), inspectionStatusCheck("/proc/$$/status", "\"$$\"", true), outside, inspectionStatusCheck("/proc/$outside/status", "\"$outside\"", false), inspectionStatusCheck("\"$entry/status\"", "\"${entry##*/}\"", false))
 }

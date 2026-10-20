@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/shhac/lib-agent-harness/internal/sandboxprobe"
 )
 
 func TestGeneratedLinuxPrivilegeExpression(t *testing.T) {
@@ -45,7 +47,7 @@ func TestGeneratedLinuxPrivilegeExpression(t *testing.T) {
 			if err := os.WriteFile(file, []byte(contents), 0600); err != nil {
 				t.Fatal(err)
 			}
-			command := strings.ReplaceAll(expression, "/proc/self/status", workbenchShellQuote(file))
+			command := strings.ReplaceAll(expression, "/proc/self/status", sandboxprobe.ShellQuote(file))
 			out, err := exec.Command("/bin/sh", "-c", command).CombinedOutput()
 			want := "privilege"
 			if name == "confined" {
@@ -59,7 +61,7 @@ func TestGeneratedLinuxPrivilegeExpression(t *testing.T) {
 	t.Run("unreadable", func(t *testing.T) {
 		// A missing file cannot be read even by root, unlike chmod(000).
 		missing := filepath.Join(t.TempDir(), "absent-status")
-		command := strings.ReplaceAll(expression, "/proc/self/status", workbenchShellQuote(missing))
+		command := strings.ReplaceAll(expression, "/proc/self/status", sandboxprobe.ShellQuote(missing))
 		out, err := exec.Command("/bin/sh", "-c", command).Output()
 		if err != nil || strings.TrimSpace(string(out)) != "privilege" {
 			t.Fatalf("unreadable expression: %q %v", out, err)

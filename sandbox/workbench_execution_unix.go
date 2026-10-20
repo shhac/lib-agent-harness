@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shhac/lib-agent-harness/internal/sandboxprobe"
 	"github.com/shhac/lib-agent-harness/process"
 )
 
@@ -46,7 +47,7 @@ func workbenchExecutionCanary(ctx context.Context, l workbenchLayout, hidden str
 	}
 	// Prove that the script fixture and runtime work outside the boundary first.
 	step = ProofStepOutside
-	cmd, child, err := process.Command(ctx, filepath.Join(bad, "node"), "-c", "cat "+workbenchShellQuote(runtimeFile)+" >/dev/null && echo outside-control-ok")
+	cmd, child, err := process.Command(ctx, filepath.Join(bad, "node"), "-c", "cat "+sandboxprobe.ShellQuote(runtimeFile)+" >/dev/null && echo outside-control-ok")
 	if err != nil {
 		return "", err
 	}
@@ -64,14 +65,14 @@ func workbenchExecutionCanary(ctx context.Context, l workbenchLayout, hidden str
 		return "", err
 	}
 	script := filepath.Join(l.Tmp, "env-node")
-	if err := os.WriteFile(script, []byte("#!/usr/bin/env node\necho outside-env-started\ncat "+workbenchShellQuote(runtimeFile)+"\n"), 0700); err != nil {
+	if err := os.WriteFile(script, []byte("#!/usr/bin/env node\necho outside-env-started\ncat "+sandboxprobe.ShellQuote(runtimeFile)+"\n"), 0700); err != nil {
 		return "", err
 	}
 	path, drops := filterWorkbenchPath(l, bad+":"+good+":/usr/bin:/bin")
 	if len(drops) != 1 || drops[0].reason != "outside-read-set" {
 		return "", stateError(StateUnusable)
 	}
-	q := workbenchShellQuote
+	q := sandboxprobe.ShellQuote
 	s := "export LC_ALL=C\nexport PATH=" + q(path) + "\n"
 	s += q(filepath.Join(good, "shell")) + " -c 'echo readable-exec'\n"
 	s += q(script) + "\n"

@@ -9,10 +9,10 @@ func workbenchSystemDirs() []string {
 }
 
 func workbenchSystemContains(system, dir string) bool {
-	if system == "/System" && lexicallyWithin("/System/Volumes/Data", dir) {
+	if system == "/System" && Within("/System/Volumes/Data", dir) {
 		return false
 	}
-	if lexicallyWithin(system, dir) {
+	if Within(system, dir) {
 		return true
 	}
 	// APFS firmlinks need not be resolved by EvalSymlinks. Identity-based
@@ -20,5 +20,5 @@ func workbenchSystemContains(system, dir string) bool {
 	if _, err := os.Stat(system); err != nil {
 		return false
 	}
-	return nested(system, dir)
+	return Nested(system, dir)
 }

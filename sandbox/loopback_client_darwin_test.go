@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shhac/lib-agent-harness/internal/sandboxprobe"
 	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
@@ -21,13 +22,13 @@ func TestSelectedPortSocketClientControls(t *testing.T) {
 	testenv.RequireLoopback(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	listener, wg, reached, err := countingListener("127.0.0.1:0")
+	listener, wg, reached, err := sandboxprobe.CountingListener("127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { listener.Close(); wg.Wait() }()
 	port := listener.Addr().(*net.TCPAddr).Port
-	free, err := freeLoopbackPort()
+	free, err := sandboxprobe.FreeLoopbackPort()
 	if err != nil {
 		t.Fatal(err)
 	}

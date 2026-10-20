@@ -16,6 +16,7 @@ import (
 
 	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/completion"
+	"github.com/shhac/lib-agent-harness/internal/sandboxbridge"
 )
 
 // Record types, in the order a turn writes them.
@@ -127,7 +128,7 @@ func createTranscript(home string, ref Ref) (*transcript, []record, error) {
 	if err := os.Mkdir(sessions, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
 		return nil, nil, stateError(StateUnusable)
 	}
-	if info, err := os.Lstat(sessions); err != nil || !info.IsDir() || !privateStateDir(info) {
+	if info, err := os.Lstat(sessions); err != nil || !info.IsDir() || !sandboxbridge.PrivateStateDir(info) {
 		return nil, nil, stateError(StateUnusable)
 	}
 	dir := sessionDir(home, ref.ID)

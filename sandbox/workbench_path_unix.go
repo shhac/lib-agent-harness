@@ -75,7 +75,7 @@ func (l workbenchLayout) readsDirectory(path string) bool {
 	paths := append(append([]string{}, l.Read...), l.Work, l.Home, l.Tmp)
 	paths = append(paths, workbenchPublicReadPaths()...)
 	for _, p := range paths {
-		if lexicallyWithin(p, path) {
+		if Within(p, path) {
 			return true
 		}
 	}
