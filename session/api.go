@@ -226,7 +226,7 @@ func checkCatalogModel(o Options) error {
 }
 
 func policySet(p Policy) bool {
-	return p.CodexSandbox != "" || p.CodexApproval != "" || p.ClaudePermission != "" || p.ClaudeTools != nil || p.GrokPermission != "" || p.GrokTelemetry != "" || p.CommandCodePermission != "" || p.AntigravityPermission != ""
+	return p.CodexSandbox != "" || p.CodexApproval != "" || p.ClaudePermission != "" || p.ClaudeTools != nil || p.GrokPermission != "" || p.GrokTelemetry != "" || p.CommandCodePermission != "" || p.AntigravityPermission != "" || p.FxPermission != ""
 }
 
 func checkInstructions(o Options) error {

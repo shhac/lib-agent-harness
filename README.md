@@ -1,8 +1,8 @@
 # lib-agent-harness
 
 One Go interface for running AI agents and models through any supported
-harness: the Codex, Claude, Grok, Command Code and Antigravity (`agy`) CLIs
-with their own logins, or any OpenAI-compatible HTTP endpoint or gateway. An
+harness: the Codex, Claude, Grok, Command Code, Antigravity (`agy`) and fx
+CLIs with their own logins, or any OpenAI-compatible HTTP endpoint or gateway. An
 application written against it can let its users choose the AI service behind
 each kind of invocation. Choosing a service changes configuration, not code.
 
@@ -25,7 +25,8 @@ The root package `harness` defines what every execution mode shares:
 
 - `Engine`: `harness.Codex`, `harness.Claude`, `harness.Grok`,
   `harness.CommandCode` (sessions only), `harness.Antigravity` (`agy`:
-  catalog, account, native runs and sessions) or `harness.OpenAICompatible`.
+  catalog, account, native runs and sessions), `harness.Fx` (`fx`: catalog,
+  account, native runs and sessions) or `harness.OpenAICompatible`.
   Its spelling is stable and safe to persist.
 - `Provider`: where inference comes from. A CLI engine reads `Provider.CLI`
   (binary and login home); an API engine reads `Provider.API` (base URL,
@@ -304,6 +305,31 @@ restricted, sandboxed, browser and compacted sessions, account and quota reads,
 and Windows, where `cmd` names the system command interpreter. A turn reports
 its own usage, and the context is Command Code's own figure.
 
+fx sessions run `fx acp` over the Agent Client Protocol and reuse the login
+fx keeps in `~/.fx`, which nothing relocates, so `Provider.CLI.Home` may only
+be empty or name that directory. Every session is put in fx's asking mode,
+which asks before each action that changes anything, and `Policy.FxPermission`
+answers those requests: `session.FxDenyWhenAsked` (the default) rejects each
+one and `session.FxAllowWhenAsked` approves each one once. Neither grants an
+"always" option, and a request that offers no option the policy wants, or two
+options of the same kind or the same id, is answered cancelled, never
+guessed. Deny-when-asked is not read-only: fx 0.0.14 asks before writes and
+shell commands, but reads files and fetches web pages without asking. The mode
+is set with `session/set_config_option`, and
+the mode, model and effort are checked against the configuration the session
+reports; a value fx refuses, or accepts without applying, is refused before
+the first prompt. fx announces no mode change over the protocol, so a mode
+changed outside the session is not observed. Steering is composed. fx only
+appends session instructions to its own system prompt, so `Instructions` in
+replace mode is refused; restricted, sandboxed, browser and compacted fx
+sessions, account quota windows and constrained completion are unsupported. A
+session inherits none of fx's own `FX_` variables and refuses them as
+additions, except the operator's own protective switches `FX_MAX_AGENT_STEPS`,
+`FX_ULTRAFAST` and `FX_AUTO_UPGRADE`, whose bounds, cost and network choices
+are preserved. A turn reports its own usage, cache reads and writes included,
+and the context is fx's own figure. fx counts the main agent's usage only, not
+that of any agent it delegates to.
+
 Consume turn events while the turn runs. `Wait` does not drain the stream;
 backpressure fails explicitly instead of silently dropping tool activity.
 Cancellation of a wait only stops waiting. Interruption and session closure are
@@ -313,7 +339,7 @@ separate operations. Tool events say what an agent did (`harness.ToolActivity`):
 whether it failed and `ExitCode` where a command reports one. Codex reports
 command, cwd, output and exit code, file changes, MCP and dynamic tool
 arguments and results, and web search queries; Claude its `tool_use` input and
-`tool_result` content; Grok and Command Code `rawInput` and `rawOutput` or
+`tool_result` content; Grok, Command Code and fx `rawInput` and `rawOutput` or
 content (a Command Code tool is named by its protocol kind, such as `read` or
 `execute`, since its title carries paths and commands); an API
 session the model's arguments and the handler's result. A hosted call is
@@ -1687,6 +1713,7 @@ if report.Credits.Known() && report.Credits.Balance != nil {
 | Claude | `initialize.account` | `get_usage` and `rate_limit_event` | spend and extra-usage allowance, in minor currency units |
 | Grok | agent protocol `check_subscription` | unsupported | unsupported |
 | Antigravity | `agy -p=/credits --output-format json` (`plan_name`), or `/usage` for a login without credits | `agy -p=/usage --output-format json` (per-model-group quota windows) | `agy -p=/credits --output-format json` (`remaining_credits`) |
+| fx | `fx status --json` (sign-in and team) | unsupported: fx reports spend for a period, not allowance windows | `fx credits --json` (AI Gateway balance) |
 
 A missing CLI is a classified `not_installed` failure. `session.Inspect` remains
 for Codex and Claude and also returns a session's `Capabilities`.
@@ -1749,15 +1776,15 @@ speaks to `claude -p` directly; it does not depend on the Claude SDK.
 
 ## Native runs and transcripts
 
-`native.Run` invokes Codex, Claude, Grok or Antigravity with one `Config` and
-`Request` shape. Use `native.NewStream` to receive typed events and render a
+`native.Run` invokes Codex, Claude, Grok, Antigravity or fx with one `Config`
+and `Request` shape. Use `native.NewStream` to receive typed events and render a
 common readable transcript. Reuse a stream only for sequential resumes of the
 same session. The application decides whether an incomplete report warrants
 another turn; the library does not retry autonomously.
 
 ```go
 result, err := native.Run(ctx, native.Config{
-    Provider: harness.Provider{Engine: harness.Grok}, // or Codex, Claude, Antigravity
+    Provider: harness.Provider{Engine: harness.Grok}, // or Codex, Claude, Antigravity, fx
     Model:    model,
     Grok:     native.GrokOptions{Telemetry: native.GrokTelemetryReduced},
 }, native.Request{Prompt: "Review this change.", WorkDir: workspace, Schema: reportSchema}, nil)
@@ -1775,11 +1802,20 @@ if err != nil {
   unconstrained progress messages first. Antigravity passes the schema with
   `--json-schema` and reads the final result's `structured_output`.
 - Engine-specific execution settings live in `Config.Codex`, `Config.Claude`,
-  `Config.Grok` and `Config.Antigravity` (`PermissionMode`: `"accept-edits"`,
+  `Config.Grok`, `Config.Antigravity` (`PermissionMode`: `"accept-edits"`,
   `"auto"` or `"plan"`; empty leaves agy's default, `request-review`, which
-  auto-denies any tool needing approval in a non-interactive run). Options for
-  another engine, and `Args` that repeat a flag the library manages, are
-  refused.
+  auto-denies any tool needing approval in a non-interactive run) and
+  `Config.Fx` (`PermissionMode`: `"ask"`, `"auto"` or `"full-access"`; empty
+  is `"ask"`, whatever the operator's saved interactive mode, and an asking
+  run fails with `NonInteractivePermissionRequired` at its first write or
+  shell command, since nothing can answer). An
+  invalid mode is refused rather than passed to the CLI. Options for another
+  engine, and `Args` that repeat a flag the library manages, are refused.
+- An fx run is one `fx ask --json`, whose document is the whole record: the
+  final response, the tools it used and the usage it reported. fx states no
+  output schema, so a structured fx run is refused rather than answered with
+  prose, and it states no dollar valuation, so an fx run reports no cost. Its
+  usage covers that run alone, also when resumed, and states no cache split.
 - An Antigravity result's usage covers its whole conversation, so a run's
   usage is the sum of its own responses, and a resumed run does not count
   earlier runs again.

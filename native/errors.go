@@ -16,6 +16,9 @@ const (
 	CodeUnsupportedEngine    = "unsupported_engine"
 	CodeOptionForOtherEngine = "option_for_other_engine"
 	CodeUnsupportedOption    = "unsupported_option"
+	// CodeHomeUnsupported: the engine's CLI home cannot be moved, so the
+	// selected one is refused rather than ignored.
+	CodeHomeUnsupported      = "home_unsupported"
 	CodeManagedFlagInArgs    = "managed_flag_in_args"
 	CodeInvalidSchema        = "invalid_schema"
 	CodeStreamMismatch       = "stream_mismatch"
@@ -51,6 +54,7 @@ var runErrorText = map[string]string{
 	CodeUnsupportedEngine:    "engine is not supported for native runs",
 	CodeOptionForOtherEngine: "options for a different engine were set",
 	CodeUnsupportedOption:    "an option this engine cannot honour was set",
+	CodeHomeUnsupported:      "this engine's CLI home cannot be moved",
 	CodeManagedFlagInArgs:    "Args repeats a flag the library manages",
 	CodeInvalidSchema:        "the schema is not valid JSON",
 	CodeStreamMismatch:       "the stream does not match the invocation",

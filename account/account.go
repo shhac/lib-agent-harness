@@ -63,6 +63,8 @@ func Inspect(ctx context.Context, p harness.Provider) (harness.AccountReport, er
 		return inspectGrok(ctx, p, binary)
 	case harness.Antigravity:
 		return inspectAntigravity(ctx, p, binary)
+	case harness.Fx:
+		return inspectFx(ctx, p, binary)
 	case harness.Codex, harness.Claude:
 		return inspectSession(ctx, p)
 	}

@@ -50,6 +50,8 @@ var cliEngines = map[harness.Engine]cliEngine{
 	// --no-leader keeps this process from serving other Grok clients.
 	harness.Grok:        {func() []string { return []string{"agent", "--no-leader", "stdio"} }, nativecli.GrokEnvironment, readGrokCatalog},
 	harness.Antigravity: {func() []string { return []string{"--output-format", "json", "models"} }, nativecli.AntigravityEnvironment, readAntigravityCatalog},
+	// fx lists its models as one JSON document, and no home moves its profile.
+	harness.Fx: {func() []string { return []string{"models", "--json"} }, nativecli.FxEnvironment, readFxCatalog},
 }
 
 // codexArgs creates no thread, and disables tool-discovery features during

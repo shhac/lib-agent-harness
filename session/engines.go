@@ -136,6 +136,17 @@ func init() {
 			startTurn: (*Session).startAntigravityTurn, interrupt: (*Session).interruptAntigravity,
 			steer: (*Session).steerAntigravity,
 		},
+		harness.Fx: {
+			dialect: fxDialect, resolveHome: fxHome,
+			foreignPolicy:   fxForeignPolicy,
+			args:            func(Options, string, bool, *launch) []string { return fxArgs() },
+			normalizePolicy: normalizeFxPolicy, withheld: fxManaged,
+			refuseAddition: refuseFxAddition,
+			initialize:     (*Session).initializeFx, event: (*Session).fxEvent,
+			startTurn: (*Session).startFxTurn, interrupt: (*Session).interruptACP,
+			composedSteer:    "fx steering cancels the running prompt and sends another",
+			inspectElsewhere: "inspect an fx login with account.Inspect",
+		},
 		// The OpenAI-compatible engine runs the library's own loop, with no
 		// process wire; it shares only the turn lifecycle.
 		harness.OpenAICompatible: {

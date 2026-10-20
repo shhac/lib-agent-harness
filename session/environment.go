@@ -91,6 +91,47 @@ func commandCodeManaged(key string) bool {
 	return strings.HasPrefix(upper, "CMD_") || strings.HasPrefix(upper, "COMMANDCODE_") || strings.HasPrefix(upper, "COMMAND_CODE_")
 }
 
+// fxManaged is what an fx session never inherits: fx's own variables, which
+// change which sign-in it uses, which model it runs, how it asks and how it
+// reports, except its protective switches.
+func fxManaged(key string) bool {
+	upper := strings.ToUpper(key)
+	if fxProtected(upper) {
+		return false
+	}
+	return strings.HasPrefix(upper, "FX_")
+}
+
+// fxProtected are the fx variables that carry the operator's own choice of a
+// bound, a cost or a network switch. Dropping one would run the session with
+// more room, at more cost, or reaching further than the operator allowed, so
+// these are inherited and accepted as additions; the rest of fx's variables
+// stay managed.
+//
+// fx has no environment variable that carries a privacy guarantee: its Zero
+// Data Retention control is a Gateway account setting, which no environment
+// variable reaches.
+func fxProtected(upper string) bool {
+	switch upper {
+	case "FX_MAX_AGENT_STEPS", "FX_ULTRAFAST", "FX_AUTO_UPGRADE":
+		return true
+	}
+	return false
+}
+
+// refuseFxAddition refuses every FX_ addition but the protective ones: fx
+// resolves its own sign-in, and the operator's own settings carry over, but a
+// caller sets fx's controls only through Policy.
+func refuseFxAddition(o Options, key, upper string) error {
+	if fxProtected(upper) {
+		return nil
+	}
+	if strings.HasPrefix(upper, "FX_") {
+		return refuse(o, "env", RefusedEnvManaged, "environment addition "+key+" is managed by the harness; fx resolves its own sign-in")
+	}
+	return nil
+}
+
 // sandboxInherited is all a sandboxed session inherits from this process:
 // enough to find the CLI, its login and a shell, and nothing the process
 // happened to have exported.

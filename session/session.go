@@ -58,6 +58,10 @@ type Session struct {
 	commandCodeConfigured bool
 	commandCodeEarly      struct{ session, mode string }
 	antigravityInit       chan antigravityInitState
+	// fxModel is the model an fx session reported, and fxCapacity the context
+	// window its own usage update stated, 0 if none.
+	fxModel    string
+	fxCapacity int64
 	// removeSkillFiles removes the private plugin this launch wrote, once
 	// the session is over.
 	removeSkillFiles func()

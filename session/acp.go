@@ -8,7 +8,7 @@ import (
 	"github.com/shhac/lib-agent-harness/internal/rawjson"
 )
 
-// Grok and Command Code both speak the Agent Client Protocol over JSON-RPC.
+// Grok, Command Code and fx all speak the Agent Client Protocol over JSON-RPC.
 // What their refusals mean is shared; how each states them differs, so each
 // engine classifies its own error replies into these codes.
 
@@ -35,8 +35,11 @@ const (
 
 func (e *acpRefusal) Error() string {
 	name := "grok"
-	if e.engine == harness.CommandCode {
+	switch e.engine {
+	case harness.CommandCode:
 		name = "command code"
+	case harness.Fx:
+		name = "fx"
 	}
 	return name + " refused the request: " + e.code
 }

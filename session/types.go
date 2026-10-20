@@ -130,6 +130,13 @@ type Policy struct {
 	// agy's own default and takes no flag; it auto-denies any tool that needs
 	// approval. Every mode is checked against the mode agy reports at startup.
 	AntigravityPermission string `json:"antigravity_permission,omitempty"`
+	// FxPermission answers the permission requests fx sends. Every fx session
+	// runs in its asking mode, which asks before each action that changes
+	// anything: FxDenyWhenAsked, the default, rejects each request, and
+	// FxAllowWhenAsked approves each one once. Neither grants an "always"
+	// option. It governs only the requests fx actually makes: fx's own tools
+	// stay available, so deny-when-asked is not read-only.
+	FxPermission string `json:"fx_permission,omitempty"`
 }
 
 // Grok permission answers and telemetry policy.
@@ -151,6 +158,12 @@ const (
 	AntigravityAcceptEdits   = "accept-edits"
 	AntigravityAuto          = "auto"
 	AntigravityPlan          = "plan"
+)
+
+// fx permission answers.
+const (
+	FxDenyWhenAsked  = "deny-when-asked"
+	FxAllowWhenAsked = "allow-when-asked"
 )
 
 type Options struct {
@@ -449,6 +462,9 @@ type Turn struct {
 	// commandCodeMessage counts the tool calls Command Code started in this
 	// turn; it names the message the next streamed text belongs to.
 	commandCodeMessage int
+	// fxResponse counts fx's message groups in this turn; it names the group
+	// the next streamed text belongs to.
+	fxResponse int
 	// antigravityTools tracks which Antigravity tool step IDs have emitted
 	// tool_started and tool_completed in this turn.
 	antigravityTools map[string]bool

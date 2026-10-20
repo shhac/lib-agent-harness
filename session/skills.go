@@ -244,6 +244,10 @@ func skillDeliveryFor(o Options) (skillDelivery, error) {
 			return nativeSkills, nil
 		}
 		return instructionSkills, nil
+	case harness.Fx:
+		// fx takes no skill plugin flag, so a provided skill's index travels
+		// with the session's instructions.
+		return instructionSkills, nil
 	}
 	if o.Sandbox == nil && !composed && claudeTool(o, "Skill") {
 		return nativeSkills, nil

@@ -39,6 +39,8 @@ type Config struct {
 	Claude      ClaudeOptions
 	Grok        GrokOptions
 	Antigravity AntigravityOptions
+	// Fx is fx's own execution options.
+	Fx FxOptions
 	// Skills are made available for this run (see skills.go): natively by a
 	// private plugin for Claude, and as an index in the appended instructions
 	// for Codex and Grok, or for every engine with SkillDeliveryComposed.
@@ -174,6 +176,14 @@ func NewStream(engine harness.Engine, transcript io.Writer, options StreamOption
 			t.now = options.Clock
 		}
 		s.t = t
+	case harness.Fx:
+		t := newFxTranscoder(transcript)
+		t.onEvent = options.OnEvent
+		t.structured = options.Structured
+		if options.Clock != nil {
+			t.now = options.Clock
+		}
+		s.t = t
 	case harness.Antigravity:
 		t := newAntigravityTranscoder(transcript)
 		t.onEvent = options.OnEvent
@@ -217,8 +227,10 @@ func (s *Stream) Report() (json.RawMessage, error) {
 
 // buildArgs builds a native CLI invocation. Codex and Claude positionals sit
 // behind -- so variadic caller-supplied options cannot consume a prompt or
-// session ID; Grok and Antigravity bind values with --flag=value. report is
-// Codex's private schema and output files, when a Schema was requested.
+// session ID; Grok and Antigravity bind values with --flag=value, and fx takes
+// the request as trailing arguments behind --. report is Codex's private
+// schema and output files, when a Schema was requested. An engine with no
+// native run is refused before this is called.
 func buildArgs(c Config, r Request, report *codexReport) []string {
 	switch c.Provider.Engine {
 	case harness.Codex:
@@ -227,9 +239,12 @@ func buildArgs(c Config, r Request, report *codexReport) []string {
 		return claudeArgs(c, r)
 	case harness.Antigravity:
 		return antigravityArgs(c, r)
-	default:
+	case harness.Grok:
 		return grokArgs(c, r)
+	case harness.Fx:
+		return fxArgs(c, r)
 	}
+	return nil
 }
 
 func codexArgs(c Config, r Request, report *codexReport) []string {
@@ -454,9 +469,13 @@ func nativeEnvironment(c Config) []string {
 		}
 		described, _ := harness.Describe(engine)
 		key := described.HomeVariable
-		if engine == harness.Claude && isDefaultClaudeHome(home, env) {
+		switch {
+		case key == "":
+			// The CLI has no variable that moves its home, and a home that
+			// names another directory was refused before the launch.
+		case engine == harness.Claude && isDefaultClaudeHome(home, env):
 			env = withoutEnv(env, key)
-		} else {
+		default:
 			env = overrideEnv(env, key, home)
 		}
 	}
@@ -511,6 +530,11 @@ func Version(ctx context.Context, c Config) (string, error) {
 	}
 	if engine == harness.Antigravity {
 		if code := nativecli.AntigravityHomeProblem(c.Provider.CLI.Home); code != "" {
+			return "", capabilityError(engine, code)
+		}
+	}
+	if engine == harness.Fx {
+		if code := nativecli.FxHomeProblem(c.Provider.CLI.Home); code != "" {
 			return "", capabilityError(engine, code)
 		}
 	}

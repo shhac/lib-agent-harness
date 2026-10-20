@@ -10,7 +10,7 @@ import (
 )
 
 func TestEngineSpellingsArePersistedAndStable(t *testing.T) {
-	want := map[Engine]Transport{"codex": CLITransport, "claude": CLITransport, "grok": CLITransport, "command-code": CLITransport, "antigravity": CLITransport, "openai-compatible": APITransport}
+	want := map[Engine]Transport{"codex": CLITransport, "claude": CLITransport, "grok": CLITransport, "command-code": CLITransport, "antigravity": CLITransport, "fx": CLITransport, "openai-compatible": APITransport}
 	if len(Engines()) != len(want) {
 		t.Fatalf("engines %v", Engines())
 	}

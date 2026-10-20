@@ -27,6 +27,9 @@ const (
 	CommandCode Engine = "command-code"
 	// Antigravity is Google Antigravity, whose CLI is installed as `agy`.
 	Antigravity Engine = "antigravity"
+	// Fx is fx, the terminal coding agent whose CLI is installed as `fx`. It
+	// speaks the Agent Client Protocol over stdio through `fx acp`.
+	Fx Engine = "fx"
 	// OpenAICompatible is any HTTP endpoint speaking an OpenAI dialect, such as
 	// a gateway. It names the harness, not the model family: a Grok model
 	// through a gateway is OpenAICompatible with a model such as "xai/grok-4".
@@ -35,7 +38,7 @@ const (
 
 // Engines lists every engine the library knows, in a stable order for display.
 func Engines() []Engine {
-	return []Engine{Codex, Claude, Grok, CommandCode, Antigravity, OpenAICompatible}
+	return []Engine{Codex, Claude, Grok, CommandCode, Antigravity, Fx, OpenAICompatible}
 }
 
 // Transport says how an engine is reached.
@@ -49,7 +52,7 @@ const (
 // Transport is "" for an engine the library does not know.
 func (e Engine) Transport() Transport {
 	switch e {
-	case Codex, Claude, Grok, CommandCode, Antigravity:
+	case Codex, Claude, Grok, CommandCode, Antigravity, Fx:
 		return CLITransport
 	case OpenAICompatible:
 		return APITransport

@@ -80,7 +80,8 @@ func optionProblem(c Config) string {
 	if (engine != harness.Codex && c.Codex.set()) ||
 		(engine != harness.Claude && c.Claude.set()) ||
 		(engine != harness.Grok && c.Grok.set()) ||
-		(engine != harness.Antigravity && c.Antigravity.set()) {
+		(engine != harness.Antigravity && c.Antigravity.set()) ||
+		(engine != harness.Fx && c.Fx.set()) {
 		return CodeOptionForOtherEngine
 	}
 	switch engine {
@@ -91,6 +92,20 @@ func optionProblem(c Config) string {
 	case harness.Antigravity:
 		if !c.Antigravity.validMode() {
 			return CodeUnsupportedOption
+		}
+	case harness.Fx:
+		switch c.Fx.PermissionMode {
+		case "", "ask", "auto", "full-access":
+		default:
+			return CodeUnsupportedOption
+		}
+		// fx reads its profile from the user's home directory and has no
+		// variable that moves it, so a home that names another directory
+		// cannot be honoured and is refused rather than ignored.
+		if c.Provider.CLI.Home != "" {
+			if code := nativecli.FxHomeProblem(c.Provider.CLI.Home); code != "" {
+				return CodeHomeUnsupported
+			}
 		}
 	case harness.Grok:
 		if !c.Grok.Telemetry.valid() {
@@ -156,6 +171,10 @@ var managedFlags = map[harness.Engine]struct {
 	harness.Antigravity: {
 		long:  []string{"print", "output-format", "input-format", "json-schema", "model", "effort", "mode", "dangerously-skip-permissions", "sandbox", "agent", "conversation"},
 		short: "pmc",
+	},
+	harness.Fx: {
+		long:  []string{"json", "model", "effort", "resume", "resume-id", "auto", "full-access", "yolo", "system", "quiet", "no-save", "prompt-permissions", "continue-recovery"},
+		short: "",
 	},
 }
 
