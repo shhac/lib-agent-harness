@@ -15,14 +15,6 @@ import (
 	"github.com/shhac/lib-agent-harness/internal/testenv"
 )
 
-// sandboxToolHost is a tool host for a test that opens its channel.
-func sandboxToolHost(t *testing.T) *ToolHost {
-	t.Helper()
-	host := sandboxToolConfig(t)
-	testenv.RequireUnixSocket(t)
-	return host
-}
-
 // sandboxToolConfig is sandboxToolHost for a test whose channel never opens.
 func sandboxToolConfig(t *testing.T) *ToolHost {
 	t.Helper()

@@ -121,9 +121,6 @@ func proveWorkbenchStagesObserved(ctx context.Context, o Options, probe func(con
 	return Proof{system: system, binary: "/usr/bin/sandbox-exec", identity: identity, options: o, key: key, networkObservations: evidence.Observations, networkDetail: evidence.Detail}, nil
 }
 
-func probeWorkbench(ctx context.Context, o Options, system []string) error {
-	return probeWorkbenchObserved(ctx, o, system, &networkEvidence{})
-}
 func probeWorkbenchObserved(ctx context.Context, o Options, system []string, evidence *networkEvidence) error {
 	workbenchCanaryRuns.Add(1)
 	unavailable := workbenchCapability(CapabilitySandboxUnavailable)
