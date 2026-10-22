@@ -210,9 +210,9 @@ func TestReplayReportsALaunchNeverMade(t *testing.T) {
 }
 
 func TestRedactionsKeepEverythingElse(t *testing.T) {
-	r := Redactions{"team": `"example-team"`, "balance": `"10.00"`, "used": `0`, "servers": `[]`}
-	got := string(r.apply([]byte(`{"kind":"credits", "team":"real \"team\"","balance":"24.91","used":3.5e2,"other":"team","mcp":{"servers":[{"name":"mine","url":"https://x"}],"n":[{"team":"t"}]}}`)))
-	want := `{"kind":"credits", "team":"example-team","balance":"10.00","used":0,"other":"team","mcp":{"servers":[],"n":[{"team":"example-team"}]}}`
+	r := Redactions{"team": `"example-team"`, "balance": `"10.00"`, "used": `0`, "servers": `[]`, "size": `"none"`}
+	got := string(r.apply([]byte(`{"kind":"credits", "team":"real \"team\"","balance":"24.91","used":3.5e2,"size":272000,"other":"team","mcp":{"servers":[{"name":"mine","url":"https://x"}],"n":[{"team":"t"}]}}`)))
+	want := `{"kind":"credits", "team":"example-team","balance":"10.00","used":0,"size":272000,"other":"team","mcp":{"servers":[],"n":[{"team":"example-team"}]}}`
 	if got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}

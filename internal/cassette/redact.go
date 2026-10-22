@@ -12,9 +12,10 @@ import (
 
 // Redactions replace the value of a JSON key, at any depth, wherever a CLI
 // writes it, with raw JSON of the same type, so a parser reads the stand-in as
-// it would the real value: {"team": `"example-team"`, "servers": `[]`}. The
-// rest of the frame keeps its bytes. A redaction is one-way; a replay plays
-// the stand-in.
+// it would the real value: {"team": `"example-team"`, "servers": `[]`}. A
+// value of another type is kept, since a key one document holds private can
+// name a measurement in another. The rest of the frame keeps its bytes. A
+// redaction is one-way; a replay plays the stand-in.
 type Redactions map[string]string
 
 func (r Redactions) apply(raw []byte) []byte {
@@ -48,13 +49,28 @@ func (r Redactions) apply(raw []byte) []byte {
 		end := int(d.InputOffset())
 		start := end - len(v)
 		replaced := r.apply(v)
-		if standIn, hit := r[key]; hit && delim == '{' {
+		if standIn, hit := r[key]; hit && delim == '{' && jsonKind([]byte(standIn)) == jsonKind(v) {
 			replaced = []byte(standIn)
 		}
 		out = append(append(out, raw[last:start]...), replaced...)
 		last = end
 	}
 	return append(out, raw[last:]...)
+}
+
+// jsonKind is the type of the JSON value raw holds, by its first byte.
+func jsonKind(raw []byte) byte {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 {
+		return 0
+	}
+	switch c := raw[0]; c {
+	case '"', '{', '[', 'n':
+		return c
+	case 't', 'f':
+		return 't'
+	}
+	return '0'
 }
 
 // leakPatterns are the shapes no recording may hold, by what each is.

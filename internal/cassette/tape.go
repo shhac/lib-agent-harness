@@ -44,6 +44,13 @@ type Tape struct {
 // credential or the user's own details.
 func Start(t testing.TB, cfg Config) *Tape {
 	t.Helper()
+	// The CLI runs in its own working directory, so a relative Dir would
+	// name somewhere else there.
+	dir, err := filepath.Abs(cfg.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Dir = dir
 	// Not t.TempDir: Windows refuses to remove a binary a process killed
 	// without being waited for may still map, so removal is best effort.
 	bin, err := os.MkdirTemp("", "cassette-")
@@ -85,6 +92,10 @@ func Start(t testing.TB, cfg Config) *Tape {
 
 // Binary is the path to launch as the CLI.
 func (tp *Tape) Binary() string { return tp.binary }
+
+// Recording reports whether the real CLI runs behind the tape, so effects
+// outside the wire, such as a file a tool wrote, happen and can be checked.
+func (tp *Tape) Recording() bool { return tp.c.Mode == "record" }
 
 // Placeholder names a value that differs between runs, such as a temporary
 // directory, so recordings hold the name and replays the run's own value.
