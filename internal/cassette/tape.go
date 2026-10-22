@@ -149,7 +149,7 @@ func (tp *Tape) finish() {
 		}
 		played, _ := strconv.Atoi(string(cursor))
 		if want := x.required(); played < want && len(reports) == 0 {
-			t.Errorf("cassette: launch %s stopped at line %d of %d; the library no longer sent:\n  %s", filepath.Base(f), played+2, want+1, describe(x.entries[played]))
+			t.Errorf("cassette: launch %s stopped before line %d; the library no longer sent:\n  %s", filepath.Base(f), played+2, describe(x.entries[played]))
 		}
 	}
 }

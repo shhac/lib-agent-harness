@@ -209,6 +209,25 @@ func TestReplayReportsALaunchNeverMade(t *testing.T) {
 	}
 }
 
+func TestReplayNeedsPlayOnlyThroughWhatTheLibrarySent(t *testing.T) {
+	zero := 0
+	in, out := lineEntry(true, []byte(`{"id":"1"}`)), lineEntry(false, []byte(`{"id":"1"}`))
+	text := lineEntry(true, []byte("plain"))
+	for _, c := range []struct {
+		entries []entry
+		want    int
+	}{
+		{[]entry{out, {EOF: true}, {Exit: &zero}}, 0},
+		{[]entry{in, out, {Exit: &zero}}, 1},
+		{[]entry{in, out, in, out, {EOF: true}}, 3},
+		{[]entry{out, text, out}, 2},
+	} {
+		if got := (exchange{entries: c.entries}).required(); got != c.want {
+			t.Errorf("%d entries: required %d, want %d", len(c.entries), got, c.want)
+		}
+	}
+}
+
 func TestRedactionsKeepEverythingElse(t *testing.T) {
 	r := Redactions{"team": `"example-team"`, "balance": `"10.00"`, "used": `0`, "servers": `[]`, "size": `"none"`}
 	got := string(r.apply([]byte(`{"kind":"credits", "team":"real \"team\"","balance":"24.91","used":3.5e2,"size":272000,"other":"team","mcp":{"servers":[{"name":"mine","url":"https://x"}],"n":[{"team":"t"}]}}`)))

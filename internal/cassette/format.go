@@ -140,11 +140,13 @@ func readExchange(path string) (exchange, error) {
 	return x, nil
 }
 
-// required is how many entries a replay must play: all of them, except that
-// the library may kill a CLI before it reads that its input closed.
+// required is how many entries a replay must play: through the last line
+// the library sent. What follows is the CLI's own, and the library may kill
+// a CLI once it has what it needs, before the CLI has written the rest, read
+// that its input closed, or exited by itself.
 func (x exchange) required() int {
 	n := len(x.entries)
-	for n > 0 && x.entries[n-1].EOF {
+	for n > 0 && x.entries[n-1].In == nil && x.entries[n-1].InText == nil {
 		n--
 	}
 	return n
