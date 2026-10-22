@@ -1,0 +1,5 @@
+{"cli":"agy","version":"1.4.2","argv":["-p=/credits","--output-format","json"],"stdin":"pipe","recorded":"2026-10-22","goos":"darwin"}
+{"eof":true}
+{"err":"error: /credits failed: retrieving credits: no credits info found"}
+{"out":{"conversation_id":"","status":"ERROR","response":"","error":"/credits failed: retrieving credits: no credits info found","duration_seconds":0,"num_turns":0,"usage":{"input_tokens":0,"output_tokens":0,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":0}}}
+{"exit":1}

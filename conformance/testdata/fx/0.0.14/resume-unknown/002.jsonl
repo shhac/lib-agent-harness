@@ -1,0 +1,5 @@
+{"cli":"fx","version":"0.0.14","argv":["acp"],"stdin":"pipe","recorded":"2026-10-22","goos":"darwin"}
+{"in":{"id":"1","jsonrpc":"2.0","method":"initialize","params":{"clientCapabilities":{},"protocolVersion":1}}}
+{"out":{"jsonrpc":"2.0","id":"1","result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"promptCapabilities":{"image":true,"audio":false,"embeddedContext":true},"mcpCapabilities":{"http":true,"sse":true,"acp":true},"sessionCapabilities":{"list":{},"resume":{},"close":{},"systemPrompt":{}},"_meta":{"fx":{"steering":true}}},"agentInfo":{"name":"fx","title":"fx","version":"0.0.14"},"authMethods":[]}}}
+{"in":{"id":"2","jsonrpc":"2.0","method":"session/resume","params":{"cwd":"@@WORKDIR@@","mcpServers":[],"sessionId":"conformance-unknown-conversation"}}}
+{"out":{"jsonrpc":"2.0","id":"2","error":{"code":-32602,"message":"Session not found"}}}

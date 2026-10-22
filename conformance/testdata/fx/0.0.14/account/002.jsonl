@@ -1,0 +1,3 @@
+{"cli":"fx","version":"0.0.14","argv":["credits","--json"],"stdin":"none","recorded":"2026-10-22","goos":"darwin"}
+{"out":{"kind":"credits","error":"Credits are unavailable for the selected provider."}}
+{"exit":1}

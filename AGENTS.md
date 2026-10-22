@@ -40,6 +40,9 @@ Shared local Codex/Claude CLI harness transport for Go applications.
   and sanitized. Callers own retry decisions after possible side effects.
 - Tests use fake transports, synthetic CLI fixtures, and temporary directories.
   No real models, accounts, credentials, or external mutations in automated tests.
+- Recorded CLI wire lives in conformance/ and replays in go test. A new engine,
+  or a change to what one sends, ships recordings; recording (-record) is a
+  manual operator step, and a passing replay is not verification.
 - Run go test -race ./... and go vet ./...; cross-compile Windows tests too.
   Restricted hosting is unavailable on Windows; test the pre-launch refusal and
   retain ordinary session coverage there.

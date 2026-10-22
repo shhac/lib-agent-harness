@@ -1,0 +1,4 @@
+{"cli":"fx","version":"0.0.14","argv":["models","--json"],"stdin":"pipe","recorded":"2026-10-22","goos":"darwin"}
+{"out":{"kind":"models","count":7,"shown_count":7,"more_count":0,"private_models_hidden":false,"ids":["gpt-6.1-sol","gpt-6-astra","gpt-6-sol","gpt-6-luna","gpt-5.6-sol","gpt-5.6-terra","gpt-5.6-luna"],"models":[{"id":"gpt-6.1-sol","source":"Codex subscription"},{"id":"gpt-6-astra","source":"Codex subscription"},{"id":"gpt-6-sol","source":"Codex subscription"},{"id":"gpt-6-luna","source":"Codex subscription"},{"id":"gpt-5.6-sol","source":"Codex subscription"},{"id":"gpt-5.6-terra","source":"Codex subscription"},{"id":"gpt-5.6-luna","source":"Codex subscription"}]}}
+{"eof":true}
+{"exit":0}

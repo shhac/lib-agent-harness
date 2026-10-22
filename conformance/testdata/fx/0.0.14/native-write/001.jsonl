@@ -1,0 +1,9 @@
+{"cli":"fx","version":"0.0.14","argv":["ask","--json","--model","gpt-5.6-luna","--effort","low","--","Create a file named probe.txt in the working directory containing the text hi, then say done."],"stdin":"none","recorded":"2026-10-22","goos":"darwin"}
+{"err":"[notice] [context] skill catalog shortened 26 descriptions: effective=21760 bytes source=compiled default"}
+{"err":""}
+{"err":"fx ask: permission required for tool execution in noninteractive mode"}
+{"err":"fx ask: blocked action: Writing file"}
+{"err":"fx ask: reason=noninteractive_permission_prompt_unavailable"}
+{"err":"fx ask: rerun with --auto to review this exact action automatically, or use the interactive shell to approve it"}
+{"out":{"output":"I’ll create `probe.txt` in the working directory with the text `hi`, then verify it.","final_output":"","exit_code":1,"model":"","resolved_provider":null,"session_id":"","steps":0,"tool_calls":[{"name":"write_file","status":"error"}],"usage":{"input_tokens":11573,"output_tokens":67},"error":"NonInteractivePermissionRequired"}}
+{"exit":1}

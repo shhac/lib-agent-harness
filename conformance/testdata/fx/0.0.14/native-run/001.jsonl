@@ -1,0 +1,5 @@
+{"cli":"fx","version":"0.0.14","argv":["ask","--json","--model","gpt-5.6-luna","--effort","low","--","Reply with exactly: ok"],"stdin":"none","recorded":"2026-10-22","goos":"darwin"}
+{"err":"[notice] [context] skill catalog shortened 26 descriptions: effective=21760 bytes source=compiled default"}
+{"err":""}
+{"out":{"output":"ok","final_output":"ok","exit_code":0,"model":"gpt-5.6-luna","resolved_provider":null,"session_id":"D8Fd8h2FlP0k","steps":0,"tool_calls":[],"usage":{"input_tokens":11550,"output_tokens":5}}}
+{"exit":0}
