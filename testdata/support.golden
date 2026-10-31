@@ -23,6 +23,7 @@ darwin codex complete restrict_tools unsupported not offered by this engine
 darwin codex complete resume unsupported not offered by this engine
 darwin codex complete sandbox unsupported not offered by this engine
 darwin codex complete sandboxed_browser unsupported not offered by this engine
+darwin codex complete sandboxed_subagents unsupported not offered by this engine
 darwin codex complete skills composed the library indexes provided skills and answers a read-only skill tool; a permitted skill's scripts run only when the caller answers those calls
 darwin codex complete steer unsupported not offered by this engine
 darwin codex complete structured_output unsupported not offered by this engine
@@ -56,6 +57,7 @@ darwin codex run restrict_tools unsupported not offered by this engine
 darwin codex run resume native 
 darwin codex run sandbox unsupported not offered by this engine
 darwin codex run sandboxed_browser unsupported not offered by this engine
+darwin codex run sandboxed_subagents unsupported not offered by this engine
 darwin codex run skills composed an index with each SKILL.md's path is added to the developer instructions
 darwin codex run steer unsupported not offered by this engine
 darwin codex run structured_output native 
@@ -89,6 +91,7 @@ darwin codex session restrict_tools unknown not verified against the installed h
 darwin codex session resume unknown not verified against the installed harness
 darwin codex session sandbox unknown not verified against the installed harness
 darwin codex session sandboxed_browser native the ChatGPT app node_repl bridge runs JavaScript confined by the session sandbox, proven before launch; drives the owner's real Chrome with its logins; Chrome backend only, no computer use
+darwin codex session sandboxed_subagents native codex-cli's multi_agent tools; agents run as threads of the session's app-server under its permission profile and approval policy, as Codex documents, not proved by the library
 darwin codex session skills composed instructions or hosted tools; native in sandboxed sessions through the runtime home
 darwin codex session steer unknown not verified against the installed harness
 darwin codex session structured_output unsupported not offered by this engine
@@ -122,6 +125,7 @@ darwin codex models restrict_tools unsupported not offered by this engine
 darwin codex models resume unsupported not offered by this engine
 darwin codex models sandbox unsupported not offered by this engine
 darwin codex models sandboxed_browser unsupported not offered by this engine
+darwin codex models sandboxed_subagents unsupported not offered by this engine
 darwin codex models skills unsupported not offered by this engine
 darwin codex models steer unsupported not offered by this engine
 darwin codex models structured_output unsupported not offered by this engine
@@ -155,6 +159,7 @@ darwin codex account restrict_tools unsupported not offered by this engine
 darwin codex account resume unsupported not offered by this engine
 darwin codex account sandbox unsupported not offered by this engine
 darwin codex account sandboxed_browser unsupported not offered by this engine
+darwin codex account sandboxed_subagents unsupported not offered by this engine
 darwin codex account skills unsupported not offered by this engine
 darwin codex account steer unsupported not offered by this engine
 darwin codex account structured_output unsupported not offered by this engine
@@ -188,6 +193,7 @@ darwin claude complete restrict_tools unsupported not offered by this engine
 darwin claude complete resume unsupported not offered by this engine
 darwin claude complete sandbox unsupported not offered by this engine
 darwin claude complete sandboxed_browser unsupported not offered by this engine
+darwin claude complete sandboxed_subagents unsupported not offered by this engine
 darwin claude complete skills composed the library indexes provided skills and answers a read-only skill tool; a permitted skill's scripts run only when the caller answers those calls
 darwin claude complete steer unsupported not offered by this engine
 darwin claude complete structured_output unsupported not offered by this engine
@@ -221,6 +227,7 @@ darwin claude run restrict_tools unsupported not offered by this engine
 darwin claude run resume native 
 darwin claude run sandbox unsupported not offered by this engine
 darwin claude run sandboxed_browser unsupported not offered by this engine
+darwin claude run sandboxed_subagents unsupported not offered by this engine
 darwin claude run skills native loaded through a private --plugin-dir
 darwin claude run steer unsupported not offered by this engine
 darwin claude run structured_output native 
@@ -254,6 +261,7 @@ darwin claude session restrict_tools unknown not verified against the installed 
 darwin claude session resume unknown not verified against the installed harness
 darwin claude session sandbox unknown not verified against the installed harness
 darwin claude session sandboxed_browser native a sandboxed Claude session admits the browser's tools beside its own, except those that would read local files or start another agent; the browser itself runs outside the sandbox
+darwin claude session sandboxed_subagents native Claude Code's Agent tool with its built-in agent types only; a subagent runs in the session's process under its tools, permission rules and OS sandbox, as Claude Code documents, not proved by the library; isolation: worktree has the CLI create a git worktree and branch outside the sandbox, even without Write
 darwin claude session skills native a private --plugin-dir; composed when sandboxed or restricted
 darwin claude session steer unknown not verified against the installed harness
 darwin claude session structured_output unsupported not offered by this engine
@@ -287,6 +295,7 @@ darwin claude models restrict_tools unsupported not offered by this engine
 darwin claude models resume unsupported not offered by this engine
 darwin claude models sandbox unsupported not offered by this engine
 darwin claude models sandboxed_browser unsupported not offered by this engine
+darwin claude models sandboxed_subagents unsupported not offered by this engine
 darwin claude models skills unsupported not offered by this engine
 darwin claude models steer unsupported not offered by this engine
 darwin claude models structured_output unsupported not offered by this engine
@@ -320,6 +329,7 @@ darwin claude account restrict_tools unsupported not offered by this engine
 darwin claude account resume unsupported not offered by this engine
 darwin claude account sandbox unsupported not offered by this engine
 darwin claude account sandboxed_browser unsupported not offered by this engine
+darwin claude account sandboxed_subagents unsupported not offered by this engine
 darwin claude account skills unsupported not offered by this engine
 darwin claude account steer unsupported not offered by this engine
 darwin claude account structured_output unsupported not offered by this engine
@@ -353,6 +363,7 @@ darwin grok complete restrict_tools unsupported not offered by this engine
 darwin grok complete resume unsupported not offered by this engine
 darwin grok complete sandbox unsupported not offered by this engine
 darwin grok complete sandboxed_browser unsupported not offered by this engine
+darwin grok complete sandboxed_subagents unsupported not offered by this engine
 darwin grok complete skills composed the library indexes provided skills and answers a read-only skill tool; a permitted skill's scripts run only when the caller answers those calls
 darwin grok complete steer unsupported not offered by this engine
 darwin grok complete structured_output unsupported not offered by this engine
@@ -386,6 +397,7 @@ darwin grok run restrict_tools unsupported not offered by this engine
 darwin grok run resume native 
 darwin grok run sandbox unsupported not offered by this engine
 darwin grok run sandboxed_browser unsupported not offered by this engine
+darwin grok run sandboxed_subagents unsupported not offered by this engine
 darwin grok run skills composed an index with each SKILL.md's path is added through --rules
 darwin grok run steer unsupported not offered by this engine
 darwin grok run structured_output native 
@@ -419,6 +431,7 @@ darwin grok session restrict_tools unsupported Grok sessions have no proven remo
 darwin grok session resume unknown not verified against the installed harness
 darwin grok session sandbox unsupported Grok sessions have no proven OS sandbox
 darwin grok session sandboxed_browser unsupported not offered by this engine
+darwin grok session sandboxed_subagents unsupported not offered by this engine
 darwin grok session skills native grok agent --plugin-dir
 darwin grok session steer composed Grok steering cancels the running prompt and sends another
 darwin grok session structured_output unsupported not offered by this engine
@@ -452,6 +465,7 @@ darwin grok models restrict_tools unsupported not offered by this engine
 darwin grok models resume unsupported not offered by this engine
 darwin grok models sandbox unsupported not offered by this engine
 darwin grok models sandboxed_browser unsupported not offered by this engine
+darwin grok models sandboxed_subagents unsupported not offered by this engine
 darwin grok models skills unsupported not offered by this engine
 darwin grok models steer unsupported not offered by this engine
 darwin grok models structured_output unsupported not offered by this engine
@@ -485,6 +499,7 @@ darwin grok account restrict_tools unsupported not offered by this engine
 darwin grok account resume unsupported not offered by this engine
 darwin grok account sandbox unsupported not offered by this engine
 darwin grok account sandboxed_browser unsupported not offered by this engine
+darwin grok account sandboxed_subagents unsupported not offered by this engine
 darwin grok account skills unsupported not offered by this engine
 darwin grok account steer unsupported not offered by this engine
 darwin grok account structured_output unsupported not offered by this engine
@@ -518,6 +533,7 @@ darwin command-code complete restrict_tools unsupported no tool-free Command Cod
 darwin command-code complete resume unsupported no tool-free Command Code mode has been proven; use Session
 darwin command-code complete sandbox unsupported no tool-free Command Code mode has been proven; use Session
 darwin command-code complete sandboxed_browser unsupported no tool-free Command Code mode has been proven; use Session
+darwin command-code complete sandboxed_subagents unsupported no tool-free Command Code mode has been proven; use Session
 darwin command-code complete skills unsupported no tool-free Command Code mode has been proven; use Session
 darwin command-code complete steer unsupported no tool-free Command Code mode has been proven; use Session
 darwin command-code complete structured_output unsupported no tool-free Command Code mode has been proven; use Session
@@ -551,6 +567,7 @@ darwin command-code run restrict_tools unsupported Command Code is offered only 
 darwin command-code run resume unsupported Command Code is offered only as a session
 darwin command-code run sandbox unsupported Command Code is offered only as a session
 darwin command-code run sandboxed_browser unsupported Command Code is offered only as a session
+darwin command-code run sandboxed_subagents unsupported Command Code is offered only as a session
 darwin command-code run skills unsupported Command Code is offered only as a session
 darwin command-code run steer unsupported Command Code is offered only as a session
 darwin command-code run structured_output unsupported Command Code is offered only as a session
@@ -584,6 +601,7 @@ darwin command-code session restrict_tools unsupported Command Code sessions hav
 darwin command-code session resume unknown session/resume, once session/list shows Command Code holds the conversation for WorkDir: it resumes an unknown id as an empty conversation
 darwin command-code session sandbox unsupported Command Code sessions have no proven OS sandbox
 darwin command-code session sandboxed_browser unsupported not offered by this engine
+darwin command-code session sandboxed_subagents unsupported not offered by this engine
 darwin command-code session skills unsupported cmd acp takes no skill paths and Command Code sessions have no instructions to carry a skill index
 darwin command-code session steer composed Command Code steering cancels the running prompt and sends another
 darwin command-code session structured_output unsupported not offered by this engine
@@ -617,6 +635,7 @@ darwin command-code models restrict_tools unsupported Command Code lists its mod
 darwin command-code models resume unsupported Command Code lists its models only inside a session's configuration
 darwin command-code models sandbox unsupported Command Code lists its models only inside a session's configuration
 darwin command-code models sandboxed_browser unsupported Command Code lists its models only inside a session's configuration
+darwin command-code models sandboxed_subagents unsupported Command Code lists its models only inside a session's configuration
 darwin command-code models skills unsupported Command Code lists its models only inside a session's configuration
 darwin command-code models steer unsupported Command Code lists its models only inside a session's configuration
 darwin command-code models structured_output unsupported Command Code lists its models only inside a session's configuration
@@ -650,6 +669,7 @@ darwin command-code account restrict_tools unsupported Command Code's agent prot
 darwin command-code account resume unsupported Command Code's agent protocol exposes no account inspection
 darwin command-code account sandbox unsupported Command Code's agent protocol exposes no account inspection
 darwin command-code account sandboxed_browser unsupported Command Code's agent protocol exposes no account inspection
+darwin command-code account sandboxed_subagents unsupported Command Code's agent protocol exposes no account inspection
 darwin command-code account skills unsupported Command Code's agent protocol exposes no account inspection
 darwin command-code account steer unsupported Command Code's agent protocol exposes no account inspection
 darwin command-code account structured_output unsupported Command Code's agent protocol exposes no account inspection
@@ -683,6 +703,7 @@ darwin antigravity complete restrict_tools unsupported no tool-free Antigravity 
 darwin antigravity complete resume unsupported no tool-free Antigravity completion mode has been proven; use Run or Session
 darwin antigravity complete sandbox unsupported no tool-free Antigravity completion mode has been proven; use Run or Session
 darwin antigravity complete sandboxed_browser unsupported no tool-free Antigravity completion mode has been proven; use Run or Session
+darwin antigravity complete sandboxed_subagents unsupported no tool-free Antigravity completion mode has been proven; use Run or Session
 darwin antigravity complete skills unsupported no tool-free Antigravity completion mode has been proven; use Run or Session
 darwin antigravity complete steer unsupported no tool-free Antigravity completion mode has been proven; use Run or Session
 darwin antigravity complete structured_output unsupported no tool-free Antigravity completion mode has been proven; use Run or Session
@@ -716,6 +737,7 @@ darwin antigravity run restrict_tools unsupported not offered by this engine
 darwin antigravity run resume native 
 darwin antigravity run sandbox unsupported not offered by this engine
 darwin antigravity run sandboxed_browser unsupported not offered by this engine
+darwin antigravity run sandboxed_subagents unsupported not offered by this engine
 darwin antigravity run skills unsupported agy takes no skill plugin flag and has no instruction flag to carry a skill index
 darwin antigravity run steer unsupported not offered by this engine
 darwin antigravity run structured_output native 
@@ -749,6 +771,7 @@ darwin antigravity session restrict_tools unsupported Antigravity sessions have 
 darwin antigravity session resume unknown not verified against the installed harness
 darwin antigravity session sandbox unsupported Antigravity sessions have no proven OS sandbox
 darwin antigravity session sandboxed_browser unsupported not offered by this engine
+darwin antigravity session sandboxed_subagents unsupported not offered by this engine
 darwin antigravity session skills unsupported agy takes no skill plugin flag and has no instruction flag to carry a skill index
 darwin antigravity session steer unsupported agy's stream-json input reads the next line only after a turn finishes
 darwin antigravity session structured_output unsupported not offered by this engine
@@ -782,6 +805,7 @@ darwin antigravity models restrict_tools unsupported not offered by this engine
 darwin antigravity models resume unsupported not offered by this engine
 darwin antigravity models sandbox unsupported not offered by this engine
 darwin antigravity models sandboxed_browser unsupported not offered by this engine
+darwin antigravity models sandboxed_subagents unsupported not offered by this engine
 darwin antigravity models skills unsupported not offered by this engine
 darwin antigravity models steer unsupported not offered by this engine
 darwin antigravity models structured_output unsupported not offered by this engine
@@ -815,6 +839,7 @@ darwin antigravity account restrict_tools unsupported not offered by this engine
 darwin antigravity account resume unsupported not offered by this engine
 darwin antigravity account sandbox unsupported not offered by this engine
 darwin antigravity account sandboxed_browser unsupported not offered by this engine
+darwin antigravity account sandboxed_subagents unsupported not offered by this engine
 darwin antigravity account skills unsupported not offered by this engine
 darwin antigravity account steer unsupported not offered by this engine
 darwin antigravity account structured_output unsupported not offered by this engine
@@ -848,6 +873,7 @@ darwin fx complete restrict_tools unsupported no tool-free fx mode has been prov
 darwin fx complete resume unsupported no tool-free fx mode has been proven; use Session
 darwin fx complete sandbox unsupported no tool-free fx mode has been proven; use Session
 darwin fx complete sandboxed_browser unsupported no tool-free fx mode has been proven; use Session
+darwin fx complete sandboxed_subagents unsupported no tool-free fx mode has been proven; use Session
 darwin fx complete skills unsupported no tool-free fx mode has been proven; use Session
 darwin fx complete steer unsupported no tool-free fx mode has been proven; use Session
 darwin fx complete structured_output unsupported no tool-free fx mode has been proven; use Session
@@ -881,6 +907,7 @@ darwin fx run restrict_tools unsupported not offered by this engine
 darwin fx run resume native 
 darwin fx run sandbox unsupported not offered by this engine
 darwin fx run sandboxed_browser unsupported not offered by this engine
+darwin fx run sandboxed_subagents unsupported not offered by this engine
 darwin fx run skills composed an index with each SKILL.md's path is added to the request
 darwin fx run steer unsupported not offered by this engine
 darwin fx run structured_output unsupported fx ask states no output schema
@@ -914,6 +941,7 @@ darwin fx session restrict_tools unsupported fx sessions have no proven removal 
 darwin fx session resume unknown session/resume answers with the configuration alone; fx refuses an id it does not hold
 darwin fx session sandbox unsupported fx sessions have no proven OS sandbox
 darwin fx session sandboxed_browser unsupported not offered by this engine
+darwin fx session sandboxed_subagents unsupported not offered by this engine
 darwin fx session skills composed the index of each provided skill's path travels with the session's instructions
 darwin fx session steer composed fx steering cancels the running prompt and sends another
 darwin fx session structured_output unsupported not offered by this engine
@@ -947,6 +975,7 @@ darwin fx models restrict_tools unsupported not offered by this engine
 darwin fx models resume unsupported not offered by this engine
 darwin fx models sandbox unsupported not offered by this engine
 darwin fx models sandboxed_browser unsupported not offered by this engine
+darwin fx models sandboxed_subagents unsupported not offered by this engine
 darwin fx models skills unsupported not offered by this engine
 darwin fx models steer unsupported not offered by this engine
 darwin fx models structured_output unsupported not offered by this engine
@@ -980,6 +1009,7 @@ darwin fx account restrict_tools unsupported not offered by this engine
 darwin fx account resume unsupported not offered by this engine
 darwin fx account sandbox unsupported not offered by this engine
 darwin fx account sandboxed_browser unsupported not offered by this engine
+darwin fx account sandboxed_subagents unsupported not offered by this engine
 darwin fx account skills unsupported not offered by this engine
 darwin fx account steer unsupported not offered by this engine
 darwin fx account structured_output unsupported not offered by this engine
@@ -1013,6 +1043,7 @@ darwin openai-compatible complete restrict_tools unsupported not offered by this
 darwin openai-compatible complete resume unsupported not offered by this engine
 darwin openai-compatible complete sandbox unsupported not offered by this engine
 darwin openai-compatible complete sandboxed_browser unsupported not offered by this engine
+darwin openai-compatible complete sandboxed_subagents unsupported not offered by this engine
 darwin openai-compatible complete skills composed the library indexes provided skills and answers a read-only skill tool; a permitted skill's scripts run only when the caller answers those calls
 darwin openai-compatible complete steer unsupported not offered by this engine
 darwin openai-compatible complete structured_output unsupported not offered by this engine
@@ -1046,6 +1077,7 @@ darwin openai-compatible run restrict_tools unsupported an API endpoint has no n
 darwin openai-compatible run resume unsupported an API endpoint has no native agent; use Complete
 darwin openai-compatible run sandbox unsupported an API endpoint has no native agent; use Complete
 darwin openai-compatible run sandboxed_browser unsupported an API endpoint has no native agent; use Complete
+darwin openai-compatible run sandboxed_subagents unsupported an API endpoint has no native agent; use Complete
 darwin openai-compatible run skills unsupported an API endpoint has no native agent; use Complete
 darwin openai-compatible run steer unsupported an API endpoint has no native agent; use Complete
 darwin openai-compatible run structured_output unsupported an API endpoint has no native agent; use Complete
@@ -1079,6 +1111,7 @@ darwin openai-compatible session restrict_tools composed only the caller's hoste
 darwin openai-compatible session resume composed the library reloads its own transcript; a call interrupted mid-run is answered as an unknown outcome, never re-run
 darwin openai-compatible session sandbox unknown Workbench.Commands proves its pinned Seatbelt profile before launch or refuses the session
 darwin openai-compatible session sandboxed_browser unsupported not offered by this engine
+darwin openai-compatible session sandboxed_subagents unsupported not offered by this engine
 darwin openai-compatible session skills composed the library indexes provided skills and answers its read-only skill tool; a permitted skill's scripts run as SkillRun says
 darwin openai-compatible session steer composed the library interrupts the turn and starts another
 darwin openai-compatible session structured_output unsupported not offered by this engine
@@ -1112,6 +1145,7 @@ darwin openai-compatible models restrict_tools unsupported not offered by this e
 darwin openai-compatible models resume unsupported not offered by this engine
 darwin openai-compatible models sandbox unsupported not offered by this engine
 darwin openai-compatible models sandboxed_browser unsupported not offered by this engine
+darwin openai-compatible models sandboxed_subagents unsupported not offered by this engine
 darwin openai-compatible models skills unsupported not offered by this engine
 darwin openai-compatible models steer unsupported not offered by this engine
 darwin openai-compatible models structured_output unsupported not offered by this engine
@@ -1145,6 +1179,7 @@ darwin openai-compatible account restrict_tools unsupported API endpoints expose
 darwin openai-compatible account resume unsupported API endpoints expose no account inspection
 darwin openai-compatible account sandbox unsupported API endpoints expose no account inspection
 darwin openai-compatible account sandboxed_browser unsupported API endpoints expose no account inspection
+darwin openai-compatible account sandboxed_subagents unsupported API endpoints expose no account inspection
 darwin openai-compatible account skills unsupported API endpoints expose no account inspection
 darwin openai-compatible account steer unsupported API endpoints expose no account inspection
 darwin openai-compatible account structured_output unsupported API endpoints expose no account inspection
@@ -1178,6 +1213,7 @@ darwin unrecognized complete restrict_tools unsupported unrecognized engine
 darwin unrecognized complete resume unsupported unrecognized engine
 darwin unrecognized complete sandbox unsupported unrecognized engine
 darwin unrecognized complete sandboxed_browser unsupported unrecognized engine
+darwin unrecognized complete sandboxed_subagents unsupported unrecognized engine
 darwin unrecognized complete skills unsupported unrecognized engine
 darwin unrecognized complete steer unsupported unrecognized engine
 darwin unrecognized complete structured_output unsupported unrecognized engine
@@ -1211,6 +1247,7 @@ darwin unrecognized run restrict_tools unsupported unrecognized engine
 darwin unrecognized run resume unsupported unrecognized engine
 darwin unrecognized run sandbox unsupported unrecognized engine
 darwin unrecognized run sandboxed_browser unsupported unrecognized engine
+darwin unrecognized run sandboxed_subagents unsupported unrecognized engine
 darwin unrecognized run skills unsupported unrecognized engine
 darwin unrecognized run steer unsupported unrecognized engine
 darwin unrecognized run structured_output unsupported unrecognized engine
@@ -1244,6 +1281,7 @@ darwin unrecognized session restrict_tools unsupported unrecognized engine
 darwin unrecognized session resume unsupported unrecognized engine
 darwin unrecognized session sandbox unsupported unrecognized engine
 darwin unrecognized session sandboxed_browser unsupported unrecognized engine
+darwin unrecognized session sandboxed_subagents unsupported unrecognized engine
 darwin unrecognized session skills unsupported unrecognized engine
 darwin unrecognized session steer unsupported unrecognized engine
 darwin unrecognized session structured_output unsupported unrecognized engine
@@ -1277,6 +1315,7 @@ darwin unrecognized models restrict_tools unsupported unrecognized engine
 darwin unrecognized models resume unsupported unrecognized engine
 darwin unrecognized models sandbox unsupported unrecognized engine
 darwin unrecognized models sandboxed_browser unsupported unrecognized engine
+darwin unrecognized models sandboxed_subagents unsupported unrecognized engine
 darwin unrecognized models skills unsupported unrecognized engine
 darwin unrecognized models steer unsupported unrecognized engine
 darwin unrecognized models structured_output unsupported unrecognized engine
@@ -1310,6 +1349,7 @@ darwin unrecognized account restrict_tools unsupported unrecognized engine
 darwin unrecognized account resume unsupported unrecognized engine
 darwin unrecognized account sandbox unsupported unrecognized engine
 darwin unrecognized account sandboxed_browser unsupported unrecognized engine
+darwin unrecognized account sandboxed_subagents unsupported unrecognized engine
 darwin unrecognized account skills unsupported unrecognized engine
 darwin unrecognized account steer unsupported unrecognized engine
 darwin unrecognized account structured_output unsupported unrecognized engine
@@ -1343,6 +1383,7 @@ linux codex complete restrict_tools unsupported not offered by this engine
 linux codex complete resume unsupported not offered by this engine
 linux codex complete sandbox unsupported not offered by this engine
 linux codex complete sandboxed_browser unsupported not offered by this engine
+linux codex complete sandboxed_subagents unsupported not offered by this engine
 linux codex complete skills composed the library indexes provided skills and answers a read-only skill tool; a permitted skill's scripts run only when the caller answers those calls
 linux codex complete steer unsupported not offered by this engine
 linux codex complete structured_output unsupported not offered by this engine
@@ -1376,6 +1417,7 @@ linux codex run restrict_tools unsupported not offered by this engine
 linux codex run resume native 
 linux codex run sandbox unsupported not offered by this engine
 linux codex run sandboxed_browser unsupported not offered by this engine
+linux codex run sandboxed_subagents unsupported not offered by this engine
 linux codex run skills composed an index with each SKILL.md's path is added to the developer instructions
 linux codex run steer unsupported not offered by this engine
 linux codex run structured_output native 
@@ -1409,6 +1451,7 @@ linux codex session restrict_tools unknown not verified against the installed ha
 linux codex session resume unknown not verified against the installed harness
 linux codex session sandbox unknown not verified against the installed harness
 linux codex session sandboxed_browser native the ChatGPT app node_repl bridge runs JavaScript confined by the session sandbox, proven before launch; drives the owner's real Chrome with its logins; Chrome backend only, no computer use
+linux codex session sandboxed_subagents native codex-cli's multi_agent tools; agents run as threads of the session's app-server under its permission profile and approval policy, as Codex documents, not proved by the library
 linux codex session skills composed instructions or hosted tools; native in sandboxed sessions through the runtime home
 linux codex session steer unknown not verified against the installed harness
 linux codex session structured_output unsupported not offered by this engine
@@ -1442,6 +1485,7 @@ linux codex models restrict_tools unsupported not offered by this engine
 linux codex models resume unsupported not offered by this engine
 linux codex models sandbox unsupported not offered by this engine
 linux codex models sandboxed_browser unsupported not offered by this engine
+linux codex models sandboxed_subagents unsupported not offered by this engine
 linux codex models skills unsupported not offered by this engine
 linux codex models steer unsupported not offered by this engine
 linux codex models structured_output unsupported not offered by this engine
@@ -1475,6 +1519,7 @@ linux codex account restrict_tools unsupported not offered by this engine
 linux codex account resume unsupported not offered by this engine
 linux codex account sandbox unsupported not offered by this engine
 linux codex account sandboxed_browser unsupported not offered by this engine
+linux codex account sandboxed_subagents unsupported not offered by this engine
 linux codex account skills unsupported not offered by this engine
 linux codex account steer unsupported not offered by this engine
 linux codex account structured_output unsupported not offered by this engine
@@ -1508,6 +1553,7 @@ linux claude complete restrict_tools unsupported not offered by this engine
 linux claude complete resume unsupported not offered by this engine
 linux claude complete sandbox unsupported not offered by this engine
 linux claude complete sandboxed_browser unsupported not offered by this engine
+linux claude complete sandboxed_subagents unsupported not offered by this engine
 linux claude complete skills composed the library indexes provided skills and answers a read-only skill tool; a permitted skill's scripts run only when the caller answers those calls
 linux claude complete steer unsupported not offered by this engine
 linux claude complete structured_output unsupported not offered by this engine
@@ -1541,6 +1587,7 @@ linux claude run restrict_tools unsupported not offered by this engine
 linux claude run resume native 
 linux claude run sandbox unsupported not offered by this engine
 linux claude run sandboxed_browser unsupported not offered by this engine
+linux claude run sandboxed_subagents unsupported not offered by this engine
 linux claude run skills native loaded through a private --plugin-dir
 linux claude run steer unsupported not offered by this engine
 linux claude run structured_output native 
@@ -1574,6 +1621,7 @@ linux claude session restrict_tools unknown not verified against the installed h
 linux claude session resume unknown not verified against the installed harness
 linux claude session sandbox unknown not verified against the installed harness
 linux claude session sandboxed_browser native a sandboxed Claude session admits the browser's tools beside its own, except those that would read local files or start another agent; the browser itself runs outside the sandbox
+linux claude session sandboxed_subagents native Claude Code's Agent tool with its built-in agent types only; a subagent runs in the session's process under its tools, permission rules and OS sandbox, as Claude Code documents, not proved by the library; isolation: worktree has the CLI create a git worktree and branch outside the sandbox, even without Write
 linux claude session skills native a private --plugin-dir; composed when sandboxed or restricted
 linux claude session steer unknown not verified against the installed harness
 linux claude session structured_output unsupported not offered by this engine
@@ -1607,6 +1655,7 @@ linux claude models restrict_tools unsupported not offered by this engine
 linux claude models resume unsupported not offered by this engine
 linux claude models sandbox unsupported not offered by this engine
 linux claude models sandboxed_browser unsupported not offered by this engine
+linux claude models sandboxed_subagents unsupported not offered by this engine
 linux claude models skills unsupported not offered by this engine
 linux claude models steer unsupported not offered by this engine
 linux claude models structured_output unsupported not offered by this engine
@@ -1640,6 +1689,7 @@ linux claude account restrict_tools unsupported not offered by this engine
 linux claude account resume unsupported not offered by this engine
 linux claude account sandbox unsupported not offered by this engine
 linux claude account sandboxed_browser unsupported not offered by this engine
+linux claude account sandboxed_subagents unsupported not offered by this engine
 linux claude account skills unsupported not offered by this engine
 linux claude account steer unsupported not offered by this engine
 linux claude account structured_output unsupported not offered by this engine
@@ -1673,6 +1723,7 @@ linux grok complete restrict_tools unsupported not offered by this engine
 linux grok complete resume unsupported not offered by this engine
 linux grok complete sandbox unsupported not offered by this engine
 linux grok complete sandboxed_browser unsupported not offered by this engine
+linux grok complete sandboxed_subagents unsupported not offered by this engine
 linux grok complete skills composed the library indexes provided skills and answers a read-only skill tool; a permitted skill's scripts run only when the caller answers those calls
 linux grok complete steer unsupported not offered by this engine
 linux grok complete structured_output unsupported not offered by this engine
@@ -1706,6 +1757,7 @@ linux grok run restrict_tools unsupported not offered by this engine
 linux grok run resume native 
 linux grok run sandbox unsupported not offered by this engine
 linux grok run sandboxed_browser unsupported not offered by this engine
+linux grok run sandboxed_subagents unsupported not offered by this engine
 linux grok run skills composed an index with each SKILL.md's path is added through --rules
 linux grok run steer unsupported not offered by this engine
 linux grok run structured_output native 
@@ -1739,6 +1791,7 @@ linux grok session restrict_tools unsupported Grok sessions have no proven remov
 linux grok session resume unknown not verified against the installed harness
 linux grok session sandbox unsupported Grok sessions have no proven OS sandbox
 linux grok session sandboxed_browser unsupported not offered by this engine
+linux grok session sandboxed_subagents unsupported not offered by this engine
 linux grok session skills native grok agent --plugin-dir
 linux grok session steer composed Grok steering cancels the running prompt and sends another
 linux grok session structured_output unsupported not offered by this engine
@@ -1772,6 +1825,7 @@ linux grok models restrict_tools unsupported not offered by this engine
 linux grok models resume unsupported not offered by this engine
 linux grok models sandbox unsupported not offered by this engine
 linux grok models sandboxed_browser unsupported not offered by this engine
+linux grok models sandboxed_subagents unsupported not offered by this engine
 linux grok models skills unsupported not offered by this engine
 linux grok models steer unsupported not offered by this engine
 linux grok models structured_output unsupported not offered by this engine
@@ -1805,6 +1859,7 @@ linux grok account restrict_tools unsupported not offered by this engine
 linux grok account resume unsupported not offered by this engine
 linux grok account sandbox unsupported not offered by this engine
 linux grok account sandboxed_browser unsupported not offered by this engine
+linux grok account sandboxed_subagents unsupported not offered by this engine
 linux grok account skills unsupported not offered by this engine
 linux grok account steer unsupported not offered by this engine
 linux grok account structured_output unsupported not offered by this engine
@@ -1838,6 +1893,7 @@ linux command-code complete restrict_tools unsupported no tool-free Command Code
 linux command-code complete resume unsupported no tool-free Command Code mode has been proven; use Session
 linux command-code complete sandbox unsupported no tool-free Command Code mode has been proven; use Session
 linux command-code complete sandboxed_browser unsupported no tool-free Command Code mode has been proven; use Session
+linux command-code complete sandboxed_subagents unsupported no tool-free Command Code mode has been proven; use Session
 linux command-code complete skills unsupported no tool-free Command Code mode has been proven; use Session
 linux command-code complete steer unsupported no tool-free Command Code mode has been proven; use Session
 linux command-code complete structured_output unsupported no tool-free Command Code mode has been proven; use Session
@@ -1871,6 +1927,7 @@ linux command-code run restrict_tools unsupported Command Code is offered only a
 linux command-code run resume unsupported Command Code is offered only as a session
 linux command-code run sandbox unsupported Command Code is offered only as a session
 linux command-code run sandboxed_browser unsupported Command Code is offered only as a session
+linux command-code run sandboxed_subagents unsupported Command Code is offered only as a session
 linux command-code run skills unsupported Command Code is offered only as a session
 linux command-code run steer unsupported Command Code is offered only as a session
 linux command-code run structured_output unsupported Command Code is offered only as a session
@@ -1904,6 +1961,7 @@ linux command-code session restrict_tools unsupported Command Code sessions have
 linux command-code session resume unknown session/resume, once session/list shows Command Code holds the conversation for WorkDir: it resumes an unknown id as an empty conversation
 linux command-code session sandbox unsupported Command Code sessions have no proven OS sandbox
 linux command-code session sandboxed_browser unsupported not offered by this engine
+linux command-code session sandboxed_subagents unsupported not offered by this engine
 linux command-code session skills unsupported cmd acp takes no skill paths and Command Code sessions have no instructions to carry a skill index
 linux command-code session steer composed Command Code steering cancels the running prompt and sends another
 linux command-code session structured_output unsupported not offered by this engine
@@ -1937,6 +1995,7 @@ linux command-code models restrict_tools unsupported Command Code lists its mode
 linux command-code models resume unsupported Command Code lists its models only inside a session's configuration
 linux command-code models sandbox unsupported Command Code lists its models only inside a session's configuration
 linux command-code models sandboxed_browser unsupported Command Code lists its models only inside a session's configuration
+linux command-code models sandboxed_subagents unsupported Command Code lists its models only inside a session's configuration
 linux command-code models skills unsupported Command Code lists its models only inside a session's configuration
 linux command-code models steer unsupported Command Code lists its models only inside a session's configuration
 linux command-code models structured_output unsupported Command Code lists its models only inside a session's configuration
@@ -1970,6 +2029,7 @@ linux command-code account restrict_tools unsupported Command Code's agent proto
 linux command-code account resume unsupported Command Code's agent protocol exposes no account inspection
 linux command-code account sandbox unsupported Command Code's agent protocol exposes no account inspection
 linux command-code account sandboxed_browser unsupported Command Code's agent protocol exposes no account inspection
+linux command-code account sandboxed_subagents unsupported Command Code's agent protocol exposes no account inspection
 linux command-code account skills unsupported Command Code's agent protocol exposes no account inspection
 linux command-code account steer unsupported Command Code's agent protocol exposes no account inspection
 linux command-code account structured_output unsupported Command Code's agent protocol exposes no account inspection
@@ -2003,6 +2063,7 @@ linux antigravity complete restrict_tools unsupported no tool-free Antigravity c
 linux antigravity complete resume unsupported no tool-free Antigravity completion mode has been proven; use Run or Session
 linux antigravity complete sandbox unsupported no tool-free Antigravity completion mode has been proven; use Run or Session
 linux antigravity complete sandboxed_browser unsupported no tool-free Antigravity completion mode has been proven; use Run or Session
+linux antigravity complete sandboxed_subagents unsupported no tool-free Antigravity completion mode has been proven; use Run or Session
 linux antigravity complete skills unsupported no tool-free Antigravity completion mode has been proven; use Run or Session
 linux antigravity complete steer unsupported no tool-free Antigravity completion mode has been proven; use Run or Session
 linux antigravity complete structured_output unsupported no tool-free Antigravity completion mode has been proven; use Run or Session
@@ -2036,6 +2097,7 @@ linux antigravity run restrict_tools unsupported not offered by this engine
 linux antigravity run resume native 
 linux antigravity run sandbox unsupported not offered by this engine
 linux antigravity run sandboxed_browser unsupported not offered by this engine
+linux antigravity run sandboxed_subagents unsupported not offered by this engine
 linux antigravity run skills unsupported agy takes no skill plugin flag and has no instruction flag to carry a skill index
 linux antigravity run steer unsupported not offered by this engine
 linux antigravity run structured_output native 
@@ -2069,6 +2131,7 @@ linux antigravity session restrict_tools unsupported Antigravity sessions have n
 linux antigravity session resume unknown not verified against the installed harness
 linux antigravity session sandbox unsupported Antigravity sessions have no proven OS sandbox
 linux antigravity session sandboxed_browser unsupported not offered by this engine
+linux antigravity session sandboxed_subagents unsupported not offered by this engine
 linux antigravity session skills unsupported agy takes no skill plugin flag and has no instruction flag to carry a skill index
 linux antigravity session steer unsupported agy's stream-json input reads the next line only after a turn finishes
 linux antigravity session structured_output unsupported not offered by this engine
@@ -2102,6 +2165,7 @@ linux antigravity models restrict_tools unsupported not offered by this engine
 linux antigravity models resume unsupported not offered by this engine
 linux antigravity models sandbox unsupported not offered by this engine
 linux antigravity models sandboxed_browser unsupported not offered by this engine
+linux antigravity models sandboxed_subagents unsupported not offered by this engine
 linux antigravity models skills unsupported not offered by this engine
 linux antigravity models steer unsupported not offered by this engine
 linux antigravity models structured_output unsupported not offered by this engine
@@ -2135,6 +2199,7 @@ linux antigravity account restrict_tools unsupported not offered by this engine
 linux antigravity account resume unsupported not offered by this engine
 linux antigravity account sandbox unsupported not offered by this engine
 linux antigravity account sandboxed_browser unsupported not offered by this engine
+linux antigravity account sandboxed_subagents unsupported not offered by this engine
 linux antigravity account skills unsupported not offered by this engine
 linux antigravity account steer unsupported not offered by this engine
 linux antigravity account structured_output unsupported not offered by this engine
@@ -2168,6 +2233,7 @@ linux fx complete restrict_tools unsupported no tool-free fx mode has been prove
 linux fx complete resume unsupported no tool-free fx mode has been proven; use Session
 linux fx complete sandbox unsupported no tool-free fx mode has been proven; use Session
 linux fx complete sandboxed_browser unsupported no tool-free fx mode has been proven; use Session
+linux fx complete sandboxed_subagents unsupported no tool-free fx mode has been proven; use Session
 linux fx complete skills unsupported no tool-free fx mode has been proven; use Session
 linux fx complete steer unsupported no tool-free fx mode has been proven; use Session
 linux fx complete structured_output unsupported no tool-free fx mode has been proven; use Session
@@ -2201,6 +2267,7 @@ linux fx run restrict_tools unsupported not offered by this engine
 linux fx run resume native 
 linux fx run sandbox unsupported not offered by this engine
 linux fx run sandboxed_browser unsupported not offered by this engine
+linux fx run sandboxed_subagents unsupported not offered by this engine
 linux fx run skills composed an index with each SKILL.md's path is added to the request
 linux fx run steer unsupported not offered by this engine
 linux fx run structured_output unsupported fx ask states no output schema
@@ -2234,6 +2301,7 @@ linux fx session restrict_tools unsupported fx sessions have no proven removal o
 linux fx session resume unknown session/resume answers with the configuration alone; fx refuses an id it does not hold
 linux fx session sandbox unsupported fx sessions have no proven OS sandbox
 linux fx session sandboxed_browser unsupported not offered by this engine
+linux fx session sandboxed_subagents unsupported not offered by this engine
 linux fx session skills composed the index of each provided skill's path travels with the session's instructions
 linux fx session steer composed fx steering cancels the running prompt and sends another
 linux fx session structured_output unsupported not offered by this engine
@@ -2267,6 +2335,7 @@ linux fx models restrict_tools unsupported not offered by this engine
 linux fx models resume unsupported not offered by this engine
 linux fx models sandbox unsupported not offered by this engine
 linux fx models sandboxed_browser unsupported not offered by this engine
+linux fx models sandboxed_subagents unsupported not offered by this engine
 linux fx models skills unsupported not offered by this engine
 linux fx models steer unsupported not offered by this engine
 linux fx models structured_output unsupported not offered by this engine
@@ -2300,6 +2369,7 @@ linux fx account restrict_tools unsupported not offered by this engine
 linux fx account resume unsupported not offered by this engine
 linux fx account sandbox unsupported not offered by this engine
 linux fx account sandboxed_browser unsupported not offered by this engine
+linux fx account sandboxed_subagents unsupported not offered by this engine
 linux fx account skills unsupported not offered by this engine
 linux fx account steer unsupported not offered by this engine
 linux fx account structured_output unsupported not offered by this engine
@@ -2333,6 +2403,7 @@ linux openai-compatible complete restrict_tools unsupported not offered by this 
 linux openai-compatible complete resume unsupported not offered by this engine
 linux openai-compatible complete sandbox unsupported not offered by this engine
 linux openai-compatible complete sandboxed_browser unsupported not offered by this engine
+linux openai-compatible complete sandboxed_subagents unsupported not offered by this engine
 linux openai-compatible complete skills composed the library indexes provided skills and answers a read-only skill tool; a permitted skill's scripts run only when the caller answers those calls
 linux openai-compatible complete steer unsupported not offered by this engine
 linux openai-compatible complete structured_output unsupported not offered by this engine
@@ -2366,6 +2437,7 @@ linux openai-compatible run restrict_tools unsupported an API endpoint has no na
 linux openai-compatible run resume unsupported an API endpoint has no native agent; use Complete
 linux openai-compatible run sandbox unsupported an API endpoint has no native agent; use Complete
 linux openai-compatible run sandboxed_browser unsupported an API endpoint has no native agent; use Complete
+linux openai-compatible run sandboxed_subagents unsupported an API endpoint has no native agent; use Complete
 linux openai-compatible run skills unsupported an API endpoint has no native agent; use Complete
 linux openai-compatible run steer unsupported an API endpoint has no native agent; use Complete
 linux openai-compatible run structured_output unsupported an API endpoint has no native agent; use Complete
@@ -2399,6 +2471,7 @@ linux openai-compatible session restrict_tools composed only the caller's hosted
 linux openai-compatible session resume composed the library reloads its own transcript; a call interrupted mid-run is answered as an unknown outcome, never re-run
 linux openai-compatible session sandbox unknown Workbench.Commands proves bubblewrap 0.8.0+ without capabilities or nested user namespaces before launch or refuses the session
 linux openai-compatible session sandboxed_browser unsupported not offered by this engine
+linux openai-compatible session sandboxed_subagents unsupported not offered by this engine
 linux openai-compatible session skills composed the library indexes provided skills and answers its read-only skill tool; a permitted skill's scripts run as SkillRun says
 linux openai-compatible session steer composed the library interrupts the turn and starts another
 linux openai-compatible session structured_output unsupported not offered by this engine
@@ -2432,6 +2505,7 @@ linux openai-compatible models restrict_tools unsupported not offered by this en
 linux openai-compatible models resume unsupported not offered by this engine
 linux openai-compatible models sandbox unsupported not offered by this engine
 linux openai-compatible models sandboxed_browser unsupported not offered by this engine
+linux openai-compatible models sandboxed_subagents unsupported not offered by this engine
 linux openai-compatible models skills unsupported not offered by this engine
 linux openai-compatible models steer unsupported not offered by this engine
 linux openai-compatible models structured_output unsupported not offered by this engine
@@ -2465,6 +2539,7 @@ linux openai-compatible account restrict_tools unsupported API endpoints expose 
 linux openai-compatible account resume unsupported API endpoints expose no account inspection
 linux openai-compatible account sandbox unsupported API endpoints expose no account inspection
 linux openai-compatible account sandboxed_browser unsupported API endpoints expose no account inspection
+linux openai-compatible account sandboxed_subagents unsupported API endpoints expose no account inspection
 linux openai-compatible account skills unsupported API endpoints expose no account inspection
 linux openai-compatible account steer unsupported API endpoints expose no account inspection
 linux openai-compatible account structured_output unsupported API endpoints expose no account inspection
@@ -2498,6 +2573,7 @@ linux unrecognized complete restrict_tools unsupported unrecognized engine
 linux unrecognized complete resume unsupported unrecognized engine
 linux unrecognized complete sandbox unsupported unrecognized engine
 linux unrecognized complete sandboxed_browser unsupported unrecognized engine
+linux unrecognized complete sandboxed_subagents unsupported unrecognized engine
 linux unrecognized complete skills unsupported unrecognized engine
 linux unrecognized complete steer unsupported unrecognized engine
 linux unrecognized complete structured_output unsupported unrecognized engine
@@ -2531,6 +2607,7 @@ linux unrecognized run restrict_tools unsupported unrecognized engine
 linux unrecognized run resume unsupported unrecognized engine
 linux unrecognized run sandbox unsupported unrecognized engine
 linux unrecognized run sandboxed_browser unsupported unrecognized engine
+linux unrecognized run sandboxed_subagents unsupported unrecognized engine
 linux unrecognized run skills unsupported unrecognized engine
 linux unrecognized run steer unsupported unrecognized engine
 linux unrecognized run structured_output unsupported unrecognized engine
@@ -2564,6 +2641,7 @@ linux unrecognized session restrict_tools unsupported unrecognized engine
 linux unrecognized session resume unsupported unrecognized engine
 linux unrecognized session sandbox unsupported unrecognized engine
 linux unrecognized session sandboxed_browser unsupported unrecognized engine
+linux unrecognized session sandboxed_subagents unsupported unrecognized engine
 linux unrecognized session skills unsupported unrecognized engine
 linux unrecognized session steer unsupported unrecognized engine
 linux unrecognized session structured_output unsupported unrecognized engine
@@ -2597,6 +2675,7 @@ linux unrecognized models restrict_tools unsupported unrecognized engine
 linux unrecognized models resume unsupported unrecognized engine
 linux unrecognized models sandbox unsupported unrecognized engine
 linux unrecognized models sandboxed_browser unsupported unrecognized engine
+linux unrecognized models sandboxed_subagents unsupported unrecognized engine
 linux unrecognized models skills unsupported unrecognized engine
 linux unrecognized models steer unsupported unrecognized engine
 linux unrecognized models structured_output unsupported unrecognized engine
@@ -2630,6 +2709,7 @@ linux unrecognized account restrict_tools unsupported unrecognized engine
 linux unrecognized account resume unsupported unrecognized engine
 linux unrecognized account sandbox unsupported unrecognized engine
 linux unrecognized account sandboxed_browser unsupported unrecognized engine
+linux unrecognized account sandboxed_subagents unsupported unrecognized engine
 linux unrecognized account skills unsupported unrecognized engine
 linux unrecognized account steer unsupported unrecognized engine
 linux unrecognized account structured_output unsupported unrecognized engine
@@ -2663,6 +2743,7 @@ windows codex complete restrict_tools unsupported not offered by this engine
 windows codex complete resume unsupported not offered by this engine
 windows codex complete sandbox unsupported not offered by this engine
 windows codex complete sandboxed_browser unsupported not offered by this engine
+windows codex complete sandboxed_subagents unsupported not offered by this engine
 windows codex complete skills composed the library indexes provided skills and answers a read-only skill tool; a permitted skill's scripts run only when the caller answers those calls
 windows codex complete steer unsupported not offered by this engine
 windows codex complete structured_output unsupported not offered by this engine
@@ -2696,6 +2777,7 @@ windows codex run restrict_tools unsupported not offered by this engine
 windows codex run resume native 
 windows codex run sandbox unsupported not offered by this engine
 windows codex run sandboxed_browser unsupported not offered by this engine
+windows codex run sandboxed_subagents unsupported not offered by this engine
 windows codex run skills composed an index with each SKILL.md's path is added to the developer instructions
 windows codex run steer unsupported not offered by this engine
 windows codex run structured_output native 
@@ -2729,6 +2811,7 @@ windows codex session restrict_tools unsupported restricted and sandboxed hostin
 windows codex session resume unknown not verified against the installed harness
 windows codex session sandbox unsupported restricted and sandboxed hosting are unavailable on Windows
 windows codex session sandboxed_browser native the ChatGPT app node_repl bridge runs JavaScript confined by the session sandbox, proven before launch; drives the owner's real Chrome with its logins; Chrome backend only, no computer use
+windows codex session sandboxed_subagents unsupported restricted and sandboxed hosting are unavailable on Windows
 windows codex session skills composed instructions or hosted tools; native in sandboxed sessions through the runtime home
 windows codex session steer unknown not verified against the installed harness
 windows codex session structured_output unsupported not offered by this engine
@@ -2762,6 +2845,7 @@ windows codex models restrict_tools unsupported not offered by this engine
 windows codex models resume unsupported not offered by this engine
 windows codex models sandbox unsupported not offered by this engine
 windows codex models sandboxed_browser unsupported not offered by this engine
+windows codex models sandboxed_subagents unsupported not offered by this engine
 windows codex models skills unsupported not offered by this engine
 windows codex models steer unsupported not offered by this engine
 windows codex models structured_output unsupported not offered by this engine
@@ -2795,6 +2879,7 @@ windows codex account restrict_tools unsupported not offered by this engine
 windows codex account resume unsupported not offered by this engine
 windows codex account sandbox unsupported not offered by this engine
 windows codex account sandboxed_browser unsupported not offered by this engine
+windows codex account sandboxed_subagents unsupported not offered by this engine
 windows codex account skills unsupported not offered by this engine
 windows codex account steer unsupported not offered by this engine
 windows codex account structured_output unsupported not offered by this engine
@@ -2828,6 +2913,7 @@ windows claude complete restrict_tools unsupported not offered by this engine
 windows claude complete resume unsupported not offered by this engine
 windows claude complete sandbox unsupported not offered by this engine
 windows claude complete sandboxed_browser unsupported not offered by this engine
+windows claude complete sandboxed_subagents unsupported not offered by this engine
 windows claude complete skills composed the library indexes provided skills and answers a read-only skill tool; a permitted skill's scripts run only when the caller answers those calls
 windows claude complete steer unsupported not offered by this engine
 windows claude complete structured_output unsupported not offered by this engine
@@ -2861,6 +2947,7 @@ windows claude run restrict_tools unsupported not offered by this engine
 windows claude run resume native 
 windows claude run sandbox unsupported not offered by this engine
 windows claude run sandboxed_browser unsupported not offered by this engine
+windows claude run sandboxed_subagents unsupported not offered by this engine
 windows claude run skills native loaded through a private --plugin-dir
 windows claude run steer unsupported not offered by this engine
 windows claude run structured_output native 
@@ -2894,6 +2981,7 @@ windows claude session restrict_tools unsupported restricted and sandboxed hosti
 windows claude session resume unknown not verified against the installed harness
 windows claude session sandbox unsupported restricted and sandboxed hosting are unavailable on Windows
 windows claude session sandboxed_browser native a sandboxed Claude session admits the browser's tools beside its own, except those that would read local files or start another agent; the browser itself runs outside the sandbox
+windows claude session sandboxed_subagents unsupported restricted and sandboxed hosting are unavailable on Windows
 windows claude session skills native a private --plugin-dir; composed when sandboxed or restricted
 windows claude session steer unknown not verified against the installed harness
 windows claude session structured_output unsupported not offered by this engine
@@ -2927,6 +3015,7 @@ windows claude models restrict_tools unsupported not offered by this engine
 windows claude models resume unsupported not offered by this engine
 windows claude models sandbox unsupported not offered by this engine
 windows claude models sandboxed_browser unsupported not offered by this engine
+windows claude models sandboxed_subagents unsupported not offered by this engine
 windows claude models skills unsupported not offered by this engine
 windows claude models steer unsupported not offered by this engine
 windows claude models structured_output unsupported not offered by this engine
@@ -2960,6 +3049,7 @@ windows claude account restrict_tools unsupported not offered by this engine
 windows claude account resume unsupported not offered by this engine
 windows claude account sandbox unsupported not offered by this engine
 windows claude account sandboxed_browser unsupported not offered by this engine
+windows claude account sandboxed_subagents unsupported not offered by this engine
 windows claude account skills unsupported not offered by this engine
 windows claude account steer unsupported not offered by this engine
 windows claude account structured_output unsupported not offered by this engine
@@ -2993,6 +3083,7 @@ windows grok complete restrict_tools unsupported Grok's restricted runtime home 
 windows grok complete resume unsupported Grok's restricted runtime home is unavailable on Windows
 windows grok complete sandbox unsupported Grok's restricted runtime home is unavailable on Windows
 windows grok complete sandboxed_browser unsupported Grok's restricted runtime home is unavailable on Windows
+windows grok complete sandboxed_subagents unsupported Grok's restricted runtime home is unavailable on Windows
 windows grok complete skills unsupported Grok's restricted runtime home is unavailable on Windows
 windows grok complete steer unsupported Grok's restricted runtime home is unavailable on Windows
 windows grok complete structured_output unsupported Grok's restricted runtime home is unavailable on Windows
@@ -3026,6 +3117,7 @@ windows grok run restrict_tools unsupported not offered by this engine
 windows grok run resume native 
 windows grok run sandbox unsupported not offered by this engine
 windows grok run sandboxed_browser unsupported not offered by this engine
+windows grok run sandboxed_subagents unsupported not offered by this engine
 windows grok run skills composed an index with each SKILL.md's path is added through --rules
 windows grok run steer unsupported not offered by this engine
 windows grok run structured_output native 
@@ -3059,6 +3151,7 @@ windows grok session restrict_tools unsupported restricted and sandboxed hosting
 windows grok session resume unknown not verified against the installed harness
 windows grok session sandbox unsupported restricted and sandboxed hosting are unavailable on Windows
 windows grok session sandboxed_browser unsupported not offered by this engine
+windows grok session sandboxed_subagents unsupported not offered by this engine
 windows grok session skills native grok agent --plugin-dir
 windows grok session steer composed Grok steering cancels the running prompt and sends another
 windows grok session structured_output unsupported not offered by this engine
@@ -3092,6 +3185,7 @@ windows grok models restrict_tools unsupported not offered by this engine
 windows grok models resume unsupported not offered by this engine
 windows grok models sandbox unsupported not offered by this engine
 windows grok models sandboxed_browser unsupported not offered by this engine
+windows grok models sandboxed_subagents unsupported not offered by this engine
 windows grok models skills unsupported not offered by this engine
 windows grok models steer unsupported not offered by this engine
 windows grok models structured_output unsupported not offered by this engine
@@ -3125,6 +3219,7 @@ windows grok account restrict_tools unsupported not offered by this engine
 windows grok account resume unsupported not offered by this engine
 windows grok account sandbox unsupported not offered by this engine
 windows grok account sandboxed_browser unsupported not offered by this engine
+windows grok account sandboxed_subagents unsupported not offered by this engine
 windows grok account skills unsupported not offered by this engine
 windows grok account steer unsupported not offered by this engine
 windows grok account structured_output unsupported not offered by this engine
@@ -3158,6 +3253,7 @@ windows command-code complete restrict_tools unsupported no tool-free Command Co
 windows command-code complete resume unsupported no tool-free Command Code mode has been proven; use Session
 windows command-code complete sandbox unsupported no tool-free Command Code mode has been proven; use Session
 windows command-code complete sandboxed_browser unsupported no tool-free Command Code mode has been proven; use Session
+windows command-code complete sandboxed_subagents unsupported no tool-free Command Code mode has been proven; use Session
 windows command-code complete skills unsupported no tool-free Command Code mode has been proven; use Session
 windows command-code complete steer unsupported no tool-free Command Code mode has been proven; use Session
 windows command-code complete structured_output unsupported no tool-free Command Code mode has been proven; use Session
@@ -3191,6 +3287,7 @@ windows command-code run restrict_tools unsupported Command Code is offered only
 windows command-code run resume unsupported Command Code is offered only as a session
 windows command-code run sandbox unsupported Command Code is offered only as a session
 windows command-code run sandboxed_browser unsupported Command Code is offered only as a session
+windows command-code run sandboxed_subagents unsupported Command Code is offered only as a session
 windows command-code run skills unsupported Command Code is offered only as a session
 windows command-code run steer unsupported Command Code is offered only as a session
 windows command-code run structured_output unsupported Command Code is offered only as a session
@@ -3224,6 +3321,7 @@ windows command-code session restrict_tools unsupported Command Code sessions ar
 windows command-code session resume unsupported Command Code sessions are not verified on Windows, where cmd names the system command interpreter
 windows command-code session sandbox unsupported Command Code sessions are not verified on Windows, where cmd names the system command interpreter
 windows command-code session sandboxed_browser unsupported Command Code sessions are not verified on Windows, where cmd names the system command interpreter
+windows command-code session sandboxed_subagents unsupported Command Code sessions are not verified on Windows, where cmd names the system command interpreter
 windows command-code session skills unsupported Command Code sessions are not verified on Windows, where cmd names the system command interpreter
 windows command-code session steer unsupported Command Code sessions are not verified on Windows, where cmd names the system command interpreter
 windows command-code session structured_output unsupported Command Code sessions are not verified on Windows, where cmd names the system command interpreter
@@ -3257,6 +3355,7 @@ windows command-code models restrict_tools unsupported Command Code lists its mo
 windows command-code models resume unsupported Command Code lists its models only inside a session's configuration
 windows command-code models sandbox unsupported Command Code lists its models only inside a session's configuration
 windows command-code models sandboxed_browser unsupported Command Code lists its models only inside a session's configuration
+windows command-code models sandboxed_subagents unsupported Command Code lists its models only inside a session's configuration
 windows command-code models skills unsupported Command Code lists its models only inside a session's configuration
 windows command-code models steer unsupported Command Code lists its models only inside a session's configuration
 windows command-code models structured_output unsupported Command Code lists its models only inside a session's configuration
@@ -3290,6 +3389,7 @@ windows command-code account restrict_tools unsupported Command Code's agent pro
 windows command-code account resume unsupported Command Code's agent protocol exposes no account inspection
 windows command-code account sandbox unsupported Command Code's agent protocol exposes no account inspection
 windows command-code account sandboxed_browser unsupported Command Code's agent protocol exposes no account inspection
+windows command-code account sandboxed_subagents unsupported Command Code's agent protocol exposes no account inspection
 windows command-code account skills unsupported Command Code's agent protocol exposes no account inspection
 windows command-code account steer unsupported Command Code's agent protocol exposes no account inspection
 windows command-code account structured_output unsupported Command Code's agent protocol exposes no account inspection
@@ -3323,6 +3423,7 @@ windows antigravity complete restrict_tools unsupported no tool-free Antigravity
 windows antigravity complete resume unsupported no tool-free Antigravity completion mode has been proven; use Run or Session
 windows antigravity complete sandbox unsupported no tool-free Antigravity completion mode has been proven; use Run or Session
 windows antigravity complete sandboxed_browser unsupported no tool-free Antigravity completion mode has been proven; use Run or Session
+windows antigravity complete sandboxed_subagents unsupported no tool-free Antigravity completion mode has been proven; use Run or Session
 windows antigravity complete skills unsupported no tool-free Antigravity completion mode has been proven; use Run or Session
 windows antigravity complete steer unsupported no tool-free Antigravity completion mode has been proven; use Run or Session
 windows antigravity complete structured_output unsupported no tool-free Antigravity completion mode has been proven; use Run or Session
@@ -3356,6 +3457,7 @@ windows antigravity run restrict_tools unsupported not offered by this engine
 windows antigravity run resume native 
 windows antigravity run sandbox unsupported not offered by this engine
 windows antigravity run sandboxed_browser unsupported not offered by this engine
+windows antigravity run sandboxed_subagents unsupported not offered by this engine
 windows antigravity run skills unsupported agy takes no skill plugin flag and has no instruction flag to carry a skill index
 windows antigravity run steer unsupported not offered by this engine
 windows antigravity run structured_output native 
@@ -3389,6 +3491,7 @@ windows antigravity session restrict_tools unsupported restricted and sandboxed 
 windows antigravity session resume unknown not verified against the installed harness
 windows antigravity session sandbox unsupported restricted and sandboxed hosting are unavailable on Windows
 windows antigravity session sandboxed_browser unsupported not offered by this engine
+windows antigravity session sandboxed_subagents unsupported not offered by this engine
 windows antigravity session skills unsupported agy takes no skill plugin flag and has no instruction flag to carry a skill index
 windows antigravity session steer unsupported agy's stream-json input reads the next line only after a turn finishes
 windows antigravity session structured_output unsupported not offered by this engine
@@ -3422,6 +3525,7 @@ windows antigravity models restrict_tools unsupported not offered by this engine
 windows antigravity models resume unsupported not offered by this engine
 windows antigravity models sandbox unsupported not offered by this engine
 windows antigravity models sandboxed_browser unsupported not offered by this engine
+windows antigravity models sandboxed_subagents unsupported not offered by this engine
 windows antigravity models skills unsupported not offered by this engine
 windows antigravity models steer unsupported not offered by this engine
 windows antigravity models structured_output unsupported not offered by this engine
@@ -3455,6 +3559,7 @@ windows antigravity account restrict_tools unsupported not offered by this engin
 windows antigravity account resume unsupported not offered by this engine
 windows antigravity account sandbox unsupported not offered by this engine
 windows antigravity account sandboxed_browser unsupported not offered by this engine
+windows antigravity account sandboxed_subagents unsupported not offered by this engine
 windows antigravity account skills unsupported not offered by this engine
 windows antigravity account steer unsupported not offered by this engine
 windows antigravity account structured_output unsupported not offered by this engine
@@ -3488,6 +3593,7 @@ windows fx complete restrict_tools unsupported no tool-free fx mode has been pro
 windows fx complete resume unsupported no tool-free fx mode has been proven; use Session
 windows fx complete sandbox unsupported no tool-free fx mode has been proven; use Session
 windows fx complete sandboxed_browser unsupported no tool-free fx mode has been proven; use Session
+windows fx complete sandboxed_subagents unsupported no tool-free fx mode has been proven; use Session
 windows fx complete skills unsupported no tool-free fx mode has been proven; use Session
 windows fx complete steer unsupported no tool-free fx mode has been proven; use Session
 windows fx complete structured_output unsupported no tool-free fx mode has been proven; use Session
@@ -3521,6 +3627,7 @@ windows fx run restrict_tools unsupported not offered by this engine
 windows fx run resume native 
 windows fx run sandbox unsupported not offered by this engine
 windows fx run sandboxed_browser unsupported not offered by this engine
+windows fx run sandboxed_subagents unsupported not offered by this engine
 windows fx run skills composed an index with each SKILL.md's path is added to the request
 windows fx run steer unsupported not offered by this engine
 windows fx run structured_output unsupported fx ask states no output schema
@@ -3554,6 +3661,7 @@ windows fx session restrict_tools unsupported restricted and sandboxed hosting a
 windows fx session resume unknown session/resume answers with the configuration alone; fx refuses an id it does not hold
 windows fx session sandbox unsupported restricted and sandboxed hosting are unavailable on Windows
 windows fx session sandboxed_browser unsupported not offered by this engine
+windows fx session sandboxed_subagents unsupported not offered by this engine
 windows fx session skills composed the index of each provided skill's path travels with the session's instructions
 windows fx session steer composed fx steering cancels the running prompt and sends another
 windows fx session structured_output unsupported not offered by this engine
@@ -3587,6 +3695,7 @@ windows fx models restrict_tools unsupported not offered by this engine
 windows fx models resume unsupported not offered by this engine
 windows fx models sandbox unsupported not offered by this engine
 windows fx models sandboxed_browser unsupported not offered by this engine
+windows fx models sandboxed_subagents unsupported not offered by this engine
 windows fx models skills unsupported not offered by this engine
 windows fx models steer unsupported not offered by this engine
 windows fx models structured_output unsupported not offered by this engine
@@ -3620,6 +3729,7 @@ windows fx account restrict_tools unsupported not offered by this engine
 windows fx account resume unsupported not offered by this engine
 windows fx account sandbox unsupported not offered by this engine
 windows fx account sandboxed_browser unsupported not offered by this engine
+windows fx account sandboxed_subagents unsupported not offered by this engine
 windows fx account skills unsupported not offered by this engine
 windows fx account steer unsupported not offered by this engine
 windows fx account structured_output unsupported not offered by this engine
@@ -3653,6 +3763,7 @@ windows openai-compatible complete restrict_tools unsupported not offered by thi
 windows openai-compatible complete resume unsupported not offered by this engine
 windows openai-compatible complete sandbox unsupported not offered by this engine
 windows openai-compatible complete sandboxed_browser unsupported not offered by this engine
+windows openai-compatible complete sandboxed_subagents unsupported not offered by this engine
 windows openai-compatible complete skills composed the library indexes provided skills and answers a read-only skill tool; a permitted skill's scripts run only when the caller answers those calls
 windows openai-compatible complete steer unsupported not offered by this engine
 windows openai-compatible complete structured_output unsupported not offered by this engine
@@ -3686,6 +3797,7 @@ windows openai-compatible run restrict_tools unsupported an API endpoint has no 
 windows openai-compatible run resume unsupported an API endpoint has no native agent; use Complete
 windows openai-compatible run sandbox unsupported an API endpoint has no native agent; use Complete
 windows openai-compatible run sandboxed_browser unsupported an API endpoint has no native agent; use Complete
+windows openai-compatible run sandboxed_subagents unsupported an API endpoint has no native agent; use Complete
 windows openai-compatible run skills unsupported an API endpoint has no native agent; use Complete
 windows openai-compatible run steer unsupported an API endpoint has no native agent; use Complete
 windows openai-compatible run structured_output unsupported an API endpoint has no native agent; use Complete
@@ -3719,6 +3831,7 @@ windows openai-compatible session restrict_tools composed only the caller's host
 windows openai-compatible session resume composed the library reloads its own transcript; a call interrupted mid-run is answered as an unknown outcome, never re-run
 windows openai-compatible session sandbox unsupported API commands require a proved macOS Seatbelt sandbox; this platform has no command sandbox
 windows openai-compatible session sandboxed_browser unsupported not offered by this engine
+windows openai-compatible session sandboxed_subagents unsupported not offered by this engine
 windows openai-compatible session skills composed the library indexes provided skills and answers its read-only skill tool; a permitted skill's scripts run as SkillRun says
 windows openai-compatible session steer composed the library interrupts the turn and starts another
 windows openai-compatible session structured_output unsupported not offered by this engine
@@ -3752,6 +3865,7 @@ windows openai-compatible models restrict_tools unsupported not offered by this 
 windows openai-compatible models resume unsupported not offered by this engine
 windows openai-compatible models sandbox unsupported not offered by this engine
 windows openai-compatible models sandboxed_browser unsupported not offered by this engine
+windows openai-compatible models sandboxed_subagents unsupported not offered by this engine
 windows openai-compatible models skills unsupported not offered by this engine
 windows openai-compatible models steer unsupported not offered by this engine
 windows openai-compatible models structured_output unsupported not offered by this engine
@@ -3785,6 +3899,7 @@ windows openai-compatible account restrict_tools unsupported API endpoints expos
 windows openai-compatible account resume unsupported API endpoints expose no account inspection
 windows openai-compatible account sandbox unsupported API endpoints expose no account inspection
 windows openai-compatible account sandboxed_browser unsupported API endpoints expose no account inspection
+windows openai-compatible account sandboxed_subagents unsupported API endpoints expose no account inspection
 windows openai-compatible account skills unsupported API endpoints expose no account inspection
 windows openai-compatible account steer unsupported API endpoints expose no account inspection
 windows openai-compatible account structured_output unsupported API endpoints expose no account inspection
@@ -3818,6 +3933,7 @@ windows unrecognized complete restrict_tools unsupported unrecognized engine
 windows unrecognized complete resume unsupported unrecognized engine
 windows unrecognized complete sandbox unsupported unrecognized engine
 windows unrecognized complete sandboxed_browser unsupported unrecognized engine
+windows unrecognized complete sandboxed_subagents unsupported unrecognized engine
 windows unrecognized complete skills unsupported unrecognized engine
 windows unrecognized complete steer unsupported unrecognized engine
 windows unrecognized complete structured_output unsupported unrecognized engine
@@ -3851,6 +3967,7 @@ windows unrecognized run restrict_tools unsupported unrecognized engine
 windows unrecognized run resume unsupported unrecognized engine
 windows unrecognized run sandbox unsupported unrecognized engine
 windows unrecognized run sandboxed_browser unsupported unrecognized engine
+windows unrecognized run sandboxed_subagents unsupported unrecognized engine
 windows unrecognized run skills unsupported unrecognized engine
 windows unrecognized run steer unsupported unrecognized engine
 windows unrecognized run structured_output unsupported unrecognized engine
@@ -3884,6 +4001,7 @@ windows unrecognized session restrict_tools unsupported unrecognized engine
 windows unrecognized session resume unsupported unrecognized engine
 windows unrecognized session sandbox unsupported unrecognized engine
 windows unrecognized session sandboxed_browser unsupported unrecognized engine
+windows unrecognized session sandboxed_subagents unsupported unrecognized engine
 windows unrecognized session skills unsupported unrecognized engine
 windows unrecognized session steer unsupported unrecognized engine
 windows unrecognized session structured_output unsupported unrecognized engine
@@ -3917,6 +4035,7 @@ windows unrecognized models restrict_tools unsupported unrecognized engine
 windows unrecognized models resume unsupported unrecognized engine
 windows unrecognized models sandbox unsupported unrecognized engine
 windows unrecognized models sandboxed_browser unsupported unrecognized engine
+windows unrecognized models sandboxed_subagents unsupported unrecognized engine
 windows unrecognized models skills unsupported unrecognized engine
 windows unrecognized models steer unsupported unrecognized engine
 windows unrecognized models structured_output unsupported unrecognized engine
@@ -3950,6 +4069,7 @@ windows unrecognized account restrict_tools unsupported unrecognized engine
 windows unrecognized account resume unsupported unrecognized engine
 windows unrecognized account sandbox unsupported unrecognized engine
 windows unrecognized account sandboxed_browser unsupported unrecognized engine
+windows unrecognized account sandboxed_subagents unsupported unrecognized engine
 windows unrecognized account skills unsupported unrecognized engine
 windows unrecognized account steer unsupported unrecognized engine
 windows unrecognized account structured_output unsupported unrecognized engine
@@ -3983,6 +4103,7 @@ freebsd codex complete restrict_tools unsupported not offered by this engine
 freebsd codex complete resume unsupported not offered by this engine
 freebsd codex complete sandbox unsupported not offered by this engine
 freebsd codex complete sandboxed_browser unsupported not offered by this engine
+freebsd codex complete sandboxed_subagents unsupported not offered by this engine
 freebsd codex complete skills composed the library indexes provided skills and answers a read-only skill tool; a permitted skill's scripts run only when the caller answers those calls
 freebsd codex complete steer unsupported not offered by this engine
 freebsd codex complete structured_output unsupported not offered by this engine
@@ -4016,6 +4137,7 @@ freebsd codex run restrict_tools unsupported not offered by this engine
 freebsd codex run resume native 
 freebsd codex run sandbox unsupported not offered by this engine
 freebsd codex run sandboxed_browser unsupported not offered by this engine
+freebsd codex run sandboxed_subagents unsupported not offered by this engine
 freebsd codex run skills composed an index with each SKILL.md's path is added to the developer instructions
 freebsd codex run steer unsupported not offered by this engine
 freebsd codex run structured_output native 
@@ -4049,6 +4171,7 @@ freebsd codex session restrict_tools unknown not verified against the installed 
 freebsd codex session resume unknown not verified against the installed harness
 freebsd codex session sandbox unknown not verified against the installed harness
 freebsd codex session sandboxed_browser native the ChatGPT app node_repl bridge runs JavaScript confined by the session sandbox, proven before launch; drives the owner's real Chrome with its logins; Chrome backend only, no computer use
+freebsd codex session sandboxed_subagents native codex-cli's multi_agent tools; agents run as threads of the session's app-server under its permission profile and approval policy, as Codex documents, not proved by the library
 freebsd codex session skills composed instructions or hosted tools; native in sandboxed sessions through the runtime home
 freebsd codex session steer unknown not verified against the installed harness
 freebsd codex session structured_output unsupported not offered by this engine
@@ -4082,6 +4205,7 @@ freebsd codex models restrict_tools unsupported not offered by this engine
 freebsd codex models resume unsupported not offered by this engine
 freebsd codex models sandbox unsupported not offered by this engine
 freebsd codex models sandboxed_browser unsupported not offered by this engine
+freebsd codex models sandboxed_subagents unsupported not offered by this engine
 freebsd codex models skills unsupported not offered by this engine
 freebsd codex models steer unsupported not offered by this engine
 freebsd codex models structured_output unsupported not offered by this engine
@@ -4115,6 +4239,7 @@ freebsd codex account restrict_tools unsupported not offered by this engine
 freebsd codex account resume unsupported not offered by this engine
 freebsd codex account sandbox unsupported not offered by this engine
 freebsd codex account sandboxed_browser unsupported not offered by this engine
+freebsd codex account sandboxed_subagents unsupported not offered by this engine
 freebsd codex account skills unsupported not offered by this engine
 freebsd codex account steer unsupported not offered by this engine
 freebsd codex account structured_output unsupported not offered by this engine
@@ -4148,6 +4273,7 @@ freebsd claude complete restrict_tools unsupported not offered by this engine
 freebsd claude complete resume unsupported not offered by this engine
 freebsd claude complete sandbox unsupported not offered by this engine
 freebsd claude complete sandboxed_browser unsupported not offered by this engine
+freebsd claude complete sandboxed_subagents unsupported not offered by this engine
 freebsd claude complete skills composed the library indexes provided skills and answers a read-only skill tool; a permitted skill's scripts run only when the caller answers those calls
 freebsd claude complete steer unsupported not offered by this engine
 freebsd claude complete structured_output unsupported not offered by this engine
@@ -4181,6 +4307,7 @@ freebsd claude run restrict_tools unsupported not offered by this engine
 freebsd claude run resume native 
 freebsd claude run sandbox unsupported not offered by this engine
 freebsd claude run sandboxed_browser unsupported not offered by this engine
+freebsd claude run sandboxed_subagents unsupported not offered by this engine
 freebsd claude run skills native loaded through a private --plugin-dir
 freebsd claude run steer unsupported not offered by this engine
 freebsd claude run structured_output native 
@@ -4214,6 +4341,7 @@ freebsd claude session restrict_tools unknown not verified against the installed
 freebsd claude session resume unknown not verified against the installed harness
 freebsd claude session sandbox unknown not verified against the installed harness
 freebsd claude session sandboxed_browser native a sandboxed Claude session admits the browser's tools beside its own, except those that would read local files or start another agent; the browser itself runs outside the sandbox
+freebsd claude session sandboxed_subagents native Claude Code's Agent tool with its built-in agent types only; a subagent runs in the session's process under its tools, permission rules and OS sandbox, as Claude Code documents, not proved by the library; isolation: worktree has the CLI create a git worktree and branch outside the sandbox, even without Write
 freebsd claude session skills native a private --plugin-dir; composed when sandboxed or restricted
 freebsd claude session steer unknown not verified against the installed harness
 freebsd claude session structured_output unsupported not offered by this engine
@@ -4247,6 +4375,7 @@ freebsd claude models restrict_tools unsupported not offered by this engine
 freebsd claude models resume unsupported not offered by this engine
 freebsd claude models sandbox unsupported not offered by this engine
 freebsd claude models sandboxed_browser unsupported not offered by this engine
+freebsd claude models sandboxed_subagents unsupported not offered by this engine
 freebsd claude models skills unsupported not offered by this engine
 freebsd claude models steer unsupported not offered by this engine
 freebsd claude models structured_output unsupported not offered by this engine
@@ -4280,6 +4409,7 @@ freebsd claude account restrict_tools unsupported not offered by this engine
 freebsd claude account resume unsupported not offered by this engine
 freebsd claude account sandbox unsupported not offered by this engine
 freebsd claude account sandboxed_browser unsupported not offered by this engine
+freebsd claude account sandboxed_subagents unsupported not offered by this engine
 freebsd claude account skills unsupported not offered by this engine
 freebsd claude account steer unsupported not offered by this engine
 freebsd claude account structured_output unsupported not offered by this engine
@@ -4313,6 +4443,7 @@ freebsd grok complete restrict_tools unsupported not offered by this engine
 freebsd grok complete resume unsupported not offered by this engine
 freebsd grok complete sandbox unsupported not offered by this engine
 freebsd grok complete sandboxed_browser unsupported not offered by this engine
+freebsd grok complete sandboxed_subagents unsupported not offered by this engine
 freebsd grok complete skills composed the library indexes provided skills and answers a read-only skill tool; a permitted skill's scripts run only when the caller answers those calls
 freebsd grok complete steer unsupported not offered by this engine
 freebsd grok complete structured_output unsupported not offered by this engine
@@ -4346,6 +4477,7 @@ freebsd grok run restrict_tools unsupported not offered by this engine
 freebsd grok run resume native 
 freebsd grok run sandbox unsupported not offered by this engine
 freebsd grok run sandboxed_browser unsupported not offered by this engine
+freebsd grok run sandboxed_subagents unsupported not offered by this engine
 freebsd grok run skills composed an index with each SKILL.md's path is added through --rules
 freebsd grok run steer unsupported not offered by this engine
 freebsd grok run structured_output native 
@@ -4379,6 +4511,7 @@ freebsd grok session restrict_tools unsupported Grok sessions have no proven rem
 freebsd grok session resume unknown not verified against the installed harness
 freebsd grok session sandbox unsupported Grok sessions have no proven OS sandbox
 freebsd grok session sandboxed_browser unsupported not offered by this engine
+freebsd grok session sandboxed_subagents unsupported not offered by this engine
 freebsd grok session skills native grok agent --plugin-dir
 freebsd grok session steer composed Grok steering cancels the running prompt and sends another
 freebsd grok session structured_output unsupported not offered by this engine
@@ -4412,6 +4545,7 @@ freebsd grok models restrict_tools unsupported not offered by this engine
 freebsd grok models resume unsupported not offered by this engine
 freebsd grok models sandbox unsupported not offered by this engine
 freebsd grok models sandboxed_browser unsupported not offered by this engine
+freebsd grok models sandboxed_subagents unsupported not offered by this engine
 freebsd grok models skills unsupported not offered by this engine
 freebsd grok models steer unsupported not offered by this engine
 freebsd grok models structured_output unsupported not offered by this engine
@@ -4445,6 +4579,7 @@ freebsd grok account restrict_tools unsupported not offered by this engine
 freebsd grok account resume unsupported not offered by this engine
 freebsd grok account sandbox unsupported not offered by this engine
 freebsd grok account sandboxed_browser unsupported not offered by this engine
+freebsd grok account sandboxed_subagents unsupported not offered by this engine
 freebsd grok account skills unsupported not offered by this engine
 freebsd grok account steer unsupported not offered by this engine
 freebsd grok account structured_output unsupported not offered by this engine
@@ -4478,6 +4613,7 @@ freebsd command-code complete restrict_tools unsupported no tool-free Command Co
 freebsd command-code complete resume unsupported no tool-free Command Code mode has been proven; use Session
 freebsd command-code complete sandbox unsupported no tool-free Command Code mode has been proven; use Session
 freebsd command-code complete sandboxed_browser unsupported no tool-free Command Code mode has been proven; use Session
+freebsd command-code complete sandboxed_subagents unsupported no tool-free Command Code mode has been proven; use Session
 freebsd command-code complete skills unsupported no tool-free Command Code mode has been proven; use Session
 freebsd command-code complete steer unsupported no tool-free Command Code mode has been proven; use Session
 freebsd command-code complete structured_output unsupported no tool-free Command Code mode has been proven; use Session
@@ -4511,6 +4647,7 @@ freebsd command-code run restrict_tools unsupported Command Code is offered only
 freebsd command-code run resume unsupported Command Code is offered only as a session
 freebsd command-code run sandbox unsupported Command Code is offered only as a session
 freebsd command-code run sandboxed_browser unsupported Command Code is offered only as a session
+freebsd command-code run sandboxed_subagents unsupported Command Code is offered only as a session
 freebsd command-code run skills unsupported Command Code is offered only as a session
 freebsd command-code run steer unsupported Command Code is offered only as a session
 freebsd command-code run structured_output unsupported Command Code is offered only as a session
@@ -4544,6 +4681,7 @@ freebsd command-code session restrict_tools unsupported Command Code sessions ha
 freebsd command-code session resume unknown session/resume, once session/list shows Command Code holds the conversation for WorkDir: it resumes an unknown id as an empty conversation
 freebsd command-code session sandbox unsupported Command Code sessions have no proven OS sandbox
 freebsd command-code session sandboxed_browser unsupported not offered by this engine
+freebsd command-code session sandboxed_subagents unsupported not offered by this engine
 freebsd command-code session skills unsupported cmd acp takes no skill paths and Command Code sessions have no instructions to carry a skill index
 freebsd command-code session steer composed Command Code steering cancels the running prompt and sends another
 freebsd command-code session structured_output unsupported not offered by this engine
@@ -4577,6 +4715,7 @@ freebsd command-code models restrict_tools unsupported Command Code lists its mo
 freebsd command-code models resume unsupported Command Code lists its models only inside a session's configuration
 freebsd command-code models sandbox unsupported Command Code lists its models only inside a session's configuration
 freebsd command-code models sandboxed_browser unsupported Command Code lists its models only inside a session's configuration
+freebsd command-code models sandboxed_subagents unsupported Command Code lists its models only inside a session's configuration
 freebsd command-code models skills unsupported Command Code lists its models only inside a session's configuration
 freebsd command-code models steer unsupported Command Code lists its models only inside a session's configuration
 freebsd command-code models structured_output unsupported Command Code lists its models only inside a session's configuration
@@ -4610,6 +4749,7 @@ freebsd command-code account restrict_tools unsupported Command Code's agent pro
 freebsd command-code account resume unsupported Command Code's agent protocol exposes no account inspection
 freebsd command-code account sandbox unsupported Command Code's agent protocol exposes no account inspection
 freebsd command-code account sandboxed_browser unsupported Command Code's agent protocol exposes no account inspection
+freebsd command-code account sandboxed_subagents unsupported Command Code's agent protocol exposes no account inspection
 freebsd command-code account skills unsupported Command Code's agent protocol exposes no account inspection
 freebsd command-code account steer unsupported Command Code's agent protocol exposes no account inspection
 freebsd command-code account structured_output unsupported Command Code's agent protocol exposes no account inspection
@@ -4643,6 +4783,7 @@ freebsd antigravity complete restrict_tools unsupported no tool-free Antigravity
 freebsd antigravity complete resume unsupported no tool-free Antigravity completion mode has been proven; use Run or Session
 freebsd antigravity complete sandbox unsupported no tool-free Antigravity completion mode has been proven; use Run or Session
 freebsd antigravity complete sandboxed_browser unsupported no tool-free Antigravity completion mode has been proven; use Run or Session
+freebsd antigravity complete sandboxed_subagents unsupported no tool-free Antigravity completion mode has been proven; use Run or Session
 freebsd antigravity complete skills unsupported no tool-free Antigravity completion mode has been proven; use Run or Session
 freebsd antigravity complete steer unsupported no tool-free Antigravity completion mode has been proven; use Run or Session
 freebsd antigravity complete structured_output unsupported no tool-free Antigravity completion mode has been proven; use Run or Session
@@ -4676,6 +4817,7 @@ freebsd antigravity run restrict_tools unsupported not offered by this engine
 freebsd antigravity run resume native 
 freebsd antigravity run sandbox unsupported not offered by this engine
 freebsd antigravity run sandboxed_browser unsupported not offered by this engine
+freebsd antigravity run sandboxed_subagents unsupported not offered by this engine
 freebsd antigravity run skills unsupported agy takes no skill plugin flag and has no instruction flag to carry a skill index
 freebsd antigravity run steer unsupported not offered by this engine
 freebsd antigravity run structured_output native 
@@ -4709,6 +4851,7 @@ freebsd antigravity session restrict_tools unsupported Antigravity sessions have
 freebsd antigravity session resume unknown not verified against the installed harness
 freebsd antigravity session sandbox unsupported Antigravity sessions have no proven OS sandbox
 freebsd antigravity session sandboxed_browser unsupported not offered by this engine
+freebsd antigravity session sandboxed_subagents unsupported not offered by this engine
 freebsd antigravity session skills unsupported agy takes no skill plugin flag and has no instruction flag to carry a skill index
 freebsd antigravity session steer unsupported agy's stream-json input reads the next line only after a turn finishes
 freebsd antigravity session structured_output unsupported not offered by this engine
@@ -4742,6 +4885,7 @@ freebsd antigravity models restrict_tools unsupported not offered by this engine
 freebsd antigravity models resume unsupported not offered by this engine
 freebsd antigravity models sandbox unsupported not offered by this engine
 freebsd antigravity models sandboxed_browser unsupported not offered by this engine
+freebsd antigravity models sandboxed_subagents unsupported not offered by this engine
 freebsd antigravity models skills unsupported not offered by this engine
 freebsd antigravity models steer unsupported not offered by this engine
 freebsd antigravity models structured_output unsupported not offered by this engine
@@ -4775,6 +4919,7 @@ freebsd antigravity account restrict_tools unsupported not offered by this engin
 freebsd antigravity account resume unsupported not offered by this engine
 freebsd antigravity account sandbox unsupported not offered by this engine
 freebsd antigravity account sandboxed_browser unsupported not offered by this engine
+freebsd antigravity account sandboxed_subagents unsupported not offered by this engine
 freebsd antigravity account skills unsupported not offered by this engine
 freebsd antigravity account steer unsupported not offered by this engine
 freebsd antigravity account structured_output unsupported not offered by this engine
@@ -4808,6 +4953,7 @@ freebsd fx complete restrict_tools unsupported no tool-free fx mode has been pro
 freebsd fx complete resume unsupported no tool-free fx mode has been proven; use Session
 freebsd fx complete sandbox unsupported no tool-free fx mode has been proven; use Session
 freebsd fx complete sandboxed_browser unsupported no tool-free fx mode has been proven; use Session
+freebsd fx complete sandboxed_subagents unsupported no tool-free fx mode has been proven; use Session
 freebsd fx complete skills unsupported no tool-free fx mode has been proven; use Session
 freebsd fx complete steer unsupported no tool-free fx mode has been proven; use Session
 freebsd fx complete structured_output unsupported no tool-free fx mode has been proven; use Session
@@ -4841,6 +4987,7 @@ freebsd fx run restrict_tools unsupported not offered by this engine
 freebsd fx run resume native 
 freebsd fx run sandbox unsupported not offered by this engine
 freebsd fx run sandboxed_browser unsupported not offered by this engine
+freebsd fx run sandboxed_subagents unsupported not offered by this engine
 freebsd fx run skills composed an index with each SKILL.md's path is added to the request
 freebsd fx run steer unsupported not offered by this engine
 freebsd fx run structured_output unsupported fx ask states no output schema
@@ -4874,6 +5021,7 @@ freebsd fx session restrict_tools unsupported fx sessions have no proven removal
 freebsd fx session resume unknown session/resume answers with the configuration alone; fx refuses an id it does not hold
 freebsd fx session sandbox unsupported fx sessions have no proven OS sandbox
 freebsd fx session sandboxed_browser unsupported not offered by this engine
+freebsd fx session sandboxed_subagents unsupported not offered by this engine
 freebsd fx session skills composed the index of each provided skill's path travels with the session's instructions
 freebsd fx session steer composed fx steering cancels the running prompt and sends another
 freebsd fx session structured_output unsupported not offered by this engine
@@ -4907,6 +5055,7 @@ freebsd fx models restrict_tools unsupported not offered by this engine
 freebsd fx models resume unsupported not offered by this engine
 freebsd fx models sandbox unsupported not offered by this engine
 freebsd fx models sandboxed_browser unsupported not offered by this engine
+freebsd fx models sandboxed_subagents unsupported not offered by this engine
 freebsd fx models skills unsupported not offered by this engine
 freebsd fx models steer unsupported not offered by this engine
 freebsd fx models structured_output unsupported not offered by this engine
@@ -4940,6 +5089,7 @@ freebsd fx account restrict_tools unsupported not offered by this engine
 freebsd fx account resume unsupported not offered by this engine
 freebsd fx account sandbox unsupported not offered by this engine
 freebsd fx account sandboxed_browser unsupported not offered by this engine
+freebsd fx account sandboxed_subagents unsupported not offered by this engine
 freebsd fx account skills unsupported not offered by this engine
 freebsd fx account steer unsupported not offered by this engine
 freebsd fx account structured_output unsupported not offered by this engine
@@ -4973,6 +5123,7 @@ freebsd openai-compatible complete restrict_tools unsupported not offered by thi
 freebsd openai-compatible complete resume unsupported not offered by this engine
 freebsd openai-compatible complete sandbox unsupported not offered by this engine
 freebsd openai-compatible complete sandboxed_browser unsupported not offered by this engine
+freebsd openai-compatible complete sandboxed_subagents unsupported not offered by this engine
 freebsd openai-compatible complete skills composed the library indexes provided skills and answers a read-only skill tool; a permitted skill's scripts run only when the caller answers those calls
 freebsd openai-compatible complete steer unsupported not offered by this engine
 freebsd openai-compatible complete structured_output unsupported not offered by this engine
@@ -5006,6 +5157,7 @@ freebsd openai-compatible run restrict_tools unsupported an API endpoint has no 
 freebsd openai-compatible run resume unsupported an API endpoint has no native agent; use Complete
 freebsd openai-compatible run sandbox unsupported an API endpoint has no native agent; use Complete
 freebsd openai-compatible run sandboxed_browser unsupported an API endpoint has no native agent; use Complete
+freebsd openai-compatible run sandboxed_subagents unsupported an API endpoint has no native agent; use Complete
 freebsd openai-compatible run skills unsupported an API endpoint has no native agent; use Complete
 freebsd openai-compatible run steer unsupported an API endpoint has no native agent; use Complete
 freebsd openai-compatible run structured_output unsupported an API endpoint has no native agent; use Complete
@@ -5039,6 +5191,7 @@ freebsd openai-compatible session restrict_tools composed only the caller's host
 freebsd openai-compatible session resume composed the library reloads its own transcript; a call interrupted mid-run is answered as an unknown outcome, never re-run
 freebsd openai-compatible session sandbox unsupported API commands require a proved macOS Seatbelt sandbox; this platform has no command sandbox
 freebsd openai-compatible session sandboxed_browser unsupported not offered by this engine
+freebsd openai-compatible session sandboxed_subagents unsupported not offered by this engine
 freebsd openai-compatible session skills composed the library indexes provided skills and answers its read-only skill tool; a permitted skill's scripts run as SkillRun says
 freebsd openai-compatible session steer composed the library interrupts the turn and starts another
 freebsd openai-compatible session structured_output unsupported not offered by this engine
@@ -5072,6 +5225,7 @@ freebsd openai-compatible models restrict_tools unsupported not offered by this 
 freebsd openai-compatible models resume unsupported not offered by this engine
 freebsd openai-compatible models sandbox unsupported not offered by this engine
 freebsd openai-compatible models sandboxed_browser unsupported not offered by this engine
+freebsd openai-compatible models sandboxed_subagents unsupported not offered by this engine
 freebsd openai-compatible models skills unsupported not offered by this engine
 freebsd openai-compatible models steer unsupported not offered by this engine
 freebsd openai-compatible models structured_output unsupported not offered by this engine
@@ -5105,6 +5259,7 @@ freebsd openai-compatible account restrict_tools unsupported API endpoints expos
 freebsd openai-compatible account resume unsupported API endpoints expose no account inspection
 freebsd openai-compatible account sandbox unsupported API endpoints expose no account inspection
 freebsd openai-compatible account sandboxed_browser unsupported API endpoints expose no account inspection
+freebsd openai-compatible account sandboxed_subagents unsupported API endpoints expose no account inspection
 freebsd openai-compatible account skills unsupported API endpoints expose no account inspection
 freebsd openai-compatible account steer unsupported API endpoints expose no account inspection
 freebsd openai-compatible account structured_output unsupported API endpoints expose no account inspection
@@ -5138,6 +5293,7 @@ freebsd unrecognized complete restrict_tools unsupported unrecognized engine
 freebsd unrecognized complete resume unsupported unrecognized engine
 freebsd unrecognized complete sandbox unsupported unrecognized engine
 freebsd unrecognized complete sandboxed_browser unsupported unrecognized engine
+freebsd unrecognized complete sandboxed_subagents unsupported unrecognized engine
 freebsd unrecognized complete skills unsupported unrecognized engine
 freebsd unrecognized complete steer unsupported unrecognized engine
 freebsd unrecognized complete structured_output unsupported unrecognized engine
@@ -5171,6 +5327,7 @@ freebsd unrecognized run restrict_tools unsupported unrecognized engine
 freebsd unrecognized run resume unsupported unrecognized engine
 freebsd unrecognized run sandbox unsupported unrecognized engine
 freebsd unrecognized run sandboxed_browser unsupported unrecognized engine
+freebsd unrecognized run sandboxed_subagents unsupported unrecognized engine
 freebsd unrecognized run skills unsupported unrecognized engine
 freebsd unrecognized run steer unsupported unrecognized engine
 freebsd unrecognized run structured_output unsupported unrecognized engine
@@ -5204,6 +5361,7 @@ freebsd unrecognized session restrict_tools unsupported unrecognized engine
 freebsd unrecognized session resume unsupported unrecognized engine
 freebsd unrecognized session sandbox unsupported unrecognized engine
 freebsd unrecognized session sandboxed_browser unsupported unrecognized engine
+freebsd unrecognized session sandboxed_subagents unsupported unrecognized engine
 freebsd unrecognized session skills unsupported unrecognized engine
 freebsd unrecognized session steer unsupported unrecognized engine
 freebsd unrecognized session structured_output unsupported unrecognized engine
@@ -5237,6 +5395,7 @@ freebsd unrecognized models restrict_tools unsupported unrecognized engine
 freebsd unrecognized models resume unsupported unrecognized engine
 freebsd unrecognized models sandbox unsupported unrecognized engine
 freebsd unrecognized models sandboxed_browser unsupported unrecognized engine
+freebsd unrecognized models sandboxed_subagents unsupported unrecognized engine
 freebsd unrecognized models skills unsupported unrecognized engine
 freebsd unrecognized models steer unsupported unrecognized engine
 freebsd unrecognized models structured_output unsupported unrecognized engine
@@ -5270,6 +5429,7 @@ freebsd unrecognized account restrict_tools unsupported unrecognized engine
 freebsd unrecognized account resume unsupported unrecognized engine
 freebsd unrecognized account sandbox unsupported unrecognized engine
 freebsd unrecognized account sandboxed_browser unsupported unrecognized engine
+freebsd unrecognized account sandboxed_subagents unsupported unrecognized engine
 freebsd unrecognized account skills unsupported unrecognized engine
 freebsd unrecognized account steer unsupported unrecognized engine
 freebsd unrecognized account structured_output unsupported unrecognized engine

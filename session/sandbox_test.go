@@ -713,7 +713,7 @@ func TestSandboxedClaudeWeb(t *testing.T) {
 		open := mustNormalize(t, Options{Provider: harness.Provider{Engine: harness.Claude}, WorkDir: work, Sandbox: &Sandbox{Write: write, Web: true}})
 		closedArgs := commandArgs(closed, "id", false, &launch{extra: claudeSandboxArgs(closed)})
 		openArgs := commandArgs(open, "id", false, &launch{extra: claudeSandboxArgs(open)})
-		want := "--tools=" + strings.Join(append(sandboxClaudeTools(write, false), "WebFetch", "WebSearch"), ",")
+		want := "--tools=" + strings.Join(append(sandboxClaudeTools(Sandbox{Write: write}), "WebFetch", "WebSearch"), ",")
 		if !slices.Contains(openArgs, want) {
 			t.Fatalf("write=%v: web tools not enabled: %v", write, openArgs)
 		}

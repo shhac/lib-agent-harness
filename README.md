@@ -1136,8 +1136,8 @@ the result is cached per resolved binary and sandbox:
     profile: filesystem read, the workspace writable (or read-only), `.git`
     read-only, `.git`, `.codex` and `.agents` read-only, network disabled,
     approval `never`, web search off unless `Web` is set, and the connector,
-    plugin, hook, browser, computer-use, multi-agent and dependency-install
-    features disabled.
+    plugin, hook, browser, computer-use, multi-agent (see `Subagents` below)
+    and dependency-install features disabled.
   - A canary runs under that profile through `codex sandbox`. Writing outside
     the workspace, to `/tmp` or to the inherited `$TMPDIR` must fail, as must
     reaching a loopback listener owned by the probe, or writing the
@@ -1210,6 +1210,39 @@ Either way it is an outward channel for anything the session can read: a
 fetched URL can carry data out. A reference records whether a sandbox had
 `Web`, so a resume cannot change it; a sandbox without it keeps its earlier
 reference digest.
+
+### Subagents
+
+`Sandbox.Subagents` lets a sandboxed session start its CLI's own subagents.
+It is off by default, and nothing else about the sandbox changes. Ask
+`harness.Support(e, harness.Session, harness.SandboxedSubagents)` before
+offering it. Grok and every other engine refuse a sandboxed session, so they
+refuse this too, and so does Windows.
+
+- **Claude Code** gains its `Agent` tool (the init frame still reports it by
+  its old name, `Task`), added to `--tools` and allowed by a bare permission
+  rule. A subagent runs in the session's process and takes its tools from
+  the session's own, so its commands run under the same OS sandbox. The deny
+  rules and `--disallowedTools` apply to it as well, so web tools and MCP
+  tools stay out unless the session has them. With every settings source
+  dropped, only Claude Code's built-in agent types load. Agent definitions in
+  the workspace or the operator's home do not, so none can set its own
+  permission mode, hooks or MCP servers. One caveat: the Agent tool's
+  `isolation: "worktree"` has the CLI itself, outside the OS sandbox, create
+  a git worktree under the workspace and a branch in its `.git`, even when
+  `Write` is unset.
+- **Codex** runs with `agents.enabled=true` and `features.multi_agent=true`.
+  `multi_agent_v2` stays off. Codex documents that subagents inherit the
+  session's sandbox, approval policy, permissions and MCP servers. Spawned
+  agents are threads of the same app-server, so they run under the same
+  permission profile, and `.codex`, where project agent definitions live,
+  stays read-only.
+
+That inheritance is what the CLIs document, not something the library
+proves. The library runs no canary for subagents. A reference records
+`Subagents`, and so does the cached sandbox proof, so neither carries over to
+a launch with a different setting. A sandbox without it keeps its earlier
+digest.
 
 ### Selected loopback ports
 

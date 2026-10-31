@@ -26,6 +26,16 @@ func TestSandboxedSessionRefusesUnsupportedPlatform(t *testing.T) {
 	}
 }
 
+func TestSandboxedSubagentsRefuseUnsupportedPlatform(t *testing.T) {
+	for _, engine := range []harness.Engine{harness.Claude, harness.Codex} {
+		_, err := normalize(Options{Provider: harness.Provider{Engine: engine, CLI: harness.CLI{Home: t.TempDir()}}, WorkDir: t.TempDir(), RuntimeHome: t.TempDir(), Sandbox: &Sandbox{Subagents: true}})
+		var failure *CapabilityError
+		if !errors.As(err, &failure) || failure.Code != CapabilitySandboxUnavailable || failure.Phase != BeforeLaunch {
+			t.Fatalf("%s: expected pre-launch platform refusal, got %v", engine, err)
+		}
+	}
+}
+
 func TestCheckBrowserBridgeRefusesUnsupportedPlatform(t *testing.T) {
 	err := CheckBrowserBridge(context.Background(), Options{
 		Provider: harness.Provider{Engine: harness.Codex, CLI: harness.CLI{Binary: "must-not-run", Home: t.TempDir()}},

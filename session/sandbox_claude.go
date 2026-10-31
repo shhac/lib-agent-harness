@@ -42,6 +42,12 @@ func claudeSandboxSettings(o Options) string {
 		// dontAsk refuses a tool with no allow rule, so these are required.
 		allow = append(allow, claudeWebTools...)
 	}
+	if o.Sandbox.Subagents {
+		// A subagent draws its tools from this session's --tools list and runs
+		// under these same rules and --disallowedTools, so it gains no tool the
+		// session was refused, web tools included.
+		allow = append(allow, claudeSubagentTool)
+	}
 	if o.Sandbox.Tools != nil {
 		allow = append(allow, o.Sandbox.Tools.Qualified()...)
 	}

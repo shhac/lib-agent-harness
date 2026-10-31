@@ -511,3 +511,30 @@ func TestSandboxedBrowserClaims(t *testing.T) {
 		t.Fatal("a native run has no sandbox to admit the browser in")
 	}
 }
+
+// Claude and Codex admit their own subagents in a sandboxed session, saying
+// the inheritance is the CLI's claim, not the library's proof; nothing else
+// does, and nothing does on Windows.
+func TestSandboxedSubagentsClaims(t *testing.T) {
+	for _, e := range []Engine{Claude, Codex} {
+		for _, goos := range []string{"darwin", "linux"} {
+			if c := supportFor(goos, e, Session, SandboxedSubagents); c.Availability != Native || !strings.Contains(c.Reason, "not proved by the library") {
+				t.Fatalf("%s on %s: %+v", e, goos, c)
+			}
+		}
+		if c := supportFor("windows", e, Session, SandboxedSubagents); c.Usable() {
+			t.Fatalf("%s on windows: %+v", e, c)
+		}
+		if Support(e, Run, SandboxedSubagents).Usable() {
+			t.Fatalf("%s: a native run has no sandbox to admit subagents in", e)
+		}
+	}
+	if c := supportFor("darwin", Claude, Session, SandboxedSubagents); !strings.Contains(c.Reason, "worktree") {
+		t.Fatalf("claude does not say worktree isolation leaves the sandbox: %+v", c)
+	}
+	for _, e := range []Engine{Grok, Antigravity, Fx, CommandCode, OpenAICompatible} {
+		if c := Support(e, Session, SandboxedSubagents); c.Usable() || c.Reason == "" {
+			t.Fatalf("%s: %+v", e, c)
+		}
+	}
+}

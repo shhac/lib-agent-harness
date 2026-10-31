@@ -59,6 +59,19 @@ type Sandbox struct {
 	// LoopbackControl is an off-machine IP literal for a selected-port proof.
 	// It requires LoopbackPorts; no proof is currently offered.
 	LoopbackControl string
+	// Subagents lets the session start its CLI's own subagents: Claude Code's
+	// Agent tool, and Codex's multi-agent tools. Off by default. A subagent runs
+	// in the same process as the session, so its commands stay under the same
+	// OS sandbox, and the CLIs document that subagents inherit the session's
+	// tools, permission rules or profile, and approval policy. The library does
+	// not prove that inheritance; ask Support for SandboxedSubagents.
+	//
+	// Claude Code loads only its built-in agent types here, never the
+	// workspace's or the operator's. Its Agent tool can also ask for
+	// isolation: "worktree", for which the CLI itself, outside the OS sandbox,
+	// creates a git worktree under the workspace and a branch in its .git,
+	// even when Write is unset. Grok and the other engines refuse Subagents.
+	Subagents bool
 
 	// Tools adds the caller's tools beside the session's own, served through
 	// the same bridge and tool channel a restricted session uses, with the same
@@ -84,13 +97,21 @@ const sandboxProfile = "harness_sandbox"
 
 var claudeWebTools = []string{"WebFetch", "WebSearch"}
 
-func sandboxClaudeTools(write, web bool) []string {
+// claudeSubagentTool is Claude Code's subagent tool. Claude Code 2.1.63
+// renamed it from Task; 2.1.316 still reports it as Task in its init frame and
+// reads a rule or --tools entry naming Task as Agent.
+const claudeSubagentTool = "Agent"
+
+func sandboxClaudeTools(s Sandbox) []string {
 	tools := []string{"Bash", "Read", "Glob", "Grep"}
-	if write {
+	if s.Write {
 		tools = []string{"Bash", "Read", "Edit", "Write", "Glob", "Grep"}
 	}
-	if web {
+	if s.Web {
 		tools = append(tools, claudeWebTools...)
+	}
+	if s.Subagents {
+		tools = append(tools, claudeSubagentTool)
 	}
 	return tools
 }
@@ -143,6 +164,11 @@ func normalizeSandbox(o Options) (Options, error) {
 			return o, &UnsupportedError{Engine: o.Provider.Engine, Operation: "loopback", Code: RefusedNotOffered, Capability: c}
 		}
 	}
+	if o.Sandbox.Subagents {
+		if c := harness.Support(o.Provider.Engine, harness.Session, harness.SandboxedSubagents); !c.Usable() {
+			return o, &UnsupportedError{Engine: o.Provider.Engine, Operation: "subagents", Code: RefusedNotOffered, Capability: c}
+		}
+	}
 	if err := validateSandboxTools(o); err != nil {
 		return o, err
 	}
@@ -183,10 +209,12 @@ func normalizeClaudeSandbox(o Options) (Options, error) {
 	}
 	o.Policy.ClaudePermission = "dontAsk"
 	if o.Policy.ClaudeTools == nil {
-		o.Policy.ClaudeTools = sandboxClaudeTools(o.Sandbox.Write, o.Sandbox.Web)
+		o.Policy.ClaudeTools = sandboxClaudeTools(*o.Sandbox)
 		return o, nil
 	}
-	allowed := sandboxClaudeTools(true, o.Sandbox.Web)
+	widest := *o.Sandbox
+	widest.Write = true
+	allowed := sandboxClaudeTools(widest)
 	for _, tool := range o.Policy.ClaudeTools {
 		if !slices.Contains(allowed, tool) || (!o.Sandbox.Write && (tool == "Edit" || tool == "Write")) {
 			return o, refuse(o, "tools", RefusedSandboxTool, "a sandboxed session cannot enable "+tool)

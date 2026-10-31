@@ -321,7 +321,8 @@ func reference(o Options, id string) Ref {
 			ToolServer  string   `json:",omitempty"`
 			RuntimeHome string
 			Loopback    bool `json:",omitempty"`
-		}{legacy, true, o.Sandbox.Write, o.Sandbox.Read, o.Sandbox.Web, sandboxToolServer(o.Sandbox), o.RuntimeHome, o.Sandbox.Loopback})
+			Subagents   bool `json:",omitempty"`
+		}{legacy, true, o.Sandbox.Write, o.Sandbox.Read, o.Sandbox.Web, sandboxToolServer(o.Sandbox), o.RuntimeHome, o.Sandbox.Loopback, o.Sandbox.Subagents})
 	}
 	if o.Sandbox != nil && o.Sandbox.LoopbackLocalOnly {
 		payload, _ = json.Marshal(struct {

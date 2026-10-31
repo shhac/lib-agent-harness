@@ -264,6 +264,9 @@ var supportTable = map[supportKey]Capability{
 	{Grok, Run, Browser}:                {Unsupported, "Grok 1.0.41 ships no browser integration"},
 	{Antigravity, Run, Browser}:         {Unsupported, "Antigravity ships no CLI browser flag"},
 
+	{Claude, Session, SandboxedSubagents}: {Native, "Claude Code's Agent tool with its built-in agent types only; a subagent runs in the session's process under its tools, permission rules and OS sandbox, as Claude Code documents, not proved by the library; isolation: worktree has the CLI create a git worktree and branch outside the sandbox, even without Write"},
+	{Codex, Session, SandboxedSubagents}:  {Native, "codex-cli's multi_agent tools; agents run as threads of the session's app-server under its permission profile and approval policy, as Codex documents, not proved by the library"},
+
 	// Command Code is offered only as a session over its agent protocol,
 	// `cmd acp`, checked against Command Code 1.74.1.
 	{CommandCode, Complete, Available}:          {Unsupported, "no tool-free Command Code mode has been proven; use Session"},

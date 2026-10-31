@@ -107,6 +107,11 @@ const (
 	// Sandbox. A caller that runs every session sandboxed asks this before
 	// offering the browser at all.
 	SandboxedBrowser Feature = "sandboxed_browser"
+	// SandboxedSubagents: a sandboxed session may start the CLI's own
+	// subagents (session.Sandbox.Subagents). Off unless asked for. The CLI's
+	// sandbox applies to them; the library does not prove what else they
+	// inherit.
+	SandboxedSubagents Feature = "sandboxed_subagents"
 	// Background: the harness and everything it starts run at background
 	// priority, so agent work yields to the machine's interactive use.
 	Background Feature = "background"
@@ -221,7 +226,7 @@ func windowsPlatform(e Engine, op Operation, f Feature, c Capability, apiSession
 		}
 		return c
 	}
-	if op == Session && e.Transport() == CLITransport && (f == RestrictTools || f == Sandbox || f == Tools || f == Loopback) {
+	if op == Session && e.Transport() == CLITransport && (f == RestrictTools || f == Sandbox || f == Tools || f == Loopback || f == SandboxedSubagents) {
 		if e == Codex && f == Loopback {
 			return Capability{Unsupported, "restricted and sandboxed hosting are unavailable on Windows; " + c.Reason}
 		}
