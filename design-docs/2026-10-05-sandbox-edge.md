@@ -91,6 +91,29 @@ The fake-provider SSL_CERT_FILE/NODE_EXTRA_CA_CERTS overrides substitute trust f
 
 The proxy binds tcp4 127.0.0.1 only. Seatbelt remote ip localhost:PORT admits [::1]:PORT too. A same-user process binding that IPv6 port can relay traffic from the confined tree even without Loopback; proxy authentication does not protect a different listener. This is an explicit same-user threat-model limit, not proof of IPv4-only proxy transport isolation.
 
+Hard links that already exist when a session opens are outside the boundary.
+The edge denies `file-link`, so nothing it confines can make one, but a link
+planted beforehand from outside, between a protected path (an agy loader
+under `RuntimeHome/.gemini`, a Codex or Claude protected file, an executable
+the edge launches) and a writable one, lets a write through the writable
+name change the protected file. Making that alias needs write access outside
+the sandbox already, which this boundary does not defend against; the
+executable-overlap check compares paths, not inodes, for the same reason
+(independent review, 2026-11-01).
+
+Workspace instruction files (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`) stay
+writable for every engine: they are the repository's own files, which the
+session exists to edit. A session that rewrites them influences its own
+later turns, as it could through any file it edits. The engines' own config
+folders in the workspace (`.agents`, `.codex`, `.claude`, `.mcp.json`) stay
+protected.
+
+The writable state paths in a Seatbelt profile are matched by a pattern that
+accepts a restricted path alphabet; a runtime home with characters outside
+it (an apostrophe, `#`, parentheses, non-ASCII) refuses with
+`edge_confinement_failed` rather than widening the pattern. Callers choose
+the runtime home, so pick a plain path.
+
 ## Owner evidence: draft 5, 620c609
 
 The owner ran outside any sandbox on macOS 27.0; OS build and architecture were not supplied.
