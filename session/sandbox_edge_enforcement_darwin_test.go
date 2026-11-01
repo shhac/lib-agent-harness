@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/edgeproxy"
 	"github.com/shhac/lib-agent-harness/internal/testenv"
@@ -37,8 +38,15 @@ func TestEdgeRealBoundaryScript(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			plan, closeBoundary, err := prepareEdgeBoundary(ctx, o, p, root)
+			// The proof needs a reachable off-machine HTTPS and DNS control
+			// to tell a denial from no network at all; a hosted runner may
+			// have neither.
+			var unavailable *CapabilityError
+			if errors.As(err, &unavailable) && unavailable.Code == CapabilityEdgeControlUnavailable {
+				testenv.Unavailable(t, "an off-machine network control", err)
+			}
 			if err != nil {
-				t.Fatal("unsandboxed control unavailable", err)
+				t.Fatal("preparing the edge boundary", err)
 			}
 			defer closeBoundary()
 			script := filepath.Join(o.WorkDir, "boundary.pl")

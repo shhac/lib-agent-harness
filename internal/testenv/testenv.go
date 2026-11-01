@@ -197,3 +197,16 @@ func probeAtomicWrite() error {
 	}
 	return nil
 }
+
+// Unavailable skips t because the environment lacks what, as a refused
+// probe does, so a hosted runner without it does not fail; with
+// AGENT_HARNESS_TEST_NO_SKIP=1, as on an owner's real run, it fails instead.
+func Unavailable(t testing.TB, what string, err error) {
+	t.Helper()
+	msg := strings.Join(strings.Fields(fmt.Sprintf("environment lacks %s: %v", what, err)), " ")
+	if os.Getenv(NoSkipVariable) == "1" {
+		t.Fatalf("%s (%s=1 forbids skipping)", msg, NoSkipVariable)
+		return
+	}
+	t.Skip(msg)
+}
