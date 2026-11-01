@@ -1,6 +1,6 @@
 package session
 
-// Antigravity under the sandbox edge, checked against agy 1.4.2 by running
+// Antigravity under the sandbox edge, checked against agy 1.4.12 by running
 // it through a hostname-logging CONNECT proxy with a disposable home:
 //
 //   - Its Google-account login lives in the macOS Keychain ("Antigravity
@@ -28,39 +28,52 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 )
 
 const (
 	antigravitySettings  = ".gemini/antigravity-cli/settings.json"
 	antigravityMCPConfig = ".gemini/config/mcp_config.json"
+	antigravityProject   = ".gemini/config/projects/default-cli-project.json"
+	antigravityProjectID = ".gemini/antigravity-cli/cache/default_project_id.txt"
 	antigravityCABundle  = "/private/etc/ssl/cert.pem"
 )
 
 var antigravityEdge = &edgeEngine{
 	hosts: []string{"generativelanguage.googleapis.com"},
-	// agy's own and its global configuration, rules, skills, hooks, plugins,
-	// workflows and sidecars: what a later launch would load.
-	protectRuntime: []string{
-		antigravitySettings,
-		".gemini/antigravity-cli/hooks.json",
-		".gemini/antigravity-cli/builtin",
-		".gemini/GEMINI.md",
-		".gemini/AGENTS.md",
-		".gemini/config/config.json",
-		".gemini/config/hooks.json",
-		antigravityMCPConfig,
-		".gemini/config/plugins",
-		".gemini/config/skills",
-		".gemini/config/sidecars",
-		".gemini/config/workflows",
-		".gemini/config/workflows.json",
-		".gemini/config/global_workflows",
-		".gemini/jetski",
+	// Everything agy keeps under ~/.gemini is read-only to descendants:
+	// settings, MCP servers, rules, agents, skills, hooks, plugins,
+	// workflows, sidecars and the executables agy installs, whether or not
+	// this list knows their names. Only the state a turn and a resume need
+	// is writable, as observed under agy 1.4.12.
+	protectRuntime: []string{".gemini"},
+	writableRuntime: []string{
+		".gemini/antigravity-cli/annotations/",
+		".gemini/antigravity-cli/brain/",
+		".gemini/antigravity-cli/conversations/",
+		".gemini/antigravity-cli/crashes/",
+		".gemini/antigravity-cli/implicit/",
+		".gemini/antigravity-cli/log/",
+		".gemini/antigravity-cli/presence/",
+		".gemini/antigravity/",
+		".gemini/antigravity-cli/conversation_summaries.db",
+		".gemini/antigravity-cli/jetbox_summaries_proto.pb",
+		".gemini/antigravity-cli/jetski_state.pbtxt",
+		".gemini/antigravity-cli/installation_id",
+		".gemini/antigravity-cli/last_check.timestamp",
+		".gemini/antigravity-cli/cli.log",
+		antigravityProjectID,
+		antigravityProject,
+		".gemini/antigravity-cli/cache/last_conversations.json",
+		".gemini/antigravity-cli/cache/onboarding.json",
+		".gemini/config/.migrated",
+		// The shell integration agy writes before every command it runs, so a
+		// planted copy never outlives the next command. The rest of bin/,
+		// including the encoder it installs, stays read-only.
+		".gemini/antigravity-cli/bin/agentapi",
 	},
-	readFiles: []string{antigravityCABundle},
+	standalone: true,
+	readFiles:  []string{antigravityCABundle},
 	// agy runs every command in a pseudo-terminal.
 	terminals: true,
 	owned:     []string{"GEMINI_API_KEY", "GOOGLE_GEMINI_BASE_URL", "GOOGLE_VERTEX_BASE_URL", "GOOGLE_APPLICATION_CREDENTIALS", "AGY_ADC_AUTH"},
@@ -118,6 +131,20 @@ var antigravityEdge = &edgeEngine{
 		drive: func(ctx context.Context, _ Options, w *streamWire) error {
 			return w.send(ctx, map[string]any{"event": "user", "message": map[string]any{"content": "Local capability canary only."}})
 		},
+		// Loaders no protection names, which the read-only ~/.gemini covers.
+		unlisted: []string{
+			".gemini/antigravity-cli/plugins/edge-canary/hooks.json",
+			".gemini/antigravity-cli/rules/edge-canary.md",
+			".gemini/antigravity-cli/skills/edge-canary/SKILL.md",
+			".gemini/antigravity-cli/bin/webm_encoder",
+			".gemini/config/rules/edge-canary.md",
+			".gemini/config/agents/edge-canary.md",
+			".gemini/config/plugins/edge-canary/plugin.json",
+			".gemini/skills/edge-canary/SKILL.md",
+			".gemini/GEMINI.md",
+			antigravitySettings,
+			antigravityMCPConfig,
+		},
 		settled: func(m map[string]json.RawMessage) (bool, bool) {
 			if str(m, "event") != "result" {
 				return false, false
@@ -133,21 +160,23 @@ var antigravityEdge = &edgeEngine{
 	},
 }
 
-// writeAntigravitySettings replaces agy's settings and its MCP server list in
-// a runtime home, so state an earlier launch left there is never loaded. The
-// edge protects both from descendants, so only the library writes them.
+// writeAntigravitySettings replaces, in a runtime home, the files agy reads
+// at start-up and cannot create inside its read-only ~/.gemini: its settings,
+// its MCP server list, and its default project with the cache folder its id
+// lives in. Each launch starts from these, so nothing an earlier session
+// left in them is loaded. The runtime home is the session's own and may hold
+// links it planted; written outside the sandbox, nothing here follows one.
 func writeAntigravitySettings(runtimeHome string, settings map[string]any) error {
 	// agy's own indented form: it rewrites any other spelling on load, and a
 	// refused rewrite makes it fall back to its defaults.
 	data, _ := json.MarshalIndent(settings, "", "  ")
-	// agy creates an empty server list when there is none; the edge refuses
-	// it that write.
-	for path, content := range map[string][]byte{antigravitySettings: append(data, '\n'), antigravityMCPConfig: nil} {
-		path = filepath.Join(runtimeHome, path)
-		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-			return err
-		}
-		if err := os.WriteFile(path, content, 0600); err != nil {
+	for path, content := range map[string][]byte{
+		antigravitySettings:  append(data, '\n'),
+		antigravityMCPConfig: nil,
+		antigravityProject:   []byte("{\n  \"id\":  \"default-cli-project\",\n  \"name\":  \"CLI Project\",\n  \"projectResources\":  {}\n}"),
+		antigravityProjectID: []byte("default-cli-project"),
+	} {
+		if err := writeBeneath(runtimeHome, path, content); err != nil {
 			return err
 		}
 	}

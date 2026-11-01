@@ -178,7 +178,7 @@ func sandboxEdgeSupport(e Engine, op Operation, platform string) Capability {
 	switch platform {
 	case "darwin":
 		if e == Antigravity {
-			return Capability{Unknown, "installed-binary inference through the proxy is proved before launch using fake-provider CA trust; production trusts the macOS /etc/ssl/cert.pem bundle through SSL_CERT_FILE, not the keychain, and is unproved; Gemini API-key login only, as agy keeps its Google-account login in the keychain; needs Loopback for its language server, and loopback binds and inbound cover all local interfaces"}
+			return Capability{Unknown, "installed-binary inference through the proxy is proved before launch using fake-provider CA trust; production trusts the macOS /etc/ssl/cert.pem bundle through SSL_CERT_FILE, not the keychain, and is unproved; Gemini API-key login only, as agy keeps its Google-account login in the keychain; needs Loopback for its language server, so its egress is not provider-only: descendants reach every on-machine TCP service, including any local proxy that relays further, and loopback binds and inbound cover all local interfaces"}
 		}
 		return Capability{Unknown, "installed-binary inference through the proxy is proved before launch using fake-provider CA trust; native TLS trust loading/evaluation is unproved and production TLS may fail; loopback binds and inbound cover all local interfaces"}
 	case "linux":

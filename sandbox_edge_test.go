@@ -45,7 +45,7 @@ func TestSandboxEdgeSupportForAntigravityAndFx(t *testing.T) {
 			want := Unsupported
 			if platform == "darwin" && op == Session {
 				want = Unknown
-				for _, limit := range []string{"fake-provider CA", "/etc/ssl/cert.pem", "unproved", "API-key", "Loopback"} {
+				for _, limit := range []string{"fake-provider CA", "/etc/ssl/cert.pem", "unproved", "API-key", "Loopback", "not provider-only"} {
 					if !strings.Contains(agy.Reason, limit) {
 						t.Fatalf("Antigravity limit %q omitted: %s", limit, agy.Reason)
 					}

@@ -454,7 +454,9 @@ func prepareEdgeBoundary(ctx context.Context, o Options, p *edgeproxy.Proxy, roo
 
 // edgeProtectedFixtures creates, in a disposable runtime, a file at or inside
 // each of the engine's own protected loaders, for the canary to fail to write.
-// A file the canary's setup already wrote is kept.
+// A file the canary's setup already wrote is kept. The engine's unlisted
+// loader samples get only their folders: the canary must fail to create them,
+// and nothing is planted for the CLI to load.
 func edgeProtectedFixtures(o Options, engine *edgeEngine) ([]string, error) {
 	if engine == nil {
 		return nil, nil
@@ -462,7 +464,9 @@ func edgeProtectedFixtures(o Options, engine *edgeEngine) ([]string, error) {
 	var out []string
 	for _, name := range engine.protectRuntime {
 		path := filepath.Join(o.RuntimeHome, name)
-		if filepath.Ext(name) == "" {
+		// A folder such as .gemini has no extension once its leading dot is
+		// set aside; a file such as .mcp.json does.
+		if filepath.Ext(strings.TrimPrefix(filepath.Base(name), ".")) == "" {
 			path = filepath.Join(path, "instruction.md")
 		}
 		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
@@ -476,6 +480,13 @@ func edgeProtectedFixtures(o Options, engine *edgeEngine) ([]string, error) {
 			if err = os.WriteFile(path, []byte(content), 0600); err != nil {
 				return nil, err
 			}
+		}
+		out = append(out, path)
+	}
+	for _, name := range engine.canary.unlisted {
+		path := filepath.Join(o.RuntimeHome, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			return nil, err
 		}
 		out = append(out, path)
 	}

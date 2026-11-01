@@ -106,7 +106,7 @@ func TestAntigravityEdgeEnvironment(t *testing.T) {
 
 func TestAntigravityEdgeSettingsReplacePriorState(t *testing.T) {
 	home := t.TempDir()
-	for path, data := range map[string]string{antigravitySettings: `{"modelProvider":"other","permissions":{"allow":["command(*)"]}}`, antigravityMCPConfig: `{"mcpServers":{"planted":{}}}`} {
+	for path, data := range map[string]string{antigravitySettings: `{"modelProvider":"other","permissions":{"allow":["command(*)"]}}`, antigravityMCPConfig: `{"mcpServers":{"planted":{}}}`, antigravityProject: `{"id":"default-cli-project","projectResources":{"planted":{}}}`} {
 		path = filepath.Join(home, path)
 		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 			t.Fatal(err)
@@ -127,6 +127,9 @@ func TestAntigravityEdgeSettingsReplacePriorState(t *testing.T) {
 	mcp, err := os.ReadFile(filepath.Join(home, antigravityMCPConfig))
 	if err != nil || len(mcp) != 0 {
 		t.Fatal("planted MCP servers kept", err)
+	}
+	if project, err := os.ReadFile(filepath.Join(home, antigravityProject)); err != nil || !strings.Contains(string(project), `"projectResources":  {}`) {
+		t.Fatal("default project not reset", string(project), err)
 	}
 }
 
@@ -169,6 +172,42 @@ func TestAntigravityEdgeCanaryWire(t *testing.T) {
 	for _, other := range []string{result("other", "run_command"), result("call_edge", "view_file"), request} {
 		if _, ok := edgeNativeResult(harness.Antigravity, []byte(other)); ok {
 			t.Fatal("another call's result read as the canary's", other)
+		}
+	}
+}
+
+func TestAntigravityEdgeHomeIsReadOnlyBeyondItsState(t *testing.T) {
+	if len(antigravityEdge.protectRuntime) != 1 || antigravityEdge.protectRuntime[0] != ".gemini" {
+		t.Fatal("agy's home is not protected whole", antigravityEdge.protectRuntime)
+	}
+	writable := func(path string) bool {
+		for _, entry := range antigravityEdge.writableRuntime {
+			if strings.HasSuffix(entry, "/") && strings.HasPrefix(path, entry) || path == entry || !strings.HasSuffix(entry, "/") && strings.HasPrefix(path, entry) && !strings.Contains(path[len(entry):], "/") {
+				return true
+			}
+		}
+		return false
+	}
+	loaders := []string{"settings", "mcp_config", "hooks", "plugin", "skills", "rules", "agents", "workflows", "sidecars", "builtin", "GEMINI.md", "AGENTS.md", "config.json", "webm_encoder"}
+	for _, entry := range antigravityEdge.writableRuntime {
+		if !strings.HasPrefix(entry, ".gemini/") {
+			t.Fatal("writable state outside agy's home", entry)
+		}
+		for _, loader := range loaders {
+			if strings.Contains(entry, loader) {
+				t.Fatal("a loader is writable", entry)
+			}
+		}
+		if strings.HasPrefix(entry, ".gemini/antigravity-cli/bin") && entry != ".gemini/antigravity-cli/bin/agentapi" {
+			t.Fatal("agy's executables writable", entry)
+		}
+	}
+	if len(antigravityEdge.canary.unlisted) == 0 {
+		t.Fatal("no unlisted loader for the canary to try")
+	}
+	for _, sample := range antigravityEdge.canary.unlisted {
+		if !strings.HasPrefix(sample, ".gemini/") || writable(sample) {
+			t.Fatal("canary sample the protection does not cover", sample)
 		}
 	}
 }

@@ -181,14 +181,51 @@ outside the sandbox and requires the shell to fail to open it; with the
 extension requirement removed, the canary reports observed_escape. agy writes
 `settings.json` back on load by atomic rename and falls back to defaults if
 refused, so the library writes it in agy's own indented form; it creates an
-empty `mcp_config.json` if missing, so the library writes one. Both, and
-agy's hooks, rules, skills, plugins, workflows, sidecars and builtin tree,
-are write-protected, and the canary requires each to refuse a write. agy
-cannot install its builtin skills under that protection and logs it; the
-turn proceeds. The canary allows its one command with a
-`permissions.allow` rule, written only in the disposable runtime: API-key
-logins run only in request-review, where unruled commands are denied. The
-standalone binary is granted as one file, never `~/.local/bin`.
+empty `mcp_config.json` if missing, and resolves a default project under
+`config/projects` with its id in `antigravity-cli/cache`, so the library
+writes all four before every launch. The runtime home is the session's own,
+so these writes, made outside Seatbelt, follow no link: each folder from the
+runtime home down is opened without following links and created where
+missing, a link or non-folder component and a non-plain target are refused,
+and each file is written fresh beside its target and renamed over it, so a
+planted hard-link alias keeps the old inode.
+
+All of `RuntimeHome/.gemini` is read-only to descendants. Rather than naming
+loaders, which missed `config/rules`, `config/agents`,
+`antigravity-cli/{rules,skills,plugins}` and `.gemini/skills` in the first
+draft, the edge denies the whole tree and then admits only the state agy
+writes, as observed under 1.4.12: `antigravity-cli/{annotations,brain,
+conversations,crashes,implicit,log,presence}`, `.gemini/antigravity`, its
+summary database and bookkeeping files (each with the siblings extending its
+name, such as `-wal` and atomic temporaries), three cache files, the default
+project file, `config/.migrated`, and `bin/agentapi`, the shell integration
+agy rewrites before every command it runs. The rest of `bin/`, where agy
+installs executables, stays read-only, as do its builtin tree (agy logs that
+it cannot populate it and carries on) and its updater state. Hard links are
+denied throughout. The canary creates folders for, and requires a refused
+write to, a sample of loaders no rule names: plugin hooks, CLI and config
+rules, agents, skills, a plugin manifest, `bin/webm_encoder`, `GEMINI.md`,
+settings and the MCP list. agy still completes its turn. Workspace
+`AGENTS.md` and `GEMINI.md` are the repository's own files, as Codex's and
+Claude's are; the workspace's `.agents`, where agy keeps project rules,
+skills, plugins and MCP servers, is protected as for every engine.
+
+The canary allows its one command with a `permissions.allow` rule, written
+only in the disposable runtime: API-key logins run only in request-review,
+where unruled commands are denied.
+
+agy is declared standalone: its installation is one native executable,
+granted as that file alone. A symlinked agy (`~/.local/bin/agy ->
+.../agy-arm64`) is its target file; a launcher script is refused, never a
+folder grant. For every engine, an executable the edge launches or grants
+(CLI, helpers, interpreter, tool bridge) inside the workspace or runtime
+home, or reached through an alias of either, is refused: the session could
+replace it, and the next proof would run and admit the replacement.
+
+Loopback is a requirement for Antigravity, so its edge session's egress is
+not provider-only: descendants reach every on-machine TCP service, including
+a local proxy that could relay further, and binds cover all local
+interfaces, as for any edge session with Loopback.
 
 `AGY_CLI_DISABLE_AUTO_UPDATE=1` did not stop agy's background updater: an
 unconfined observation run replaced the installed agy 1.4.2 with 1.4.12.
@@ -215,3 +252,20 @@ identity a8dfd506eaea4fd17d352e250c482d82fd1b867083cb269dddc7eb5e723bf74f).
 Not verified: a real Gemini API key under the edge, production TLS through the
 system bundle, and agy's Google-account login (the owner's agy is not logged
 in). Support stays Unknown.
+
+The installed-agy canary runs only locally. CI installs pinned Codex and
+Claude Code from npm and runs their canary; it does not install agy, whose
+vendor installer pipes a downloaded script into a shell, and adding that to
+CI would run it there. An agy release that changes its terminals, provider
+wire, settings or loaders is therefore caught only by running the canary by
+hand, which should precede relying on a new agy:
+
+    PATH=$HOME/.local/bin:$PATH AGENT_HARNESS_TEST_NO_SKIP=1 \
+      AGENT_HARNESS_TEST_LOOPBACK_CONTROL=1.1.1.1 \
+      AGENT_HARNESS_EDGE_CLI_CANARY=1 \
+      AGENT_HARNESS_EDGE_CLI_CANARY_ENGINES=antigravity,fx \
+      go test -race -count=1 -v ./session \
+      -run '^(TestEdgeInstalledCLICanary|TestEdgeInstalledFxIgnoresProxy)$'
+
+That command runs agy only inside the edge. Run unconfined, agy's updater
+replaces its own installed binary even with AGY_CLI_DISABLE_AUTO_UPDATE=1.

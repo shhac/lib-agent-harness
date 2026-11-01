@@ -136,17 +136,32 @@ the session runs agy's Gemini API-key mode: the library writes
 `modelProvider: gemini` into `RuntimeHome/.gemini/antigravity-cli/settings.json`
 and passes the key as `GEMINI_API_KEY`; its only default host is
 generativelanguage.googleapis.com. agy starts a language server on random
-localhost ports, hence Loopback. It verifies TLS against the system
-`/etc/ssl/cert.pem` bundle through `SSL_CERT_FILE` rather than the keychain,
-which needs trustd. Its own `--sandbox` is never passed. agy runs commands in
-pseudo-terminals, so its profile admits only terminals created inside the
-sandbox; the canary proves a terminal opened outside stays unreachable. agy's
-settings, MCP list, hooks, rules, skills, plugins, workflows and sidecars
-under `RuntimeHome/.gemini` are write-protected. A standalone agy is granted
-as its one file, never the folder it sits in. An API-key login runs only in
-request-review, where agy denies commands that no `permissions.allow` rule
-grants; the library adds none outside its canary. Hosted tools are not
-offered for Antigravity under the edge.
+localhost ports, hence Loopback, so an Antigravity edge session's egress is
+not provider-only: its descendants can reach every on-machine TCP service,
+including a local proxy that relays further, as any edge session with
+Loopback can. It verifies TLS against the system `/etc/ssl/cert.pem` bundle
+through `SSL_CERT_FILE` rather than the keychain, which needs trustd. Its own
+`--sandbox` is never passed. agy runs commands in pseudo-terminals, so its
+profile admits only terminals created inside the sandbox; the canary proves a
+terminal opened outside stays unreachable.
+
+All of `RuntimeHome/.gemini` is read-only to descendants, whatever agy loads
+from it (settings, MCP servers, rules, agents, skills, hooks, plugins,
+workflows, sidecars, installed executables), except the state a turn and a
+resume write: conversations, logs and agy's bookkeeping files, and the shell
+integration script agy rewrites before each command. The library writes the
+settings, MCP list and default project before every launch without following
+links, as fresh files renamed into place. The workspace's `.agents` folder is
+protected as for every engine; its `AGENTS.md` and `GEMINI.md` are the
+repository's own, as Codex's and Claude's are. agy must be installed as its
+native executable outside the workspace and runtime home; a launcher script
+is refused, and a symlinked agy is granted as its target file alone. An
+API-key login runs only in request-review, where agy denies commands that no
+`permissions.allow` rule grants; the library adds none outside its canary.
+Hosted tools are not offered for Antigravity under the edge.
+
+Every engine's edge refuses a CLI, helper, interpreter or tool bridge inside
+the workspace or runtime home, where the session could replace it.
 
 Production and canary environments disable automatic updates and telemetry and set MAX_RETRIES=0. An unavailable unsandboxed network/DNS witness refuses verification with edge_control_unavailable; it is not evidence of an escape.
 

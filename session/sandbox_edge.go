@@ -190,7 +190,11 @@ func edgeIdentity(o Options) (string, error) {
 			pathEnv = value
 		}
 	}
-	identity, err := nativecli.EdgeIdentityWithPath(binary, pathEnv)
+	standalone := false
+	if engine := edgeOf(o); engine != nil {
+		standalone = engine.standalone
+	}
+	identity, err := nativecli.EdgeIdentityFor(binary, pathEnv, standalone)
 	if err != nil {
 		return "", edgeFailure(o, CapabilityEdgeConfinementFailed)
 	}
@@ -241,13 +245,19 @@ func edgePlan(o Options, p edgeTransport, socket string) (sandboxbridge.EdgePlan
 		secret = secretPath(toolState)
 	}
 	engine := edgeOf(o)
-	plan, err := sandboxbridge.BuildEdge(sandboxbridge.EdgeConfig{Preferences: engine.preferences, ProtectRuntime: engine.protectRuntime, ProtectWork: engine.protectWork, ReadFiles: engine.readFiles, Terminals: engine.terminals, Work: o.WorkDir, Runtime: o.RuntimeHome, Binary: o.Provider.CLI.Binary, CLIHome: o.Provider.CLI.Home, Socket: socket, Bridge: bridge, ToolState: toolState, Secret: secret, Read: o.Sandbox.Read, Env: edgeEnvironment(o, p), Write: o.Sandbox.Write, Loopback: o.Sandbox.Loopback, ProxyPort: port})
+	plan, err := sandboxbridge.BuildEdge(sandboxbridge.EdgeConfig{Preferences: engine.preferences, ProtectRuntime: engine.protectRuntime, ProtectWork: engine.protectWork, ReadFiles: engine.readFiles, Terminals: engine.terminals, Standalone: engine.standalone, WritableRuntime: engine.writableRuntime, Work: o.WorkDir, Runtime: o.RuntimeHome, Binary: o.Provider.CLI.Binary, CLIHome: o.Provider.CLI.Home, Socket: socket, Bridge: bridge, ToolState: toolState, Secret: secret, Read: o.Sandbox.Read, Env: edgeEnvironment(o, p), Write: o.Sandbox.Write, Loopback: o.Sandbox.Loopback, ProxyPort: port})
 	if err != nil {
 		if errors.Is(err, nativecli.ErrEdgeInterpreter) {
 			return plan, refuse(o, "sandbox_edge", RefusedEdgeConflict, "npm CLI needs a resolvable Node interpreter on the launch PATH")
 		}
 		if errors.Is(err, nativecli.ErrEdgeNative) {
 			return plan, refuse(o, "sandbox_edge", RefusedEdgeConflict, "npm Codex needs its platform native executable installed")
+		}
+		if errors.Is(err, nativecli.ErrEdgeStandalone) {
+			return plan, refuse(o, "sandbox_edge", RefusedEdgeConflict, edgeLabel(o)+" runs under the edge only as its native executable; a launcher script or wrapper is refused")
+		}
+		if err.Error() == "edge_install_writable" {
+			return plan, refuse(o, "sandbox_edge", RefusedEdgeConflict, "CLI installation or tool bridge lies inside the workspace or runtime home, where the session could replace it; install it elsewhere")
 		}
 		if err.Error() == "edge_install_credentials" {
 			return plan, refuse(o, "sandbox_edge", RefusedEdgeConflict, "CLI installation overlaps the selected login home or contains a native credential file; use a separate credential-free installation")

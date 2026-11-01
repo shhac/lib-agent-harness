@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/url"
 	"os"
@@ -28,8 +29,19 @@ func TestEdgeFixtureAntigravityLifecycle(t *testing.T) {
 	old := edgeProbe
 	edgeProbe = func(context.Context, Options) error { return nil }
 	defer func() { edgeProbe = old }()
-	binary, _ := fakeHarness(t, "edge-session")
+	// agy is admitted only as its native executable, so the fake is a copy
+	// of this test binary rather than fakeHarness's launcher script, and the
+	// scenario travels in the session's own environment.
+	binary := filepath.Join(t.TempDir(), "agy")
+	native, err := os.ReadFile(os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(binary, native, 0700); err != nil {
+		t.Fatal(err)
+	}
 	o := sandboxOptions(t, harness.Antigravity, binary, true)
+	o.Env = []string{fakeScenarioEnv + "=edge-session", fakeLogEnv + "=" + filepath.Join(t.TempDir(), "invocations")}
 	o.RuntimeHome = t.TempDir()
 	if err := os.Chmod(o.RuntimeHome, 0700); err != nil {
 		t.Fatal(err)
@@ -37,7 +49,6 @@ func TestEdgeFixtureAntigravityLifecycle(t *testing.T) {
 	secret := "fixture-gemini-key-secret-only"
 	o.Sandbox.Loopback = true
 	o.Sandbox.Edge = &Edge{GeminiAPIKey: secret}
-	o.Sandbox.Read = []string{filepath.Dir(os.Args[0])}
 	var mu sync.Mutex
 	var diagnostics []string
 	o.OnDiagnostic = func(d Diagnostic) { mu.Lock(); diagnostics = append(diagnostics, d.Detail); mu.Unlock() }
@@ -122,5 +133,32 @@ func TestEdgeFixtureAntigravityLifecycle(t *testing.T) {
 		if leaked(text) {
 			t.Error("diagnostic leaked secret")
 		}
+	}
+}
+
+func TestAntigravityEdgeRefusesLauncherAndWritableBinary(t *testing.T) {
+	native := []byte("\xcf\xfa\xed\xfe native")
+	for name, place := range map[string]func(o Options) (string, []byte){
+		"launcher": func(Options) (string, []byte) {
+			return filepath.Join(t.TempDir(), "agy"), []byte("#!/bin/sh\nexec agy-arm64 \"$@\"\n")
+		},
+		"workspace": func(o Options) (string, []byte) { return filepath.Join(o.WorkDir, "agy"), native },
+		"runtime":   func(o Options) (string, []byte) { return filepath.Join(o.RuntimeHome, "agy"), native },
+	} {
+		t.Run(name, func(t *testing.T) {
+			o := antigravityEdgeOptions(t)
+			if err := os.Chmod(o.RuntimeHome, 0700); err != nil {
+				t.Fatal(err)
+			}
+			binary, data := place(o)
+			if err := os.WriteFile(binary, data, 0700); err != nil {
+				t.Fatal(err)
+			}
+			o.Provider.CLI.Binary = binary
+			var refused *UnsupportedError
+			if _, err := edgePlan(o, environmentEdgeProxy{}, ""); !errors.As(err, &refused) || refused.Code != RefusedEdgeConflict {
+				t.Fatal("not refused as a conflict", err)
+			}
+		})
 	}
 }

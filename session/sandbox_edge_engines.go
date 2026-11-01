@@ -31,6 +31,11 @@ type edgeEngine struct {
 	protectRuntime, protectWork, readFiles []string
 	// terminals admits pseudo-terminals the sandbox itself creates.
 	terminals bool
+	// standalone declares the engine ships as one native executable.
+	standalone bool
+	// writableRuntime are the state paths the engine must write inside its
+	// protected runtime trees; see sandboxbridge.EdgeConfig.WritableRuntime.
+	writableRuntime []string
 	// owned are variables the engine's edge sets itself, which a caller may
 	// not add, beyond the proxy, trust and home variables every edge owns.
 	owned []string
@@ -73,6 +78,10 @@ type edgeCanary struct {
 	drive func(ctx context.Context, o Options, w *streamWire) error
 	// settled reads whether a frame ends the turn, and whether successfully.
 	settled func(m map[string]json.RawMessage) (success, done bool)
+	// unlisted are sample loader paths, relative to the runtime home, that
+	// no protection names but a protected tree must cover: the canary proves
+	// a write to each is refused.
+	unlisted []string
 }
 
 // edgeOf is the engine's edge entry, or nil when the edge is not offered.
