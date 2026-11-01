@@ -54,9 +54,13 @@ func TestWorkbenchProofKeyLegacyPayload(t *testing.T) {
 	}
 	// Pin the current payload independently of production template generation;
 	// nil-port normalization must not change the existing proof identity.
-	current, err := legacyworkbenchProbeKey(o, []string{"/System", "/usr"}, "seatbelt-workbench-v12:readable-path-v2:dd80990aaea90a6739c896e39e9a115d65a26c63c6db1c515bf247eccd0068d2")
+	current, err := legacyworkbenchProbeKey(o, []string{"/System", "/usr"}, "seatbelt-workbench-v13:readable-path-v2:c8b9c0cb7a456e1bcdef02d4c713d0f1c60eac782e0f147954ff4959bd74b91f")
 	if err != nil || got != current {
 		t.Fatalf("nil-port normalization changed pinned proof payload: %s != %s: %v", got, current, err)
+	}
+	v12, err := legacyworkbenchProbeKey(o, []string{"/System", "/usr"}, "seatbelt-workbench-v12:readable-path-v2:dd80990aaea90a6739c896e39e9a115d65a26c63c6db1c515bf247eccd0068d2")
+	if err != nil || got == v12 {
+		t.Fatalf("a proof made before Unix sockets were confined to scratch was reused: %v", err)
 	}
 	v8, err := legacyworkbenchProbeKey(o, []string{"/System", "/usr"}, "seatbelt-workbench-v8:readable-path-v1:965de8a96277296731642e137ae818d5de2b28c970467bb52e2fe7784d0fe23b")
 	if err != nil || got == v8 {
@@ -94,7 +98,7 @@ func TestWorkbenchSeatbeltTemplatePinned(t *testing.T) {
 		t.Fatal(err)
 	}
 	hash := sha256.Sum256([]byte(seatbeltProfile(workbenchLayout{Work: normalized.WorkDir, Home: "/home", Tmp: "/tmp", Read: normalized.Read, System: system, Write: normalized.Write, Loopback: normalized.Loopback})))
-	if workbenchSeatbeltVersion != "seatbelt-workbench-v12" || hex.EncodeToString(hash[:]) != "dd80990aaea90a6739c896e39e9a115d65a26c63c6db1c515bf247eccd0068d2" {
+	if workbenchSeatbeltVersion != "seatbelt-workbench-v13" || hex.EncodeToString(hash[:]) != "c8b9c0cb7a456e1bcdef02d4c713d0f1c60eac782e0f147954ff4959bd74b91f" {
 		t.Fatalf("profile template changed: %x", hash)
 	}
 }

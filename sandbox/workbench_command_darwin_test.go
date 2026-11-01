@@ -153,7 +153,7 @@ func TestWorkbenchSeatbeltProfile(t *testing.T) {
 			if strings.Contains(profile, "SecurityServer") || strings.Contains(profile, "keychain") && strings.Contains(profile, "global-name \"com.apple.security") {
 				t.Fatal("keychain service emitted")
 			}
-			if strings.Contains(profile, "(allow network-outbound") != loop {
+			if strings.Contains(profile, "(allow network-outbound (remote ip") != loop {
 				t.Fatal("loopback drift")
 			}
 			if strings.Contains(profile, "(allow file-write* (subpath \"/workspace\"))") != write {

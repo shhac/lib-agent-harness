@@ -19,7 +19,7 @@ import (
 const selectedPortCanaryVersion = "selected-ports-v3-shared-interfaces"
 
 // A versioned template is shared by commands and the disposable canary.
-const workbenchSeatbeltVersion = "seatbelt-workbench-v12"
+const workbenchSeatbeltVersion = "seatbelt-workbench-v13"
 
 func seatbeltProfile(l workbenchLayout) string {
 	var b strings.Builder
@@ -72,6 +72,14 @@ func seatbeltProfile(l workbenchLayout) string {
 	}
 	for _, p := range writes {
 		fmt.Fprintf(&b, "; Only private scratch and the opted-in workspace are writable.\n(allow file-write* (subpath %s))\n", strconv.Quote(p))
+	}
+	// A command's own tests and tools often talk over Unix-domain sockets they
+	// create, such as a daemon under test. Sockets are confined to what the
+	// sandbox may write: one anywhere else, the caller's own included, stays
+	// out of reach.
+	b.WriteString("; Unix-domain sockets only within private scratch and the opted-in workspace.\n")
+	for _, p := range writes {
+		fmt.Fprintf(&b, "(allow network-bind (local unix-socket (subpath %s)))\n(allow network-outbound (remote unix-socket (subpath %s)))\n", strconv.Quote(p), strconv.Quote(p))
 	}
 	fmt.Fprintf(&b, "; Private scratch may host disposable repositories; preserve metadata elsewhere.\n(deny file-write* (require-all (regex #\"(^|/)[.][gG][iI][tT][ .]*(/|$)\") (require-not (subpath %s))))\n(deny file-link (require-all (regex #\"(^|/)[.][gG][iI][tT][ .]*(/|$)\") (require-not (subpath %s))))\n", strconv.Quote(l.Tmp), strconv.Quote(l.Tmp))
 	// Seatbelt's regular expressions have no counted repetition, so each

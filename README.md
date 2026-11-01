@@ -829,8 +829,10 @@ Commands follow the OS path sandbox: unlike file tools, they do not reject
 every hard link or injected mount. Keep outside links and mounts out of the
 workspace and explicit read set.
 
-IP and abstract-socket network access is denied by default. macOS also
-denies Unix sockets; Linux pathname sockets follow the directory rule above. `Commands.Loopback`
+IP and abstract-socket network access is denied by default. Unix sockets
+work only within private scratch and a writable workspace, so a command's own
+tests can run a daemon on one; on macOS the profile confines them there, and
+Linux pathname sockets follow the directory rule above. `Commands.Loopback`
 allows on-machine outbound traffic on macOS, with binds and inbound on every
 local interface. Servers may be reachable from other machines. This is proved
 against loopback and interface listeners and a reachable off-machine witness. `Commands.Env` sets
