@@ -25,9 +25,13 @@ func codexHandshake(ctx context.Context, w wire, experimental bool) error {
 // session's policy, model and instructions.
 func codexThreadParams(o Options, cwd string, resume bool, id string) map[string]any {
 	p := map[string]any{"cwd": cwd, "approvalPolicy": o.Policy.CodexApproval, "sandbox": o.Policy.CodexSandbox}
-	if o.Sandbox != nil {
+	if o.Sandbox != nil && o.Sandbox.Edge == nil {
 		// A legacy sandbox mode here replaces the session's permission profile.
 		delete(p, "sandbox")
+	}
+	if o.Sandbox != nil && o.Sandbox.Edge != nil {
+		p["sandbox"] = "danger-full-access"
+		p["approvalPolicy"] = "never"
 	}
 	if o.Model != "" {
 		p["model"] = o.Model

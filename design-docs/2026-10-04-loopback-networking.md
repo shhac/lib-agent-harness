@@ -549,3 +549,5 @@ and [Claude Code sandboxing](https://code.claude.com/docs/en/sandboxing).
 Ubuntu AppArmor must permit bubblewrap user namespaces. The team checks use
 synthetic transports, temporary directories and test-owned localhost listeners;
 CI installs socat on both Linux jobs and never requires a commercial CLI.
+
+See [the opt-in session edge](2026-10-05-sandbox-edge.md) for provider-only egress and its evidence limits.

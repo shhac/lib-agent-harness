@@ -93,6 +93,49 @@ macOS reuses matching command evidence; Linux runs the complete command proof
 for every open, launch and resume. Package placement adds no capability claim.
 See [the sandbox boundary](design-docs/2026-10-03-sandbox-package.md).
 
+### Sandbox edge (opt-in)
+
+The proof uses separate positive DNS TCP/UDP 53 and provider TCP 443 witnesses;
+VPN resolvers need not serve HTTPS. npm launchers receive narrowly resolved
+interpreter and vendor grants. Missing components refuse before launch.
+
+Set `Sandbox.Edge = &session.Edge{AllowHosts: []string{"provider.example:443"}}`.
+Both Codex and Claude require an existing private `Options.RuntimeHome`.
+Claude requires a caller setup-token in `Edge.ClaudeToken`, uses private
+`RuntimeHome/claude` as CLAUDE_CONFIG_DIR, and sees no native history or settings.
+`Edge.BaseURL` optionally selects an HTTPS API endpoint and admits its authority.
+AllowHosts accepts exact DNS names and optional ports (default 443), not wildcards.
+
+| Platform | Codex/Claude Session SandboxEdge |
+| --- | --- |
+| macOS | Unknown; complete installed-binary pre-launch canary required |
+| Linux | Unsupported: edge_unavailable, bubblewrap edge is Part 2 |
+| Windows | Unsupported: restricted CLI hosting unavailable |
+
+The harness Seatbelt edge disables the CLI internal sandbox and reuses command
+read, write and execution policies. Sandbox.Read explicitly admits installations
+outside the system set. Each session owns a credentialed CONNECT proxy allowing
+Codex api.openai.com and chatgpt.com, or Claude api.anthropic.com
+on 443, plus caller hosts and BaseURL. Direct external TCP/UDP and DNS are denied.
+Loopback is opt-in; macOS allows binds and inbound on all local interfaces.
+Selected ports and local-only loopback refuse. Browser, Restriction, Claude Web,
+and proxy/home/CA environment overrides conflict. Hosted tools require their
+control directory outside RuntimeHome and WorkDir, plus a readable bridge installation.
+
+Runtime credentials, login records and native configuration are read-only to descendants; workspace .claude and .mcp.json are protected too. Known runtime instruction loaders are write-protected: Claude agents/, commands/ and skills/ under CLAUDE_CONFIG_DIR, and Codex prompts/ and rules/ under CODEX_HOME. Codex imports owner login changes but never exports edge runtime credentials. Its refresh host auth.openai.com is blocked, including caller grants and BaseURL, so an expired access token cannot consume the owner's rotating refresh token. An authenticated refresh attempt fails the session with edge_login_refresh_blocked: refresh the selected native login outside the edge, then resume.
+
+Production and canary environments disable automatic updates and telemetry and set MAX_RETRIES=0. An unavailable unsandboxed network/DNS witness refuses verification with edge_control_unavailable; it is not evidence of an escape.
+
+The shell can read its private auth.json, Claude token and proxy credential.
+Admitted provider hosts remain an exfiltration channel. Secrets are scrubbed
+from events, diagnostics and errors and excluded from references. Start, Resume
+and VerifySandbox use the same proof path; VerifySandbox prepares no real runtime or tool host. The shell may invoke the admitted hosted channel directly during an active turn; caller authorization and serialized admission still apply. Only its secret file and socket are admitted, not writable lease or launch records. Incompatible references refuse before
+credential work. Process settlement closes the proxy, including on failure.
+Missing observations never establish support. See the
+[threat model and evidence limits](design-docs/2026-10-05-sandbox-edge.md).
+
+The sandbox-edge provider canary uses fake-provider CA trust. It does not prove native macOS trust-root loading or evaluation (including Security.framework/trustd); production TLS can fail even after that canary passes. SandboxEdge remains Unknown for this limit as well as installed-binary enforcement. Its localhost proxy-port Seatbelt rule admits both IPv4 and IPv6, while the listener binds only 127.0.0.1: a same-user listener on [::1] at that port can act as a relay even when Loopback is off. The edge does not isolate against same-user relay processes.
+
 ## Constrained completion
 
 ```go

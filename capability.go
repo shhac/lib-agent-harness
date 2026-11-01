@@ -69,6 +69,7 @@ const (
 	ReplaceInstructions Feature = "replace_instructions"
 	RestrictTools       Feature = "restrict_tools" // only configured tools, proven before launch
 	Sandbox             Feature = "sandbox"        // native tools or workbench commands inside a proven OS sandbox
+	SandboxEdge         Feature = "sandbox_edge"   // entire CLI tree inside the harness-owned boundary
 	CostReport          Feature = "cost"           // the harness values its token spend
 	CacheSplit          Feature = "cache_split"    // cached input is reported apart from fresh
 	ContextWindow       Feature = "context_window" // the serving model's window is stated
@@ -135,6 +136,9 @@ func Support(e Engine, op Operation, f Feature) Capability {
 
 // supportFor is Support's claim for the platform goos names.
 func supportFor(goos string, e Engine, op Operation, f Feature) Capability {
+	if f == SandboxEdge {
+		return sandboxEdgeSupport(e, op, goos)
+	}
 	if f == ProcessInspection {
 		return processInspectionSupport(e, op, goos)
 	}
@@ -156,6 +160,22 @@ func supportFor(goos string, e Engine, op Operation, f Feature) Capability {
 		return platform(goos, e, op, f, c)
 	}
 	return Capability{Unsupported, "not offered by this engine"}
+}
+
+const SandboxEdgeLinuxReason = "edge_unavailable: Linux bubblewrap CLI edge and provider transport are not yet delivered (Part 2); native per-command loopback does not reach host development servers"
+
+func sandboxEdgeSupport(e Engine, op Operation, platform string) Capability {
+	if op != Session || (e != Codex && e != Claude) {
+		return Capability{Unsupported, "sandbox edge is offered only for Codex and Claude sessions"}
+	}
+	switch platform {
+	case "darwin":
+		return Capability{Unknown, "installed-binary inference through the proxy is proved before launch using fake-provider CA trust; native TLS trust loading/evaluation is unproved and production TLS may fail; loopback binds and inbound cover all local interfaces"}
+	case "linux":
+		return Capability{Unsupported, SandboxEdgeLinuxReason}
+	default:
+		return Capability{Unsupported, "edge_unavailable: restricted CLI hosting is unavailable on this platform"}
+	}
 }
 
 // platform applies what the operating system rules out: restricted and

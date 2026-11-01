@@ -51,6 +51,10 @@ func claudeSandboxSettings(o Options) string {
 	if o.Sandbox.Tools != nil {
 		allow = append(allow, o.Sandbox.Tools.Qualified()...)
 	}
+	if o.Sandbox.Edge != nil {
+		// Without Claude's own sandbox, dontAsk admits Bash only by a rule.
+		allow = append(allow, sandboxClaudeTools(Sandbox{Write: o.Sandbox.Write})...)
+	}
 	if o.Browser {
 		allow = append(allow, claudeBrowserTools(claudeBrowserAdmitted)...)
 	}
@@ -74,6 +78,9 @@ func claudeSandboxSettings(o Options) string {
 		"allowUnsandboxedCommands": false,
 		"autoAllowBashIfSandboxed": true,
 		"network":                  network,
+	}
+	if o.Sandbox.Edge != nil {
+		sandbox = map[string]any{"enabled": false}
 	}
 	if len(filesystem) > 0 {
 		sandbox["filesystem"] = filesystem

@@ -31,19 +31,25 @@ type owner struct {
 // The channel, its credential and the lock are named by the environment
 // variables the session set for this process. The credential is read from an
 // owner-only file and sent once; it never appears in arguments, in relayed
-// content, or in anything a model can ask for.
+// content. In Edge mode the shell can read the admitted secret and reach the
+// socket; caller admission and authorization remain the handler boundary.
+const edgeBridgeEnv = "AGENT_HARNESS_EDGE_BRIDGE"
+
 func RunBridge(ctx context.Context, in io.Reader, out io.Writer) error {
 	socket := os.Getenv(BridgeSocketEnv)
 	secretFile := os.Getenv(BridgeSecretEnv)
 	lockFile := os.Getenv(BridgeLockEnv)
-	if socket == "" || secretFile == "" || lockFile == "" {
+	edge := os.Getenv(edgeBridgeEnv) == "1"
+	if socket == "" || secretFile == "" || (!edge && lockFile == "") {
 		return errors.New("bridge must be started by a harness session")
 	}
-	lock, err := holdBridgeLock(lockFile, filepath.Dir(socket))
-	if err != nil {
-		return err
+	if !edge {
+		lock, err := holdBridgeLock(lockFile, filepath.Dir(socket))
+		if err != nil {
+			return err
+		}
+		defer lock.Close()
 	}
-	defer lock.Close()
 	secret, err := os.ReadFile(secretFile)
 	if err != nil {
 		return errors.New("bridge credential is unavailable")

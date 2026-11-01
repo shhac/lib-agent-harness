@@ -108,6 +108,9 @@ func invocations(t *testing.T, log, kind string) int {
 // runFakeHarness is the fake's whole life. It returns the exit status.
 func runFakeHarness(scenario string) int {
 	args := os.Args[1:]
+	if scenario == "edge-session" {
+		return fakeEdgeSession(args)
+	}
 	switch {
 	case len(args) > 0 && args[0] == "mcp":
 		logInvocation("browser-config")

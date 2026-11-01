@@ -15,6 +15,9 @@ import (
 // claudeHomeValue leaves CLAUDE_CONFIG_DIR unset for the CLI's own default
 // home, where setting it would move Claude's project and credential lookup.
 func claudeHomeValue(o Options) (string, bool) {
+	if o.Sandbox != nil && o.Sandbox.Edge != nil {
+		return filepath.Join(o.RuntimeHome, "claude"), true
+	}
 	home, err := os.UserHomeDir()
 	if err == nil && filepath.Clean(o.Provider.CLI.Home) == filepath.Join(home, ".claude") {
 		return "", false

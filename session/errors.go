@@ -65,6 +65,10 @@ var errConversationGone = errors.New("harness conversation is unavailable to res
 // honour is a capability failure; one about a value or this machine's setup is
 // a preflight failure (see refusalFamily).
 const (
+	RefusedEdgeUnavailable      = "edge_unavailable"
+	RefusedEdgeProxyUnavailable = "edge_proxy_unavailable"
+	RefusedEdgeConflict         = "edge_conflict"
+	RefusedEdgeTokenRequired    = "edge_token_required"
 	// RefusedEngine: harness.Support offers no session for the engine.
 	RefusedEngine = "unsupported_engine"
 	// RefusedOtherEnginePolicy: a Policy field that only another engine reads.
@@ -105,6 +109,8 @@ const (
 // a value or this machine. A provider's own problem codes are preflight.
 func refusalFamily(code string) harness.Family {
 	switch code {
+	case RefusedEdgeUnavailable, RefusedEdgeConflict:
+		return harness.FailureCapability
 	case RefusedEngine, RefusedOtherEnginePolicy, RefusedEnvManaged, RefusedConflict, RefusedModelRequired,
 		RefusedModelWithoutTools, RefusedSandboxTool, RefusedNotNative, RefusedMethodMissing, RefusedNotOffered, RefusedLoopbackNotLocal, RefusedLoopbackPortsUnenforceable, sandbox.RefusedProcessInspectionUnenforceable:
 		return harness.FailureCapability
@@ -119,6 +125,9 @@ func refuse(o Options, operation, code, reason string) *UnsupportedError {
 
 // lockedLogin refuses a launch that would read a locked keychain, or is nil.
 func lockedLogin(o Options) error {
+	if o.Sandbox != nil && o.Sandbox.Edge != nil && o.Provider.Engine == harness.Claude {
+		return nil
+	}
 	if !harness.LoginStoreLocked(o.Provider.Engine) {
 		return nil
 	}
@@ -134,8 +143,15 @@ func toolHostRefusal(o Options, err error) *UnsupportedError {
 // Capability failure codes. They are fixed library constants: no provider text,
 // path or credential ever enters one.
 const (
-	CapabilityUnsupportedPlatform = "restricted_session_unsupported_platform"
-	CapabilityNativeToolsPresent  = "native_tools_present"
+	CapabilityUnsupportedPlatform     = "restricted_session_unsupported_platform"
+	CapabilityEdgeProviderPath        = "edge_provider_path"
+	CapabilityEdgeEgressNotRefused    = "edge_egress_not_refused"
+	CapabilityEdgeDNSNotRefused       = "edge_dns_not_refused"
+	CapabilityEdgeConfinementFailed   = "edge_confinement_failed"
+	CapabilityEdgeProxyFailed         = "edge_proxy_failed"
+	CapabilityEdgeLoginRefreshBlocked = "edge_login_refresh_blocked"
+	CapabilityEdgeControlUnavailable  = "edge_control_unavailable"
+	CapabilityNativeToolsPresent      = "native_tools_present"
 	// CapabilitySandboxToolMissing: the OS sandbox executable is unavailable.
 	CapabilitySandboxToolMissing           = sandbox.CapabilitySandboxToolMissing
 	CapabilitySandboxToolOutdated          = sandbox.CapabilitySandboxToolOutdated
@@ -220,6 +236,13 @@ const (
 // capabilityMessages is what each capability failure code means, where its
 // text does not depend on more than the code.
 var capabilityMessages = map[string]string{
+	CapabilityEdgeProviderPath:                     "the installed CLI did not complete inference through the restricted provider proxy",
+	CapabilityEdgeEgressNotRefused:                 "the edge did not prove refusal of direct off-machine traffic",
+	CapabilityEdgeDNSNotRefused:                    "the edge did not prove refusal of native DNS access",
+	CapabilityEdgeConfinementFailed:                "the edge did not prove its file and execution policy",
+	CapabilityEdgeProxyFailed:                      "the session provider proxy failed; direct egress remains denied",
+	CapabilityEdgeLoginRefreshBlocked:              "Codex token refresh was blocked to protect the owner login; refresh the selected native login outside the edge and resume",
+	CapabilityEdgeControlUnavailable:               "the unsandboxed network or DNS proof control is unavailable; restore connectivity and retry verification",
 	CapabilitySandboxToolMissing:                   "the required OS sandbox tool is missing; install a supported runtime",
 	CapabilityUnsupportedPlatform:                  "restricted worker sessions are not available on this platform",
 	CapabilityNativeToolsPresent:                   "the installed harness kept tools this session did not configure",

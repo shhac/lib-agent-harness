@@ -165,6 +165,8 @@ const (
 )
 
 type Options struct {
+	edgeSecrets []string
+	edgeCleanup func()
 	// Provider selects the engine and locates its CLI. Only a CLI provider for
 	// an engine harness.Support offers sessions is accepted. An empty
 	// Provider.CLI.Binary runs the engine's name on PATH; an empty

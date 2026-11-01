@@ -29,6 +29,7 @@ type response struct {
 	err  error
 }
 type streamWire struct {
+	secrets   []string
 	engine    harness.Engine
 	stdin     io.WriteCloser
 	stdout    io.ReadCloser
@@ -57,6 +58,46 @@ type asyncWire interface {
 }
 
 func newProcessWire(ctx context.Context, o Options, nativeID string, resuming bool, l *launch, onStart func(int), event func(map[string]json.RawMessage), ended func(error)) (*streamWire, error) {
+	if l != nil && l.edge != nil {
+		identity, err := edgeIdentity(o)
+		if err != nil || identity != l.edge.identity {
+			l.closeEdge()
+			return nil, edgeFailure(o, CapabilityEdgeConfinementFailed)
+		}
+		if report := o.OnDiagnostic; report != nil && l.edge.plan.PathDiagnostic != "" {
+			report(Diagnostic{Engine: o.Provider.Engine, Stage: "sandbox_edge", Code: "path_dropped", Detail: sanitize(scrubEdge([]byte(l.edge.plan.PathDiagnostic), l.edge.secrets), 2048), At: time.Now().UTC()})
+		}
+		args := append(append([]string(nil), l.edge.plan.Args...), commandArgs(o, nativeID, resuming, l)...)
+		wrapped := o
+		wrapped.Provider.CLI.Binary = l.edge.plan.Binary
+		wrapped.edgeSecrets = l.edge.secrets
+		wrapped.edgeCleanup = l.closeEdge
+		wrapped.OnDiagnostic = redactedDiagnostic(o.OnDiagnostic, l.edge.secrets)
+		var refreshBlocked <-chan struct{}
+		if o.Provider.Engine == harness.Codex {
+			if p, ok := l.edge.proxy.(interface{ Refused(string) <-chan struct{} }); ok {
+				refreshBlocked = p.Refused("auth.openai.com")
+			}
+		}
+		w, err := newProcessWireArgs(ctx, wrapped, args, l.edge.plan.Env, onStart, event, ended)
+		if err != nil {
+			l.closeEdge()
+			return nil, err
+		}
+		go func() {
+			select {
+			case <-refreshBlocked:
+				ended(&CapabilityError{Engine: o.Provider.Engine, Code: CapabilityEdgeLoginRefreshBlocked, Phase: DuringSession})
+				w.close()
+			case <-l.edge.proxy.Failed():
+				failure := &CapabilityError{Engine: o.Provider.Engine, Code: CapabilityEdgeProxyFailed, Phase: DuringSession}
+				ended(failure)
+				w.close()
+			case <-w.reaped:
+			}
+		}()
+		return w, nil
+	}
 	return newProcessWireArgs(ctx, o, commandArgs(o, nativeID, resuming, l), nil, onStart, event, ended)
 }
 
@@ -99,13 +140,16 @@ func newProcessWireArgs(ctx context.Context, o Options, args, env []string, onSt
 	if onStart != nil {
 		p.Notify(onStart)
 	}
-	w := &streamWire{engine: o.Provider.Engine, stdin: stdin, stdout: reader, pending: map[string]chan response{}, done: make(chan struct{}), reaped: make(chan struct{}), writeGate: make(chan struct{}, 1), event: event, ended: ended, stderr: stderr, diagnose: o.OnDiagnostic, dialect: d}
+	w := &streamWire{secrets: o.edgeSecrets, engine: o.Provider.Engine, stdin: stdin, stdout: reader, pending: map[string]chan response{}, done: make(chan struct{}), reaped: make(chan struct{}), writeGate: make(chan struct{}, 1), event: event, ended: ended, stderr: stderr, diagnose: o.OnDiagnostic, dialect: d}
 	w.stop = func() { cancel(); p.Stop(); stdin.Close(); reader.Close() }
 	go w.read()
 	go func() {
 		defer close(w.reaped)
 		err := p.Run()
 		p.Close()
+		if o.edgeCleanup != nil {
+			o.edgeCleanup()
+		}
 		w.observeExit(err)
 		writer.CloseWithError(err)
 		cancel()
@@ -133,7 +177,7 @@ func (w *streamWire) observeExit(err error) {
 	}
 	w.mu.Lock()
 	w.exit = exit
-	detail := sanitize(w.stderr.Bytes(), 2048)
+	detail := sanitize(scrubEdge(w.stderr.Bytes(), w.secrets), 2048)
 	report := w.diagnose
 	w.mu.Unlock()
 	if report != nil {

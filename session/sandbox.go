@@ -28,6 +28,9 @@ import (
 // back from the running harness before its first prompt. There is no mode that
 // starts a sandboxed session whose sandbox could not be established.
 type Sandbox struct {
+	// Edge confines the entire native CLI and its descendants at the harness
+	// command sandbox edge. The installed binary must pass the edge canary.
+	Edge  *Edge
 	Write bool
 	// Read names directories outside the workspace that the session's shell
 	// may also read, such as a shared build-module cache. Claude Code blocks its
@@ -79,6 +82,9 @@ type Sandbox struct {
 	// The bridge runs outside the OS sandbox, as the CLI's MCP servers do, so a
 	// hosted tool reaches whatever its handler does; the sandbox confines only
 	// the session's own tools.
+	// With Edge the bridge process inherits the harness boundary, while the
+	// caller's handler remains outside it. Its control state stays outside
+	// writable RuntimeHome and WorkDir; only the secret and socket are admitted.
 	//
 	// Every other MCP server stays off: Claude Code loads only this one, with
 	// claude.ai connectors disabled and any other server's tools refused by
@@ -133,6 +139,11 @@ func normalizeSandbox(o Options) (Options, error) {
 		}
 	}
 	frozen := *o.Sandbox
+	if o.Sandbox.Edge != nil {
+		edge := *o.Sandbox.Edge
+		edge.AllowHosts = slices.Clone(edge.AllowHosts)
+		frozen.Edge = &edge
+	}
 	frozen.Read = append([]string(nil), o.Sandbox.Read...)
 	if o.Sandbox.Tools != nil {
 		// Copied for the same reason a restriction is: normalizing must not edit
@@ -142,6 +153,15 @@ func normalizeSandbox(o Options) (Options, error) {
 		frozen.Tools = &tools
 	}
 	o.Sandbox = &frozen
+	if o.Sandbox.Edge != nil {
+		runtime, err := filepath.EvalSymlinks(o.RuntimeHome)
+		info, e := os.Stat(runtime)
+		owner, _ := os.UserHomeDir()
+		if err != nil || e != nil || !info.IsDir() || !sandboxbridge.PrivateStateDir(info) || pathsOverlap(runtime, o.WorkDir) || pathsOverlap(runtime, o.Provider.CLI.Home) || pathContains(runtime, owner) || pathsOverlap(o.WorkDir, o.Provider.CLI.Home) {
+			return o, refuse(o, "runtime_home", RefusedRuntimeHome, "the edge requires a private runtime home separate from workspace, native login and owner home")
+		}
+		o.RuntimeHome = runtime
+	}
 	if o.Restriction != nil {
 		return o, refuse(o, "sandbox", RefusedConflict, "a session is either restricted or sandboxed; set only one of Restriction and Sandbox")
 	}
@@ -159,7 +179,7 @@ func normalizeSandbox(o Options) (Options, error) {
 		return o, refuse(o, "sandbox", RefusedSandboxRead, problem)
 	}
 	o.Sandbox.Read = read
-	if o.Sandbox.Loopback {
+	if o.Sandbox.Loopback && o.Sandbox.Edge == nil {
 		if c := harness.Support(o.Provider.Engine, harness.Session, harness.Loopback); !c.Usable() {
 			return o, &UnsupportedError{Engine: o.Provider.Engine, Operation: "loopback", Code: RefusedNotOffered, Capability: c}
 		}
@@ -171,6 +191,9 @@ func normalizeSandbox(o Options) (Options, error) {
 	}
 	if err := validateSandboxTools(o); err != nil {
 		return o, err
+	}
+	if o.Sandbox.Edge != nil && o.Sandbox.Tools != nil && (pathsOverlap(o.RuntimeHome, containmentPath(o.Sandbox.Tools.Dir)) || pathsOverlap(o.WorkDir, containmentPath(o.Sandbox.Tools.Dir))) {
+		return o, refuse(o, "sandbox_edge", RefusedEdgeConflict, "edge tool control state must be outside RuntimeHome and WorkDir")
 	}
 	support := engines[o.Provider.Engine].sandbox
 	if support == nil || support.normalize == nil {
@@ -190,6 +213,11 @@ func normalizeCodexSandbox(o Options) (Options, error) {
 		return o, refuse(o, "policy", RefusedConflict, "a sandboxed Codex session never asks for approval; leave Policy.CodexApproval unset or never")
 	}
 	o.Policy.CodexApproval = "never"
+	// The edge's enclosing Seatbelt owns containment; nesting Codex's own
+	// Seatbelt inside it is refused by macOS.
+	if o.Sandbox.Edge != nil {
+		o.Policy.CodexSandbox = "danger-full-access"
+	}
 	if o.RuntimeHome == "" {
 		return o, refuse(o, "runtime_home", RefusedRuntimeHome, "a sandboxed Codex session requires a durable private runtime home; set Options.RuntimeHome")
 	}
@@ -253,6 +281,9 @@ var sandboxDisabledFeatures = []string{"apps", "plugins", "remote_plugin", "hook
 // hosts tools opens its tool channel only once the sandbox is proved, under
 // lease, which the launch owns from here.
 func prepareSandbox(ctx context.Context, o Options, lease *os.File) (*launch, error) {
+	if o.Sandbox.Edge != nil {
+		return prepareEdge(ctx, o, lease)
+	}
 	refuse := func(err error) (*launch, error) { _ = lease.Close(); return nil, err }
 	support := engines[o.Provider.Engine].sandbox
 	if support == nil {
@@ -357,7 +388,7 @@ func prepareCodexSandbox(ctx context.Context, o Options, l *launch) error {
 		}
 		l.browser = bridge
 	}
-	home := codexRuntime(o.Provider.CLI.Home, o.RuntimeHome)
+	home := sessionCodexRuntime(o)
 	if l.browser != nil {
 		config, err := l.browser.config(o.RuntimeHome)
 		if err != nil {
@@ -371,18 +402,27 @@ func prepareCodexSandbox(ctx context.Context, o Options, l *launch) error {
 	return syncRuntimeSkills(o)
 }
 
-// VerifySandbox proves, without inference, that the installed harness can run
+// VerifySandbox proves, without real provider inference, that the installed harness can run
 // a session with this sandbox. Start and Resume run the same check; this lets
 // a caller report readiness before any work is asked for.
 func VerifySandbox(ctx context.Context, o Options) error {
-	if err := refuseSelectedPorts(o); err != nil {
-		return err
+	if o.Sandbox == nil || o.Sandbox.Edge == nil {
+		if err := refuseSelectedPorts(o); err != nil {
+			return err
+		}
 	}
 	if o.Sandbox == nil {
 		return refuse(o, "sandbox", RefusedNotConfigured, "options carry no sandbox to verify")
 	}
 	o, err := normalize(o)
 	if err != nil {
+		return err
+	}
+	if o.Sandbox.Edge != nil {
+		l, err := proveEdge(ctx, o, nil)
+		if l != nil {
+			l.closeEdge()
+		}
 		return err
 	}
 	if err = lockedLogin(o); err != nil {

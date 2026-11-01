@@ -106,6 +106,14 @@ jobs:
           bwrap --version
           AGENT_HARNESS_TEST_NO_SKIP=1 go test -race -count=1 -v ./sandbox ./session . -run ProcessInspection
       - run: go test -race ./...
+      - name: Prove pinned CLI edges with dummy credentials and fake providers
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          go test -race -count=1 -v ./session -run '^TestEdgeRealBoundaryScript$'
+          npm install --prefix "$RUNNER_TEMP/edge-clis" @openai/codex@0.160.0 @anthropic-ai/claude-code@2.1.282
+          export PATH="$RUNNER_TEMP/edge-clis/node_modules/.bin:$PATH"
+          AGENT_HARNESS_EDGE_CLI_CANARY=1 go test -race -count=1 -v ./session -run '^TestEdgeInstalledCLICanary$'
       - name: Check the full suite inside the OS command sandbox
         if: runner.os != 'Windows'
         run: go run ./internal/cmd/sandboxcheck

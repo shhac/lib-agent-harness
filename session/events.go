@@ -15,6 +15,13 @@ import (
 )
 
 func (s *Session) notification(m map[string]json.RawMessage) {
+	if len(s.options.edgeSecrets) > 0 {
+		clean := make(map[string]json.RawMessage, len(m))
+		for key, value := range m {
+			clean[key] = json.RawMessage(scrubEdge(value, s.options.edgeSecrets))
+		}
+		m = clean
+	}
 	s.eventMu.Lock()
 	defer s.eventMu.Unlock()
 	s.notificationLocked(m)

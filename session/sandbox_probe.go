@@ -274,6 +274,17 @@ func sessionTempDir() string {
 // thread. A thread that is not under this session's profile, with the network
 // closed and temporary directories excluded, is closed before any prompt.
 func checkCodexSandbox(o Options, body []byte) error {
+	if o.Sandbox != nil && o.Sandbox.Edge != nil {
+		var response struct {
+			Sandbox struct {
+				Type string `json:"type"`
+			} `json:"sandbox"`
+		}
+		if json.Unmarshal(body, &response) != nil || response.Sandbox.Type != "dangerFullAccess" {
+			return &CapabilityError{Engine: o.Provider.Engine, Code: CapabilityEdgeConfinementFailed, Phase: BeforeFirstPrompt}
+		}
+		return nil
+	}
 	var response struct {
 		Sandbox struct {
 			Type                string   `json:"type"`

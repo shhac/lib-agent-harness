@@ -14,6 +14,10 @@ import (
 // normalize resolves a caller's options into the ones a session runs with,
 // refusing any it cannot honour. Its stages run in order.
 func normalize(o Options) (Options, error) {
+	var edgeErr error
+	if o, edgeErr = normalizeEdge(o); edgeErr != nil {
+		return o, edgeErr
+	}
 	if err := refuseSelectedPorts(o); err != nil {
 		return o, err
 	}
@@ -337,6 +341,14 @@ func reference(o Options, id string) Ref {
 			Base    json.RawMessage
 			Browser bool
 		}{payload, true})
+	}
+	if o.Sandbox != nil && o.Sandbox.Edge != nil {
+		payload, _ = json.Marshal(struct {
+			Base                  json.RawMessage
+			Edge                  bool
+			AllowHosts            []string
+			BaseURL, EdgeRevision string
+		}{payload, true, o.Sandbox.Edge.AllowHosts, o.Sandbox.Edge.BaseURL, edgeRevision})
 	}
 	if skills := skillsDigest(o); skills != nil {
 		// A skill request changes what the agent can do, so a resume must

@@ -23,6 +23,7 @@ import (
 // undo it. Serializing costs some parallelism and buys a boundary the caller can
 // actually rely on, including for the evidence it collects.
 type toolHost struct {
+	edge      bool // The library owns control state; the confined bridge is read-only.
 	cfg       ToolHost
 	listener  net.Listener
 	socket    string
@@ -159,11 +160,16 @@ func newDirectToolHost(cfg ToolHost, extra ...ToolDefinition) *toolHost {
 
 // environment names the channel for the bridge process. Only paths travel here.
 func (h *toolHost) environment() map[string]string {
-	return map[string]string{
+	env := map[string]string{
 		BridgeSocketEnv: h.socket,
 		BridgeSecretEnv: secretPath(h.cfg.Dir),
 		BridgeLockEnv:   lockPath(h.cfg.Dir),
 	}
+	if h.edge {
+		env[edgeBridgeEnv] = "1"
+		env[BridgeLockEnv] = ""
+	}
+	return env
 }
 
 func (h *toolHost) close() {

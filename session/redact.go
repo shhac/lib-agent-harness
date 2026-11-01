@@ -4,12 +4,34 @@ package session
 // caller's diagnostic record or a model.
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 	"unicode"
 
 	"github.com/shhac/lib-agent-harness/internal/textbound"
 )
+
+func scrubEdge(raw []byte, secrets []string) []byte {
+	text := string(raw)
+	for _, secret := range secrets {
+		if secret != "" {
+			encoded, _ := json.Marshal(secret)
+			if len(encoded) > 2 {
+				text = strings.ReplaceAll(text, string(encoded[1:len(encoded)-1]), "[redacted]")
+			}
+			text = strings.ReplaceAll(text, secret, "[redacted]")
+		}
+	}
+	return []byte(text)
+}
+
+func redactedDiagnostic(callback func(Diagnostic), secrets []string) func(Diagnostic) {
+	if callback == nil {
+		return nil
+	}
+	return func(d Diagnostic) { d.Detail = string(scrubEdge([]byte(d.Detail), secrets)); callback(d) }
+}
 
 // sanitize prepares captured harness output for a caller's private diagnostic
 // record: control sequences removed, credential-shaped runs redacted, bounded.

@@ -64,8 +64,11 @@ func failure(code string) error { return &Error{Code: code} }
 
 // Home is one runtime home and the source home whose login it shares.
 type Home struct {
-	Source  string
-	Runtime string
+	// ImportOnly prevents any runtime credential from reaching the source.
+	// Used when native tools share the writable runtime state boundary.
+	ImportOnly bool
+	Source     string
+	Runtime    string
 	// Credential is the login's file name, the same in both homes.
 	Credential string
 	// Files are configuration this library owns, rewritten on every Prepare so
@@ -147,7 +150,7 @@ func (h Home) share() error {
 	shared := readRecord(h.Runtime)
 	switch {
 	case existing == nil:
-	case shared != nil && shared.Source == hex.EncodeToString(presentDigest):
+	case !h.ImportOnly && shared != nil && shared.Source == hex.EncodeToString(presentDigest):
 		// The source is exactly what this home was given, so whatever is here
 		// is that credential or a refresh the harness made. Replacing it would
 		// undo a refresh a crash kept from being written back.
@@ -169,6 +172,9 @@ func (h Home) share() error {
 // was removed since this home was given its credential: a newer login or a
 // logout wins over a worker's copy.
 func (h Home) WriteBack() error {
+	if h.ImportOnly {
+		return nil
+	}
 	return h.locked(h.writeBack)
 }
 
@@ -185,8 +191,10 @@ func (h Home) WriteBack() error {
 // refresh the source did not take is left for the next launch to resolve.
 func (h Home) Sync() error {
 	return h.locked(func() error {
-		if err := h.writeBack(); err != nil {
-			return err
+		if !h.ImportOnly {
+			if err := h.writeBack(); err != nil {
+				return err
+			}
 		}
 		return h.pull()
 	})

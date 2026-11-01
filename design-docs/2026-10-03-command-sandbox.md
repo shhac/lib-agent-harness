@@ -618,6 +618,8 @@ The owner supplies outside-sandbox platform results under note 20; earlier
 snapshots and environmental refusals remain historical and cannot certify this
 revision. No hosted/compatibility work was reintroduced from LAH-30.
 
+See [the opt-in session edge](2026-10-05-sandbox-edge.md) for provider-only egress and its evidence limits.
+
 ## Command timeout ceilings
 
 Standalone Open and Prove/NewRunner with a zero output budget accept Timeout up

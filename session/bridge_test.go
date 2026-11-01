@@ -120,42 +120,56 @@ func requireAlive(t *testing.T, pid int) {
 // A bridge relays the harness's protocol and proves it holds this session's
 // channel credential. It carries no policy and interprets nothing.
 func TestRunBridgeRelaysAuthenticatedTraffic(t *testing.T) {
-	h := testHost(t, echoHandler(t))
-	for key, value := range h.environment() {
-		t.Setenv(key, value)
-	}
-	harnessIn, bridgeIn := io.Pipe()
-	bridgeOut, harnessOut := io.Pipe()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { done <- RunBridge(ctx, harnessIn, harnessOut) }()
+	for _, edge := range []bool{false, true} {
+		t.Run(fmt.Sprintf("edge-%t", edge), func(t *testing.T) {
+			h := testHost(t, echoHandler(t))
+			h.edge = edge
+			if edge {
+				if err := os.Chmod(h.cfg.Dir, 0500); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = os.Chmod(h.cfg.Dir, 0700) })
+			}
+			for key, value := range h.environment() {
+				t.Setenv(key, value)
+			}
+			harnessIn, bridgeIn := io.Pipe()
+			bridgeOut, harnessOut := io.Pipe()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- RunBridge(ctx, harnessIn, harnessOut) }()
 
-	request, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{"name": "read_file", "arguments": map[string]any{"path": "a.go"}}})
-	if _, err := bridgeIn.Write(append(request, '\n')); err != nil {
-		t.Fatal(err)
-	}
-	scanner := bufio.NewScanner(bridgeOut)
-	if !scanner.Scan() {
-		t.Fatalf("bridge relayed no reply: %v", scanner.Err())
-	}
-	if !strings.Contains(scanner.Text(), `\"path\":\"a.go\"`) {
-		t.Fatalf("bridge did not relay the tool result: %s", scanner.Text())
-	}
-	held, err := readBridgeLock(lockPath(h.cfg.Dir))
-	if err != nil || held == nil {
-		t.Fatalf("a running bridge did not hold its lock: %v %v", held, err)
-	}
-	// The launch identity is what lets recovery tell this bridge apart from an
-	// unrelated process that inherited the same group number.
-	if held.Launch != h.socketDir {
-		t.Errorf("bridge did not record the launch it belongs to: %+v", held)
-	}
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("bridge did not stop with its context")
+			request, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{"name": "read_file", "arguments": map[string]any{"path": "a.go"}}})
+			if _, err := bridgeIn.Write(append(request, '\n')); err != nil {
+				t.Fatal(err)
+			}
+			scanner := bufio.NewScanner(bridgeOut)
+			if !scanner.Scan() {
+				t.Fatalf("bridge relayed no reply: %v", scanner.Err())
+			}
+			if !strings.Contains(scanner.Text(), `\"path\":\"a.go\"`) {
+				t.Fatalf("bridge did not relay the tool result: %s", scanner.Text())
+			}
+			held, err := readBridgeLock(lockPath(h.cfg.Dir))
+			if !edge && (err != nil || held == nil) {
+				t.Fatalf("a running bridge did not hold its lock: %v %v", held, err)
+			}
+			// The launch identity is what lets recovery tell this bridge apart from an
+			// unrelated process that inherited the same group number.
+			if !edge && held.Launch != h.socketDir {
+				t.Errorf("bridge did not record the launch it belongs to: %+v", held)
+			}
+			if edge && held != nil {
+				t.Fatal("edge bridge wrote control state")
+			}
+			cancel()
+			select {
+			case <-done:
+			case <-time.After(3 * time.Second):
+				t.Fatal("bridge did not stop with its context")
+			}
+		})
 	}
 }
 

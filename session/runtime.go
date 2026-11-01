@@ -84,7 +84,8 @@ func (s *Session) syncLogin() {
 	if o.Provider.Engine != harness.Codex || o.RuntimeHome == "" || (o.Restriction == nil && o.Sandbox == nil) {
 		return
 	}
-	err := codexRuntime(o.Provider.CLI.Home, o.RuntimeHome).Sync()
+	home := sessionCodexRuntime(o)
+	err := home.Sync()
 	var shared *sharedlogin.Error
 	if err == nil || (errors.As(err, &shared) && shared.Code == sharedlogin.CodeUnsupported) {
 		return
@@ -112,6 +113,23 @@ func prepareRuntimeHome(source, runtime string) (string, error) {
 // over a worker's copy.
 func writeBackCredential(source, runtime string) error {
 	return runtimeFailure(codexRuntime(source, runtime).WriteBack())
+}
+
+func edgeConfigured(o Options) bool { return o.Sandbox != nil && o.Sandbox.Edge != nil }
+
+func sessionCodexRuntime(o Options) sharedlogin.Home {
+	h := codexRuntime(o.Provider.CLI.Home, o.RuntimeHome)
+	h.ImportOnly = edgeConfigured(o)
+	return h
+}
+
+// An edge descendant can write native state; it must never export that state
+// through the library into the owner's unsandboxed login.
+func (s *Session) writeBackLogin() error {
+	if edgeConfigured(s.options) {
+		return nil
+	}
+	return writeBackCredential(s.options.Provider.CLI.Home, s.options.RuntimeHome)
 }
 
 // credentialDigest identifies a credential file without revealing it. A
