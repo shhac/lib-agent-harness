@@ -5,6 +5,7 @@ import (
 	"errors"
 	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/edgeproxy"
+	"github.com/shhac/lib-agent-harness/internal/sandboxprobe"
 	"github.com/shhac/lib-agent-harness/internal/testenv"
 	"os"
 	"path/filepath"
@@ -17,6 +18,15 @@ import (
 func TestEdgeRealBoundaryScript(t *testing.T) {
 	testenv.RequireNestedSandbox(t)
 	testenv.RequireLoopback(t)
+	// A hosted runner has no usable off-machine resolver of its own; CI
+	// proves one and passes it in, as it does for the selected-port canary.
+	if control := os.Getenv("AGENT_HARNESS_TEST_LOOPBACK_CONTROL"); control != "" {
+		discover := edgeControl
+		edgeControl = func(ctx context.Context, _ string) (sandboxprobe.ControlTarget, string) {
+			return discover(ctx, control)
+		}
+		t.Cleanup(func() { edgeControl = discover })
+	}
 	for _, loopback := range []bool{false, true} {
 		t.Run(map[bool]string{false: "closed", true: "host-loopback"}[loopback], func(t *testing.T) {
 			root := t.TempDir()
