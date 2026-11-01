@@ -92,9 +92,14 @@ func DiscoverEdgeInstallation(binary, pathEnv string) (EdgeInstallation, error) 
 					triple = "x86_64-apple-darwin"
 				}
 				for _, root := range []string{dir, filepath.Join(filepath.Dir(dir), "codex-darwin-"+arch)} {
-					path := filepath.Join(root, "vendor", triple, "codex", "codex")
+					// Codex 0.160 and 0.166 ship the binary under bin/; codex/ is
+					// the layout this first looked for.
+					path := filepath.Join(root, "vendor", triple, "bin", "codex")
 					if !add(path) {
-						continue
+						path = filepath.Join(root, "vendor", triple, "codex", "codex")
+						if !add(path) {
+							continue
+						}
 					}
 					found = true
 					if arch == runtime.GOARCH || (arch == "x64" && runtime.GOARCH == "amd64") {

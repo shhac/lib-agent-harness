@@ -23,6 +23,7 @@ func TestEdgeInstalledCLICanary(t *testing.T) {
 	if os.Getenv("AGENT_HARNESS_EDGE_CLI_CANARY") != "1" {
 		return
 	}
+	useTestControl(t)
 	for _, engine := range []harness.Engine{harness.Codex, harness.Claude} {
 		t.Run(string(engine), func(t *testing.T) {
 			binary, err := exec.LookPath(string(engine))
