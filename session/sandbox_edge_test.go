@@ -168,6 +168,7 @@ func TestEdgePreflightConflicts(t *testing.T) {
 		"web":         func(o *Options) { o.Sandbox.Web = true },
 		"wildcard":    func(o *Options) { o.Sandbox.Edge.AllowHosts = []string{"*.example.com"} },
 		"url":         func(o *Options) { o.Sandbox.Edge.BaseURL = "http://example.com" },
+		"skills":      func(o *Options) { o.Skills.Provided = []harness.Skill{{Name: "demo", Dir: "/skills/demo"}} },
 	}
 	for _, key := range []string{"HTTPS_PROXY", "http_proxy", "NO_PROXY", "HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE"} {
 		cases[key] = func(o *Options) { o.Env = []string{key + "=forbidden"} }
@@ -293,7 +294,7 @@ func TestEdgeEnginePolicy(t *testing.T) {
 
 func TestEdgeJudgmentFailsClosed(t *testing.T) {
 	o := Options{Provider: harness.Provider{Engine: harness.Codex}, Sandbox: &Sandbox{Edge: &Edge{}}}
-	complete := "read-inside read-outside-denied write-outside-denied exec-outside-denied grandchild-denied git-denied claude-config-denied mcp-config-denied runtime-config-denied runtime-auth-denied runtime-record-denied loader-claude-agents-denied loader-claude-commands-denied loader-claude-skills-denied loader-prompts-denied loader-rules-denied proxy-denied tcp443-denied tcp53-denied udp53-denied dns-denied finished write-inside-denied host-denied"
+	complete := "read-inside read-outside-denied write-outside-denied exec-outside-denied grandchild-denied git-denied claude-config-denied mcp-config-denied runtime-config-denied runtime-auth-denied runtime-record-denied loader-claude-agents-denied loader-claude-commands-denied loader-claude-skills-denied loader-prompts-denied loader-rules-denied loader-skills-denied proxy-denied tcp443-denied tcp53-denied udp53-denied dns-denied finished write-inside-denied host-denied"
 	if err := judgeEdgeBoundary(o, []byte(complete), nil); err != nil {
 		t.Fatal(err)
 	}

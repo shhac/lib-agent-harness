@@ -9,7 +9,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -338,7 +337,7 @@ func probeEdge(ctx context.Context, o Options) error {
 				return
 			}
 		} else {
-			if !edgeShellResponse(w, o, data, command) {
+			if !edgeShellResponse(w, probe, data, command) {
 				nativeMu.Lock()
 				if nativeFailure == nil {
 					nativeFailure = edgeFailure(o, CapabilityEdgeConfinementFailed)
@@ -387,48 +386,34 @@ func probeEdge(ctx context.Context, o Options) error {
 	if err != nil {
 		return err
 	}
-	plan.Env = append(plan.Env, "SSL_CERT_FILE="+caPath, "NODE_EXTRA_CA_CERTS="+caPath)
+	plan.Env = append(plan.Env, "SSL_CERT_FILE="+caPath, "NODE_EXTRA_CA_CERTS="+caPath, "CODEX_CA_CERTIFICATE="+caPath)
 	boundary, closeBoundary, err := prepareEdgeBoundary(ctx, probe, p, root)
 	if err != nil {
 		return err
 	}
 	defer closeBoundary()
 	plan.Env = append(plan.Env, boundary.Env...)
-	modes := []bool{false}
-	if o.Provider.Engine == harness.Codex && o.Sandbox.Edge.BaseURL == "" {
-		modes = append(modes, true)
+	// One dummy API-key login proves the boundary. A dummy ChatGPT login would
+	// run the same plan and script, and Codex 0.166 also requires ChatGPT's
+	// private account-routing replies before it sends a turn.
+	requested.Store(false)
+	if err = driveEdgeInference(ctx, probe, plan.Binary, plan.Args, plan.Env, nonce, host); err != nil || !requested.Load() {
+		nativeMu.Lock()
+		failure := nativeFailure
+		nativeMu.Unlock()
+		if failure != nil {
+			return failure
+		}
+		if ctx.Err() != nil {
+			return edgeFailure(o, CapabilityProbeTimeout)
+		}
+		return edgeFailure(o, CapabilityEdgeProviderPath)
 	}
-	for _, subscription := range modes {
-		if subscription {
-			claims, _ := json.Marshal(map[string]any{"exp": time.Now().Add(24 * time.Hour).Unix(), "email": "dummy@example.invalid", "https://api.openai.com/auth": map[string]string{"chatgpt_account_id": "dummy-edge-account", "chatgpt_plan_type": "plus"}})
-			jwt := "eyJhbGciOiJub25lIn0." + base64.RawURLEncoding.EncodeToString(claims) + ".dummy"
-			auth, _ := json.Marshal(map[string]any{"auth_mode": "chatgpt", "tokens": map[string]string{"id_token": jwt, "access_token": jwt, "refresh_token": "dummy-refresh", "account_id": "dummy-edge-account"}, "last_refresh": time.Now().UTC().Format(time.RFC3339)})
-			if err = os.WriteFile(filepath.Join(probe.RuntimeHome, "auth.json"), auth, 0600); err != nil {
-				return edgeFailure(o, CapabilityEdgeProviderPath)
-			}
-		}
-		requested.Store(false)
-		nativeMu.Lock()
-		nativeProved = false
-		nativeMu.Unlock()
-		if err = driveEdgeInference(ctx, probe, plan.Binary, plan.Args, plan.Env, nonce, host); err != nil || !requested.Load() {
-			nativeMu.Lock()
-			failure := nativeFailure
-			nativeMu.Unlock()
-			if failure != nil {
-				return failure
-			}
-			if ctx.Err() != nil {
-				return edgeFailure(o, CapabilityProbeTimeout)
-			}
-			return edgeFailure(o, CapabilityEdgeProviderPath)
-		}
-		nativeMu.Lock()
-		proved := nativeProved
-		nativeMu.Unlock()
-		if !proved {
-			return edgeFailure(o, CapabilityEdgeConfinementFailed)
-		}
+	nativeMu.Lock()
+	proved := nativeProved
+	nativeMu.Unlock()
+	if !proved {
+		return edgeFailure(o, CapabilityEdgeConfinementFailed)
 	}
 	if host != nil && !host.served() {
 		return edgeFailure(o, CapabilityHostedToolsMissing)
@@ -436,24 +421,34 @@ func probeEdge(ctx context.Context, o Options) error {
 	return nil
 }
 
+// edgeCertificate issues a disposable CA and a leaf it signs for names. The
+// leaf is not itself a CA: webpki-based clients such as Codex refuse a
+// certificate used as both.
 func edgeCertificate(names ...string) (tls.Certificate, []byte, error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return tls.Certificate{}, nil, err
 	}
-	template := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: edgeCanaryHost}, DNSNames: names, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, BasicConstraintsValid: true, IsCA: true}
-	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	now := time.Now()
+	caTemplate := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "edge canary CA"}, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour), KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature, BasicConstraintsValid: true, IsCA: true}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
 	if err != nil {
 		return tls.Certificate{}, nil, err
 	}
-	pk, err := x509.MarshalPKCS8PrivateKey(key)
+	ca, err := x509.ParseCertificate(caDER)
 	if err != nil {
 		return tls.Certificate{}, nil, err
 	}
-	cert := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
-	priv := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: pk})
-	pair, err := tls.X509KeyPair(cert, priv)
-	return pair, cert, err
+	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return tls.Certificate{}, nil, err
+	}
+	leafTemplate := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: edgeCanaryHost}, DNSNames: names, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, BasicConstraintsValid: true}
+	leafDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, ca, &leafKey.PublicKey, caKey)
+	if err != nil {
+		return tls.Certificate{}, nil, err
+	}
+	return tls.Certificate{Certificate: [][]byte{leafDER, caDER}, PrivateKey: leafKey}, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}), nil
 }
 
 func driveEdgeInference(ctx context.Context, o Options, binary string, prefix, env []string, nonce string, host *toolHost) error {
@@ -579,7 +574,7 @@ func prepareEdgeBoundary(ctx context.Context, o Options, p *edgeproxy.Proxy, roo
 	if err = os.MkdirAll(filepath.Join(o.WorkDir, ".claude"), 0700); err != nil {
 		return failure(CapabilityEdgeConfinementFailed)
 	}
-	for _, name := range []string{"claude/agents", "claude/commands", "claude/skills", "prompts", "rules"} {
+	for _, name := range []string{"claude/agents", "claude/commands", "claude/skills", "prompts", "rules", "skills"} {
 		dir := filepath.Join(o.RuntimeHome, name)
 		if err = os.MkdirAll(dir, 0700); err != nil {
 			return failure(CapabilityEdgeConfinementFailed)
@@ -624,7 +619,7 @@ if (open(my $f,'>>','.git/config')) { mark('escape-git'); } elsif (denied()) { m
 for my $pair (['.claude/settings.json','claude-config-denied'],['.mcp.json','mcp-config-denied'],["$ENV{HOME}/config.toml",'runtime-config-denied'],["$ENV{HOME}/auth.json",'runtime-auth-denied'],["$ENV{HOME}/login.shared",'runtime-record-denied']) {
   if(open(my $f,'>',$pair->[0])) { mark('escape-protected-state'); } elsif(denied()) {mark($pair->[1]);}
 }
-for my $dir ('claude/agents','claude/commands','claude/skills','prompts','rules') {
+for my $dir ('claude/agents','claude/commands','claude/skills','prompts','rules','skills') {
   my $mark=$dir; $mark =~ s!/!-!g;
   if(open(my $f,'>',"$ENV{HOME}/$dir/instruction.md")){mark('escape-runtime-loader');}elsif(denied()){mark("loader-$mark-denied");}
 }
@@ -677,7 +672,7 @@ func judgeEdgeBoundary(o Options, out []byte, runErr error) error {
 			return &CapabilityError{Engine: o.Provider.Engine, Code: CapabilityEdgeConfinementFailed, Phase: BeforeLaunch, Reason: "observed_escape"}
 		}
 	}
-	for _, key := range []string{"read-inside", "read-outside-denied", "write-outside-denied", "exec-outside-denied", "grandchild-denied", "git-denied", "claude-config-denied", "mcp-config-denied", "runtime-config-denied", "runtime-auth-denied", "runtime-record-denied", "loader-claude-agents-denied", "loader-claude-commands-denied", "loader-claude-skills-denied", "loader-prompts-denied", "loader-rules-denied", "proxy-denied", "tcp443-denied", "tcp53-denied", "udp53-denied", "dns-denied", "finished"} {
+	for _, key := range []string{"read-inside", "read-outside-denied", "write-outside-denied", "exec-outside-denied", "grandchild-denied", "git-denied", "claude-config-denied", "mcp-config-denied", "runtime-config-denied", "runtime-auth-denied", "runtime-record-denied", "loader-claude-agents-denied", "loader-claude-commands-denied", "loader-claude-skills-denied", "loader-prompts-denied", "loader-rules-denied", "loader-skills-denied", "proxy-denied", "tcp443-denied", "tcp53-denied", "udp53-denied", "dns-denied", "finished"} {
 		if !lines[key] {
 			if strings.HasPrefix(key, "tcp") || strings.HasPrefix(key, "udp") {
 				return edgeFailure(o, CapabilityEdgeEgressNotRefused)

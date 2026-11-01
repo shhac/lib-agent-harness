@@ -6,8 +6,11 @@ type EdgeConfig struct {
 	Work, Runtime, Binary, CLIHome, Socket, Bridge, ToolState, Secret string
 	Read                                                              []string
 	Env                                                               []string
-	Write, Loopback                                                   bool
-	ProxyPort                                                         int
+	// Preferences are the macOS preference domains the CLI reads at start-up,
+	// such as Codex's managed configuration. No other domain is readable.
+	Preferences     []string
+	Write, Loopback bool
+	ProxyPort       int
 }
 type EdgePlan struct {
 	Binary              string

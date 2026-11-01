@@ -34,7 +34,7 @@ type Edge struct {
 	BaseURL string
 }
 
-const edgeRevision = "seatbelt-edge-v4-provider-v5"
+const edgeRevision = "seatbelt-edge-v5-provider-v6"
 
 func normalizeEdge(o Options) (Options, error) {
 	if o.Sandbox == nil || o.Sandbox.Edge == nil {
@@ -55,6 +55,9 @@ func normalizeEdge(o Options) (Options, error) {
 	}
 	if o.Sandbox.LoopbackLocalOnly {
 		return conflict(harness.LoopbackLocalOnlySeatbeltReason)
+	}
+	if len(o.Skills.Provided) > 0 {
+		return conflict("provided skills are not offered under Sandbox.Edge: their directories are outside the edge's read set")
 	}
 	if o.Provider.Engine == harness.Claude && o.Sandbox.Web {
 		return conflict("Claude WebFetch and WebSearch are unavailable under the edge")
@@ -205,7 +208,7 @@ func edgeEnvironment(o Options, p edgeTransport) []string {
 		values = append(values, "NO_PROXY=localhost,127.0.0.1,::1")
 	}
 	if o.Provider.Engine == harness.Claude {
-		values = append(values, "CLAUDE_CONFIG_DIR="+filepath.Join(o.RuntimeHome, "claude"), "CLAUDE_CODE_OAUTH_TOKEN="+o.Sandbox.Edge.ClaudeToken, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1")
+		values = append(values, "CLAUDE_CONFIG_DIR="+filepath.Join(o.RuntimeHome, "claude"), "CLAUDE_CODE_TMPDIR="+filepath.Join(o.RuntimeHome, "tmp"), "CLAUDE_CODE_OAUTH_TOKEN="+o.Sandbox.Edge.ClaudeToken, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1")
 	}
 	if base := o.Sandbox.Edge.BaseURL; base != "" {
 		if o.Provider.Engine == harness.Claude {
@@ -234,7 +237,11 @@ func edgePlan(o Options, p edgeTransport, socket string) (sandboxbridge.EdgePlan
 		toolState = o.Sandbox.Tools.Dir
 		secret = secretPath(toolState)
 	}
-	plan, err := sandboxbridge.BuildEdge(sandboxbridge.EdgeConfig{Work: o.WorkDir, Runtime: o.RuntimeHome, Binary: o.Provider.CLI.Binary, CLIHome: o.Provider.CLI.Home, Socket: socket, Bridge: bridge, ToolState: toolState, Secret: secret, Read: o.Sandbox.Read, Env: edgeEnvironment(o, p), Write: o.Sandbox.Write, Loopback: o.Sandbox.Loopback, ProxyPort: port})
+	var preferences []string
+	if o.Provider.Engine == harness.Codex {
+		preferences = []string{"com.openai.codex"}
+	}
+	plan, err := sandboxbridge.BuildEdge(sandboxbridge.EdgeConfig{Preferences: preferences, Work: o.WorkDir, Runtime: o.RuntimeHome, Binary: o.Provider.CLI.Binary, CLIHome: o.Provider.CLI.Home, Socket: socket, Bridge: bridge, ToolState: toolState, Secret: secret, Read: o.Sandbox.Read, Env: edgeEnvironment(o, p), Write: o.Sandbox.Write, Loopback: o.Sandbox.Loopback, ProxyPort: port})
 	if err != nil {
 		if errors.Is(err, nativecli.ErrEdgeInterpreter) {
 			return plan, refuse(o, "sandbox_edge", RefusedEdgeConflict, "npm CLI needs a resolvable Node interpreter on the launch PATH")

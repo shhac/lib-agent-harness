@@ -16,7 +16,7 @@ import (
 	"github.com/shhac/lib-agent-harness/internal/sandboxbridge"
 )
 
-const edgeSeatbeltVersion = "seatbelt-edge-v4"
+const edgeSeatbeltVersion = "seatbelt-edge-v5"
 
 func init() { sandboxbridge.BuildEdge = buildEdge }
 
@@ -89,7 +89,7 @@ func buildEdge(c sandboxbridge.EdgeConfig) (sandboxbridge.EdgePlan, error) {
 			return refused()
 		}
 	}
-	profile := edgeProfile(l, c.ProxyPort, c.Socket) + edgeInterpreterProfile(installation.Interpreter)
+	profile := edgeProfile(l, c.ProxyPort, c.Socket) + edgeInterpreterProfile(installation.Interpreter) + edgePreferenceProfile(c.Preferences)
 	if c.ToolState != "" {
 		if Nested(l.Home, c.ToolState) || Nested(l.Work, c.ToolState) {
 			return refused()
@@ -120,7 +120,7 @@ func buildEdge(c sandboxbridge.EdgeConfig) (sandboxbridge.EdgePlan, error) {
 	if c.Bridge != "" {
 		socketTemplate = "/edge-tool-socket"
 	}
-	template := edgeProfile(l, 1, socketTemplate) + edgeInterpreterProfile(installation.Interpreter)
+	template := edgeProfile(l, 1, socketTemplate) + edgeInterpreterProfile(installation.Interpreter) + edgePreferenceProfile(c.Preferences)
 	seatbelt, err := os.ReadFile("/usr/bin/sandbox-exec")
 	if err != nil {
 		return refused()
@@ -151,7 +151,7 @@ func edgeProfile(l workbenchLayout, port int, socket string) string {
 	}
 	// Credentials and configuration remain readable but cannot be planted by
 	// native shell tools or descendants. No credential refresh is exported.
-	for _, name := range []string{"auth.json", "config.toml", "AGENTS.md", "CLAUDE.md", ".claude.json", ".claude", ".codex", ".agents", ".mcp.json", "login.shared", "login.lock", "claude/settings.json", "claude/settings.local.json", "claude/.credentials.json", "claude/.claude.json", "claude/CLAUDE.md", "claude/.mcp.json", "claude/agents", "claude/commands", "claude/skills", "prompts", "rules"} {
+	for _, name := range []string{"auth.json", "config.toml", "AGENTS.md", "CLAUDE.md", ".claude.json", ".claude", ".codex", ".agents", ".mcp.json", "login.shared", "login.lock", "claude/settings.json", "claude/settings.local.json", "claude/.credentials.json", "claude/.claude.json", "claude/CLAUDE.md", "claude/.mcp.json", "claude/agents", "claude/commands", "claude/skills", "prompts", "rules", "skills"} {
 		profile += fmt.Sprintf("(deny file-write* (subpath %s))\n(deny file-link (subpath %s))\n", strconv.Quote(filepath.Join(l.Home, name)), strconv.Quote(filepath.Join(l.Home, name)))
 	}
 	if socket != "" {
@@ -173,4 +173,19 @@ func edgeInterpreterProfile(path string) string {
 		}
 	}
 	return p
+}
+
+// edgePreferenceProfile lets the CLI read only its own preference domains
+// through cfprefsd. Codex refuses to start a thread when it cannot synchronize
+// its managed (MDM) configuration domain.
+func edgePreferenceProfile(domains []string) string {
+	if len(domains) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("; The CLI's own preference domains, read through cfprefsd.\n(allow ipc-posix-shm-read* (ipc-posix-name-prefix \"apple.cfprefs.\"))\n(allow mach-lookup (global-name \"com.apple.cfprefsd.daemon\") (global-name \"com.apple.cfprefsd.agent\") (local-name \"com.apple.cfprefsd.agent\"))\n")
+	for _, domain := range domains {
+		fmt.Fprintf(&b, "(allow user-preference-read (preference-domain %s))\n", strconv.Quote(domain))
+	}
+	return b.String()
 }
