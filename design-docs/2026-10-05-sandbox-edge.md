@@ -43,7 +43,7 @@ this is process confinement, not same-user isolation.
 ## Proof and lifecycle
 
 The pre-launch canary uses disposable homes, dummy credentials, a fake TLS
-provider and a proxy unable to dial real providers. The proxy maps the engine default hosts (and configured BaseURL authority) to that fake provider. Production provider selection and BaseURL are preserved, without a custom Codex model_provider. Default Codex must complete both API-key and ChatGPT dummy-login paths; Claude uses the OAuth environment path. Unsupported transports or startup services refuse instead of accepting evidence from a substitute provider. Scripted native shell-tool
+provider and a proxy unable to dial real providers. The proxy maps the engine default hosts (and configured BaseURL authority) to that fake provider. Production provider selection and BaseURL are preserved, without a custom Codex model_provider. Codex proves the boundary once, with a dummy API-key login; Claude uses the OAuth environment path. A dummy ChatGPT-login pass ran the same plan and script and was dropped when Codex 0.166 began requiring ChatGPT's private account-routing replies before a turn; a real ChatGPT login reaching an unlisted host fails closed at the proxy. Unsupported transports or startup services refuse instead of accepting evidence from a substitute provider. Scripted native shell-tool
 results must prove positive reads/execution, requested writes, denied outside
 reads/writes/.git writes, grandchild confinement, requested loopback bind/reach
 to an outside host witness, forbidden CONNECT, direct TCP443/TCP53/UDP53 denial
@@ -73,7 +73,7 @@ Interrupted probes report probe_timed_out.
 Unit and fake-CLI tests cover proxy policy, one-way streams, address fallback,
 reference binding, engine arguments, scrubbing and lifecycle. The CLI-independent darwin boundary test runs the exact Perl canary under the edge and judges all observations, with loopback both enabled and disabled. Component tests also exercise a fake provider and file witnesses; they do
 not establish installed CLI compatibility. A macOS CI step installs pinned
-Codex 0.160.0 and Claude Code 2.1.282 and selects the complete canary with dummy
+Codex 0.166.0 and Claude Code 2.1.316 from npm and selects the complete canary with dummy
 credentials, recording versions and binary hashes. Absent selection or skipped
 tests provide no enforcement evidence. The strict daemon run_check experiment also refused nested sandbox-exec with exit status 71 (NO_SKIP=1 made this a failure, not evidence). The ordinary suite can pass with environment refusals skipped; that is not OS evidence. Pinned Claude 2.1.282 is absent locally, and network access is prohibited, so the pinned installed-CLI job has not been executed here. Support remains Unknown;
 production refuses unless its complete installed-binary canary succeeds.
@@ -108,3 +108,39 @@ Codex's exact startup cause remains unconfirmed because stderr was discarded. Sh
 These corrections have fixture coverage, not corrected installed-CLI enforcement evidence. Rerun the strict TestEdge suite and pinned installed-CLI step on the corrected source, recording source, versions, hashes, controls and complete results. No passing rerun has been received; generic passing checks and environment skips cannot establish enforcement.
 
 Edge profile v4 protects the known runtime instruction loader directories; provider revision v5 invalidates older edge proof/reference reuse. The LAH-29 ProcessInspection feature and its capability error remain intact after merging main. Native edge sessions do not gain that inspection capability. Partial failed owner evidence is recorded below; corrected installed-CLI enforcement remains unproved. Landed LAH-47 standalone and hosted timeout ceilings remain unchanged.
+
+## Port to v0.31.0 and first passing outside-sandbox run (2026-11-01)
+
+LAH-31 draft 6 (bc165e5) was re-applied onto v0.31.0 as one three-way patch.
+The edge keeps the v13 shared command profile, including its scratch
+Unix-socket grants, and adds only the proxy port, the protections above and,
+for Codex, the com.openai.codex preference domain through cfprefsd: Codex
+0.166 refuses thread/start when it cannot synchronize its managed (MDM)
+preferences. No other preference domain, keychain or trustd lookup is added.
+Claude 2.1.316 makes its temporary directory under /tmp regardless of TMPDIR,
+so the edge sets CLAUDE_CODE_TMPDIR to the runtime scratch. Provided skills
+are refused under the edge, and the runtime home's skills/ loader is
+write-protected. Edge revision seatbelt-edge-v5-provider-v6 invalidates draft
+proofs and references.
+
+The canary's fake provider now presents a leaf signed by a disposable CA
+(webpki refuses a certificate that is both), the canary also sets Codex's
+CODEX_CA_CERTIFICATE, and its scripted shell call names the disposable
+workspace. Native TLS trust remains unproved.
+
+Run outside any sandbox on macOS 27.0 (26A428), arm64, with
+`AGENT_HARNESS_TEST_NO_SKIP=1`: every `./session -run TestEdge` test and every
+`./sandbox -run Edge` test passed, including TestEdgeRealBoundaryScript with
+loopback on and off. The installed-CLI canary
+(`AGENT_HARNESS_EDGE_CLI_CANARY=1 ... -run '^TestEdgeInstalledCLICanary$'`)
+passed for Codex 0.166.0 (standalone, binary SHA-256
+39acf979729dd290f9a24ee38b2914e036c91b65952872e28ae2a6b88a7db7c1, edge
+identity a0275712883a361d036e8283163aa364b47e9070678dfec678398af65a83f07c)
+and Claude Code 2.1.316 (native, binary SHA-256
+64c327e92b2c5e0f78c0a980c5a518121e1f0d140ca771ca5dd4488d1a2dcb3f, edge
+identity 6eeee56dc353a3cc84019ea71b8ec28ffb23c5a87c62c211d574cbf21b39c18e).
+No credentialed provider turn was run; Support stays Unknown.
+
+A standalone Codex installed under the owner's ~/.codex (as here) overlaps the
+selected login home and is refused with edge_conflict; production needs a
+credential-free installation outside it.

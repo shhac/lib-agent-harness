@@ -111,7 +111,7 @@ jobs:
         shell: bash
         run: |
           go test -race -count=1 -v ./session -run '^TestEdgeRealBoundaryScript$'
-          npm install --prefix "$RUNNER_TEMP/edge-clis" @openai/codex@0.160.0 @anthropic-ai/claude-code@2.1.282
+          npm install --prefix "$RUNNER_TEMP/edge-clis" @openai/codex@0.166.0 @anthropic-ai/claude-code@2.1.316
           export PATH="$RUNNER_TEMP/edge-clis/node_modules/.bin:$PATH"
           AGENT_HARNESS_EDGE_CLI_CANARY=1 go test -race -count=1 -v ./session -run '^TestEdgeInstalledCLICanary$'
       - name: Check the full suite inside the OS command sandbox

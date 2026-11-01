@@ -124,6 +124,8 @@ control directory outside RuntimeHome and WorkDir, plus a readable bridge instal
 
 Runtime credentials, login records and native configuration are read-only to descendants; workspace .claude and .mcp.json are protected too. Known runtime instruction loaders are write-protected: Claude agents/, commands/ and skills/ under CLAUDE_CONFIG_DIR, and Codex prompts/ and rules/ under CODEX_HOME. Codex imports owner login changes but never exports edge runtime credentials. Its refresh host auth.openai.com is blocked, including caller grants and BaseURL, so an expired access token cannot consume the owner's rotating refresh token. An authenticated refresh attempt fails the session with edge_login_refresh_blocked: refresh the selected native login outside the edge, then resume.
 
+Codex may read only its own com.openai.codex preference domain, which it needs to start. Claude's temporary directory is the runtime scratch. Provided skills are refused under the edge.
+
 Production and canary environments disable automatic updates and telemetry and set MAX_RETRIES=0. An unavailable unsandboxed network/DNS witness refuses verification with edge_control_unavailable; it is not evidence of an escape.
 
 The shell can read its private auth.json, Claude token and proxy credential.

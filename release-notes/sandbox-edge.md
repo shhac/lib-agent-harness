@@ -1,5 +1,12 @@
 # Sandbox edge (additive, opt-in)
 
+Edge revision seatbelt-edge-v5-provider-v6, ported onto v0.31.0, is the
+first to pass its installed-CLI canary outside any sandbox (Codex 0.166.0,
+Claude Code 2.1.316). Codex may read its own com.openai.codex preference
+domain; Claude's temporary directory is the runtime scratch; provided skills
+are refused under the edge; the canary proves the boundary once with a dummy
+API-key login. Earlier draft proofs and references refuse reuse.
+
 Profile v4/provider revision v5 separates DNS and HTTPS controls, canonicalizes
 private Claude state, and admits npm alias vendors and Node interpreters
 explicitly. Older edge proofs/references refuse reuse; ordinary references are
