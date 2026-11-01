@@ -14,6 +14,9 @@ var ErrEdgeNative = errors.New("edge_native_unavailable")
 
 // EdgeInstallation follows fixed recognized npm layouts, including aliases.
 // Interpreter permission is literal, never a directory grant.
+// A Standalone installation is one self-contained native executable, such as
+// agy or fx in ~/.local/bin: only that file is granted, never the directory
+// that holds it beside unrelated tools.
 type EdgeInstallation struct {
 	Root         string
 	VendorRoots  []string
@@ -21,6 +24,7 @@ type EdgeInstallation struct {
 	Interpreter  string
 	NativeBinary string
 	NpmCodex     bool
+	Standalone   bool
 }
 
 func DiscoverEdgeInstallation(binary, pathEnv string) (EdgeInstallation, error) {
@@ -40,6 +44,10 @@ func DiscoverEdgeInstallation(binary, pathEnv string) (EdgeInstallation, error) 
 		}
 		result.Executables = append(result.Executables, real)
 		return true
+	}
+	if standaloneEngine(binary) {
+		result.Standalone = true
+		return result, nil
 	}
 	if filepath.Base(binary) == "codex" {
 		add(filepath.Join(result.Root, "codex-code-mode-host"))
@@ -123,4 +131,34 @@ func DiscoverEdgeInstallation(binary, pathEnv string) (EdgeInstallation, error) 
 		break
 	}
 	return result, nil
+}
+
+// standaloneEngines are the CLIs that ship as one native executable with no
+// package beside it. Their installation is that file alone.
+var standaloneEngines = []string{"agy", "fx"}
+
+// standaloneEngine reports a recognized single-file native CLI: a known name
+// and a Mach-O or ELF executable rather than a script or launcher.
+func standaloneEngine(binary string) bool {
+	known := false
+	for _, name := range standaloneEngines {
+		known = known || filepath.Base(binary) == name
+	}
+	if !known {
+		return false
+	}
+	f, err := os.Open(binary)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	magic := make([]byte, 4)
+	if n, _ := f.Read(magic); n != 4 {
+		return false
+	}
+	switch string(magic) {
+	case "\xcf\xfa\xed\xfe", "\xca\xfe\xba\xbe", "\x7fELF":
+		return true
+	}
+	return false
 }

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/shhac/lib-agent-harness/internal/edgeproxy"
+	"github.com/shhac/lib-agent-harness/internal/nativecli"
 	"github.com/shhac/lib-agent-harness/internal/sandboxbridge"
 	"github.com/shhac/lib-agent-harness/internal/testenv"
 	"github.com/shhac/lib-agent-harness/process"
@@ -175,5 +176,64 @@ func TestEdgePreferencesNameOnlyTheirDomains(t *testing.T) {
 	profile := edgePreferenceProfile([]string{"com.openai.codex"})
 	if !strings.Contains(profile, `(allow user-preference-read (preference-domain "com.openai.codex"))`) || strings.Contains(profile, "(allow user-preference-read)") {
 		t.Fatal("preference read not confined to its domain", profile)
+	}
+}
+
+func TestEdgeEngineProfileAddsOnlyWhatTheEngineDeclares(t *testing.T) {
+	l := workbenchLayout{Work: "/work", Home: "/runtime", Tmp: "/runtime/tmp", System: workbenchSystemDirs()}
+	if got := edgeEngineProfile(l, sandboxbridge.EdgeConfig{}, nativecli.EdgeInstallation{Root: "/install"}, "/install/codex"); got != "" {
+		t.Fatal("an engine declaring nothing changed its edge profile", got)
+	}
+	c := sandboxbridge.EdgeConfig{ProtectRuntime: []string{".gemini/config/skills"}, ProtectWork: []string{".gemini"}, ReadFiles: []string{"/private/etc/ssl/cert.pem"}, Terminals: true}
+	profile := edgeEngineProfile(l, c, nativecli.EdgeInstallation{Root: "/owner/.local/bin", Standalone: true}, "/owner/.local/bin/agy")
+	for _, want := range []string{
+		`(allow file-read* (literal "/owner/.local/bin/agy"))`,
+		`(allow process-exec (literal "/owner/.local/bin/agy"))`,
+		`(allow file-read* (literal "/private/etc/ssl/cert.pem"))`,
+		`(deny file-write* (subpath "/runtime/.gemini/config/skills"))`,
+		`(deny file-link (subpath "/work/.gemini"))`,
+		`(extension "com.apple.sandbox.pty")`,
+	} {
+		if !strings.Contains(profile, want) {
+			t.Fatal("missing", want)
+		}
+	}
+	if strings.Contains(profile, `(subpath "/owner/.local/bin")`) {
+		t.Fatal("standalone installation folder granted")
+	}
+	if strings.Contains(profile, "network") {
+		t.Fatal("engine profile widened the network")
+	}
+}
+
+func TestEdgeStandaloneInstallationGrantsOnlyTheFile(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(root, "bin")
+	work, home := filepath.Join(root, "work"), filepath.Join(root, "runtime")
+	for _, dir := range []string{bin, work, home} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	agy := filepath.Join(bin, "agy")
+	if err := os.WriteFile(agy, []byte("\xcf\xfa\xed\xfe native"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "auth.json"), []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := buildEdge(sandboxbridge.EdgeConfig{Work: work, Runtime: home, Binary: agy, CLIHome: filepath.Join(root, "login"), ProxyPort: 1234})
+	if err != nil {
+		t.Fatal("standalone installation beside an unrelated file refused", err)
+	}
+	profile := plan.Args[1]
+	if strings.Contains(profile, "(subpath "+strconv.Quote(bin)+")") || !strings.Contains(profile, "(literal "+strconv.Quote(agy)+")") {
+		t.Fatal("standalone grant is not the file alone")
+	}
+	if _, err = buildEdge(sandboxbridge.EdgeConfig{Work: work, Runtime: home, Binary: agy, CLIHome: bin, ProxyPort: 1234}); err == nil || err.Error() != "edge_install_credentials" {
+		t.Fatal("standalone binary inside the login home admitted", err)
 	}
 }

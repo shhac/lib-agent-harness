@@ -50,8 +50,14 @@ func buildEdge(c sandboxbridge.EdgeConfig) (sandboxbridge.EdgePlan, error) {
 		return sandboxbridge.EdgePlan{}, nativecli.ErrEdgeNative
 	}
 	install, dependencies := installation.Root, installation.VendorRoots
+	granted := append([]string{install}, dependencies...)
+	if installation.Standalone {
+		// The executable alone is granted, by the engine profile, not the
+		// folder it sits in beside unrelated tools.
+		granted = dependencies
+	}
 	// Include only the actual installation, never its enclosing owner home.
-	read, problem := sandboxbridge.ReadDirs(append(append(append([]string(nil), c.Read...), install), dependencies...))
+	read, problem := sandboxbridge.ReadDirs(append(append([]string(nil), c.Read...), granted...))
 	if problem != "" {
 		return refused()
 	}
@@ -59,7 +65,13 @@ func buildEdge(c sandboxbridge.EdgeConfig) (sandboxbridge.EdgePlan, error) {
 	if cliHome == "" {
 		cliHome = filepath.Clean(c.CLIHome)
 	}
-	for _, dir := range append([]string{install}, dependencies...) {
+	if installation.Standalone && cliHome != "." {
+		_, statErr := os.Stat(cliHome)
+		if Within(cliHome, bin) || statErr == nil && Nested(cliHome, bin) {
+			return sandboxbridge.EdgePlan{}, errors.New("edge_install_credentials")
+		}
+	}
+	for _, dir := range granted {
 		overlap := Nested(dir, cliHome) || Within(cliHome, dir)
 		if _, err := os.Stat(cliHome); err == nil {
 			overlap = overlap || Nested(cliHome, dir)
@@ -89,7 +101,8 @@ func buildEdge(c sandboxbridge.EdgeConfig) (sandboxbridge.EdgePlan, error) {
 			return refused()
 		}
 	}
-	profile := edgeProfile(l, c.ProxyPort, c.Socket) + edgeInterpreterProfile(installation.Interpreter) + edgePreferenceProfile(c.Preferences)
+	engine := edgeEngineProfile(l, c, installation, bin)
+	profile := edgeProfile(l, c.ProxyPort, c.Socket) + edgeInterpreterProfile(installation.Interpreter) + edgePreferenceProfile(c.Preferences) + engine
 	if c.ToolState != "" {
 		if Nested(l.Home, c.ToolState) || Nested(l.Work, c.ToolState) {
 			return refused()
@@ -120,7 +133,7 @@ func buildEdge(c sandboxbridge.EdgeConfig) (sandboxbridge.EdgePlan, error) {
 	if c.Bridge != "" {
 		socketTemplate = "/edge-tool-socket"
 	}
-	template := edgeProfile(l, 1, socketTemplate) + edgeInterpreterProfile(installation.Interpreter) + edgePreferenceProfile(c.Preferences)
+	template := edgeProfile(l, 1, socketTemplate) + edgeInterpreterProfile(installation.Interpreter) + edgePreferenceProfile(c.Preferences) + engine
 	seatbelt, err := os.ReadFile("/usr/bin/sandbox-exec")
 	if err != nil {
 		return refused()
@@ -186,6 +199,45 @@ func edgePreferenceProfile(domains []string) string {
 	b.WriteString("; The CLI's own preference domains, read through cfprefsd.\n(allow ipc-posix-shm-read* (ipc-posix-name-prefix \"apple.cfprefs.\"))\n(allow mach-lookup (global-name \"com.apple.cfprefsd.daemon\") (global-name \"com.apple.cfprefsd.agent\") (local-name \"com.apple.cfprefsd.agent\"))\n")
 	for _, domain := range domains {
 		fmt.Fprintf(&b, "(allow user-preference-read (preference-domain %s))\n", strconv.Quote(domain))
+	}
+	return b.String()
+}
+
+// edgeEngineProfile is what one engine adds to the edge: its standalone
+// executable granted as a file, single public files it reads, and its own
+// configuration and instruction loaders, which descendants cannot plant.
+// Engines that add nothing get the empty string, so their profile is the
+// shared edge's.
+func edgeEngineProfile(l workbenchLayout, c sandboxbridge.EdgeConfig, installation nativecli.EdgeInstallation, bin string) string {
+	var b strings.Builder
+	if installation.Standalone {
+		b.WriteString("; The engine's standalone executable, not the folder it sits in.\n")
+		b.WriteString(edgeInterpreterProfile(bin))
+	}
+	for _, path := range c.ReadFiles {
+		b.WriteString("; A public file the engine reads.\n")
+		b.WriteString(fmt.Sprintf("(allow file-read* (literal %s))\n", strconv.Quote(path)))
+		for dir := filepath.Dir(path); ; dir = filepath.Dir(dir) {
+			fmt.Fprintf(&b, "(allow file-read-metadata (literal %s))\n", strconv.Quote(dir))
+			if dir == filepath.Dir(dir) {
+				break
+			}
+		}
+	}
+	if c.Terminals {
+		// As Codex's own Seatbelt policy grants them: a terminal the sandbox
+		// opens carries its pty extension, so no other terminal of the same user,
+		// such as the owner's, can be read or written.
+		b.WriteString("; Pseudo-terminals created inside the sandbox only.\n(allow pseudo-tty)\n(allow file-read* file-write* file-ioctl (literal \"/dev/ptmx\"))\n(allow file-read* file-write* file-ioctl (require-all (regex #\"^/dev/ttys[0-9]+\") (extension \"com.apple.sandbox.pty\")))\n")
+	}
+	for _, protected := range []struct {
+		root  string
+		names []string
+	}{{l.Home, c.ProtectRuntime}, {l.Work, c.ProtectWork}} {
+		for _, name := range protected.names {
+			path := strconv.Quote(filepath.Join(protected.root, name))
+			fmt.Fprintf(&b, "(deny file-write* (subpath %s))\n(deny file-link (subpath %s))\n", path, path)
+		}
 	}
 	return b.String()
 }

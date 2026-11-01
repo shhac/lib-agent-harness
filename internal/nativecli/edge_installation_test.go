@@ -48,3 +48,23 @@ func testNpmEdge(t *testing.T, native []string) {
 		t.Fatal("missing interpreter admitted", err)
 	}
 }
+
+func TestStandaloneEdgeInstallationIsTheFileAlone(t *testing.T) {
+	dir := t.TempDir()
+	native := filepath.Join(dir, "agy")
+	script := filepath.Join(dir, "fx")
+	if err := os.WriteFile(native, []byte("\xcf\xfa\xed\xfe native"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(script, []byte("#!/bin/sh\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	installation, err := DiscoverEdgeInstallation(native, "")
+	resolved, _ := filepath.EvalSymlinks(native)
+	if err != nil || !installation.Standalone || len(installation.Executables) != 1 || installation.Executables[0] != resolved {
+		t.Fatal("standalone binary not recognized alone", installation, err)
+	}
+	if installation, err = DiscoverEdgeInstallation(script, ""); err != nil || installation.Standalone {
+		t.Fatal("script launcher recognized as a standalone native binary", err)
+	}
+}
