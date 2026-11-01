@@ -63,6 +63,9 @@ type engineEntry struct {
 	restrictedArgs func(ctx context.Context, o Options, host *toolHost) (Options, []string, error)
 	// sandbox is how the engine runs sandboxed; nil refuses a sandbox.
 	sandbox *sandboxSupport
+	// edge is how the engine runs inside the harness-owned sandbox edge; nil
+	// refuses Sandbox.Edge.
+	edge *edgeEngine
 	// inspect reads a login without a conversation; nil refuses Inspect,
 	// pointing elsewhere when inspectElsewhere says where.
 	inspect          *inspectLaunch
@@ -81,7 +84,7 @@ func init() {
 	engines = map[harness.Engine]engineEntry{
 		harness.Codex: {
 			dialect: codexDialect, homeValue: codexHomeValue,
-			args: codexArgs, restrictedArgs: codexRestrictedLaunch, sandbox: codexSandbox,
+			args: codexArgs, restrictedArgs: codexRestrictedLaunch, sandbox: codexSandbox, edge: codexEdge,
 			inspect:         codexInspect,
 			normalizePolicy: normalizeCodexPolicy, refuseAddition: refuseCodexAddition,
 			initialize: (*Session).initializeCodex, event: (*Session).codexEvent,
@@ -91,7 +94,7 @@ func init() {
 		},
 		harness.Claude: {
 			dialect: claudeDialect, homeValue: claudeHomeValue,
-			args: claudeArgs, restrictedArgs: claudeRestrictedLaunch, sandbox: claudeSandbox,
+			args: claudeArgs, restrictedArgs: claudeRestrictedLaunch, sandbox: claudeSandbox, edge: claudeEdge,
 			inspect:         claudeInspect,
 			normalizePolicy: normalizeClaudePolicy, overrides: claudeOverrides,
 			initialize: (*Session).initializeClaude, sessionNotice: (*Session).observeClaudeInit, event: (*Session).claudeEvent,
@@ -132,6 +135,7 @@ func init() {
 			initialize: (*Session).initializeAntigravity, sessionNotice: (*Session).observeAntigravityInit, event: (*Session).antigravityEvent,
 			startTurn: (*Session).startAntigravityTurn, interrupt: (*Session).interruptAntigravity,
 			steer: (*Session).steerAntigravity,
+			edge:  antigravityEdge,
 		},
 		harness.Fx: {
 			dialect: fxDialect,

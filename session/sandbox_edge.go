@@ -29,6 +29,12 @@ type Edge struct {
 	// Claude child environment. Its shell can read it; provider egress is a
 	// permitted outward channel. It never enters references or proof keys.
 	ClaudeToken string
+	// GeminiAPIKey is a caller-supplied Gemini API key, required for an
+	// Antigravity session: agy keeps its Google-account login in the macOS
+	// Keychain, which the edge does not admit, so it runs in its Gemini
+	// API-key mode. It is used only in the private child environment, its
+	// shell can read it, and it never enters references or proof keys.
+	GeminiAPIKey string
 	// BaseURL is an optional HTTPS provider endpoint. Its authority is admitted
 	// by the proxy and used by the CLI. No userinfo, query or fragment.
 	BaseURL string
@@ -41,7 +47,8 @@ func normalizeEdge(o Options) (Options, error) {
 		return o, nil
 	}
 	c := harness.Support(o.Provider.Engine, harness.Session, harness.SandboxEdge)
-	if !c.Usable() {
+	engine := edgeOf(o)
+	if !c.Usable() || engine == nil {
 		return o, &UnsupportedError{Engine: o.Provider.Engine, Operation: "sandbox_edge", Code: RefusedEdgeUnavailable, Capability: c}
 	}
 	conflict := func(reason string) (Options, error) { return o, refuse(o, "sandbox_edge", RefusedEdgeConflict, reason) }
@@ -59,14 +66,21 @@ func normalizeEdge(o Options) (Options, error) {
 	if len(o.Skills.Provided) > 0 {
 		return conflict("provided skills are not offered under Sandbox.Edge: their directories are outside the edge's read set")
 	}
-	if o.Provider.Engine == harness.Claude && o.Sandbox.Web {
-		return conflict("Claude WebFetch and WebSearch are unavailable under the edge")
+	if o.Sandbox.Tools != nil && engine.hostTools == nil {
+		return conflict("hosted tools are not offered for this engine under Sandbox.Edge")
+	}
+	if engine.conflicts != nil {
+		if err := engine.conflicts(o); err != nil {
+			return o, err
+		}
 	}
 	if o.RuntimeHome == "" {
 		return o, refuse(o, "runtime_home", RefusedRuntimeHome, "Sandbox.Edge requires an existing private Options.RuntimeHome outside the workspace")
 	}
-	if o.Provider.Engine == harness.Claude && o.Sandbox.Edge.ClaudeToken == "" {
-		return o, refuse(o, "sandbox_edge", RefusedEdgeTokenRequired, "provide Edge.ClaudeToken from claude setup-token")
+	if engine.credential != nil {
+		if err := engine.credential(o); err != nil {
+			return o, err
+		}
 	}
 	if strings.ContainsAny(o.Sandbox.Edge.ClaudeToken, "\x00\r\n") {
 		return conflict("invalid Claude setup-token")
@@ -74,7 +88,7 @@ func normalizeEdge(o Options) (Options, error) {
 	for _, entry := range o.Env {
 		key, _, _ := strings.Cut(entry, "=")
 		upper := strings.ToUpper(key)
-		if strings.HasSuffix(upper, "_PROXY") || upper == "HOME" || upper == "TMPDIR" || strings.HasSuffix(upper, "_HOME") || upper == "CLAUDE_CONFIG_DIR" || strings.Contains(upper, "CA_BUNDLE") || strings.Contains(upper, "CERT") || upper == "NODE_TLS_REJECT_UNAUTHORIZED" || upper == "CLAUDE_CODE_OAUTH_TOKEN" || upper == "OPENAI_API_KEY" || upper == "ANTHROPIC_API_KEY" || upper == "ANTHROPIC_AUTH_TOKEN" || upper == "OPENAI_BASE_URL" || upper == "ANTHROPIC_BASE_URL" {
+		if strings.HasSuffix(upper, "_PROXY") || upper == "HOME" || upper == "TMPDIR" || strings.HasSuffix(upper, "_HOME") || upper == "CLAUDE_CONFIG_DIR" || strings.Contains(upper, "CA_BUNDLE") || strings.Contains(upper, "CERT") || upper == "NODE_TLS_REJECT_UNAUTHORIZED" || upper == "CLAUDE_CODE_OAUTH_TOKEN" || upper == "OPENAI_API_KEY" || upper == "ANTHROPIC_API_KEY" || upper == "ANTHROPIC_AUTH_TOKEN" || upper == "OPENAI_BASE_URL" || upper == "ANTHROPIC_BASE_URL" || slices.Contains(engine.owned, upper) {
 			return conflict("the edge owns proxy, trust and home environment variables")
 		}
 	}
@@ -85,8 +99,8 @@ func normalizeEdge(o Options) (Options, error) {
 		if err != nil {
 			return conflict("Edge.AllowHosts must contain exact DNS hostname[:port] destinations")
 		}
-		if o.Provider.Engine == harness.Codex && d.Host == "auth.openai.com" {
-			return conflict("Codex edge cannot admit auth.openai.com: refresh native login outside the edge")
+		if engine.refreshHost != "" && d.Host == engine.refreshHost {
+			return conflict(edgeLabel(o) + " edge cannot admit " + engine.refreshHost + ": refresh native login outside the edge")
 		}
 		edge.AllowHosts = append(edge.AllowHosts, net.JoinHostPort(d.Host, strconv.Itoa(int(d.Port))))
 	}
@@ -101,8 +115,8 @@ func normalizeEdge(o Options) (Options, error) {
 			return conflict("Edge.BaseURL must name an exact DNS destination")
 		}
 		destination, _ := edgeproxy.ParseDestination(u.Host, true)
-		if o.Provider.Engine == harness.Codex && destination.Host == "auth.openai.com" {
-			return conflict("Codex edge cannot use the token-refresh host as BaseURL")
+		if engine.refreshHost != "" && destination.Host == engine.refreshHost {
+			return conflict(edgeLabel(o) + " edge cannot use the token-refresh host as BaseURL")
 		}
 	}
 	s := *o.Sandbox
@@ -111,13 +125,15 @@ func normalizeEdge(o Options) (Options, error) {
 	return o, nil
 }
 
+// edgeLabel names the engine in a refusal.
+func edgeLabel(o Options) string {
+	d, _ := harness.Describe(o.Provider.Engine)
+	return d.Label
+}
+
 func edgeDestinations(o Options) []edgeproxy.Destination {
-	defaults := []string{"api.openai.com", "chatgpt.com"}
-	if o.Provider.Engine == harness.Claude {
-		defaults = []string{"api.anthropic.com"}
-	}
 	var out []edgeproxy.Destination
-	for _, host := range defaults {
+	for _, host := range edgeOf(o).hosts {
 		d, _ := edgeproxy.ParseDestination(host, false)
 		out = append(out, d)
 	}
@@ -182,20 +198,10 @@ func edgeIdentity(o Options) (string, error) {
 }
 
 func edgeArgs(o Options) []string {
-	if o.Provider.Engine == harness.Claude {
-		return claudeSandboxArgs(o)
+	if args := edgeOf(o).args; args != nil {
+		return args(o)
 	}
-	args := codexSandboxArgs(*o.Sandbox)
-	// Remove the permission-profile selection: the enclosing OS boundary owns
-	// reads, writes and egress. Legacy thread sandbox is deliberately explicit.
-	var out []string
-	for i := 0; i < len(args); i += 2 {
-		if strings.HasPrefix(args[i+1], "default_permissions=") || strings.HasPrefix(args[i+1], "permissions.") {
-			continue
-		}
-		out = append(out, args[i:i+2]...)
-	}
-	return out
+	return nil
 }
 
 func edgeEnvironment(o Options, p edgeTransport) []string {
@@ -207,15 +213,12 @@ func edgeEnvironment(o Options, p edgeTransport) []string {
 	if o.Sandbox.Loopback {
 		values = append(values, "NO_PROXY=localhost,127.0.0.1,::1")
 	}
-	if o.Provider.Engine == harness.Claude {
-		values = append(values, "CLAUDE_CONFIG_DIR="+filepath.Join(o.RuntimeHome, "claude"), "CLAUDE_CODE_TMPDIR="+filepath.Join(o.RuntimeHome, "tmp"), "CLAUDE_CODE_OAUTH_TOKEN="+o.Sandbox.Edge.ClaudeToken, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1")
+	engine := edgeOf(o)
+	if engine.env != nil {
+		values = append(values, engine.env(o)...)
 	}
 	if base := o.Sandbox.Edge.BaseURL; base != "" {
-		if o.Provider.Engine == harness.Claude {
-			values = append(values, "ANTHROPIC_BASE_URL="+base)
-		} else {
-			values = append(values, "OPENAI_BASE_URL="+base)
-		}
+		values = append(values, engine.baseURL+"="+base)
 	}
 	env = nativecli.Override(env, values...)
 	// Override folds key case for portable secret removal. Unix proxy clients
@@ -237,11 +240,8 @@ func edgePlan(o Options, p edgeTransport, socket string) (sandboxbridge.EdgePlan
 		toolState = o.Sandbox.Tools.Dir
 		secret = secretPath(toolState)
 	}
-	var preferences []string
-	if o.Provider.Engine == harness.Codex {
-		preferences = []string{"com.openai.codex"}
-	}
-	plan, err := sandboxbridge.BuildEdge(sandboxbridge.EdgeConfig{Preferences: preferences, Work: o.WorkDir, Runtime: o.RuntimeHome, Binary: o.Provider.CLI.Binary, CLIHome: o.Provider.CLI.Home, Socket: socket, Bridge: bridge, ToolState: toolState, Secret: secret, Read: o.Sandbox.Read, Env: edgeEnvironment(o, p), Write: o.Sandbox.Write, Loopback: o.Sandbox.Loopback, ProxyPort: port})
+	engine := edgeOf(o)
+	plan, err := sandboxbridge.BuildEdge(sandboxbridge.EdgeConfig{Preferences: engine.preferences, ProtectRuntime: engine.protectRuntime, ProtectWork: engine.protectWork, ReadFiles: engine.readFiles, Terminals: engine.terminals, Work: o.WorkDir, Runtime: o.RuntimeHome, Binary: o.Provider.CLI.Binary, CLIHome: o.Provider.CLI.Home, Socket: socket, Bridge: bridge, ToolState: toolState, Secret: secret, Read: o.Sandbox.Read, Env: edgeEnvironment(o, p), Write: o.Sandbox.Write, Loopback: o.Sandbox.Loopback, ProxyPort: port})
 	if err != nil {
 		if errors.Is(err, nativecli.ErrEdgeInterpreter) {
 			return plan, refuse(o, "sandbox_edge", RefusedEdgeConflict, "npm CLI needs a resolvable Node interpreter on the launch PATH")
@@ -263,7 +263,7 @@ func proveEdge(ctx context.Context, o Options, lease *os.File) (*launch, error) 
 		_ = lease.Close()
 		return nil, refuse(o, "sandbox_edge", RefusedEdgeProxyUnavailable, "the per-session provider proxy could not be opened")
 	}
-	l := &launch{extra: edgeArgs(o), edge: &edgeLaunch{proxy: p, secrets: []string{p.Credential(), p.Endpoint(), base64.StdEncoding.EncodeToString([]byte("edge:" + p.Credential())), o.Sandbox.Edge.ClaudeToken}}}
+	l := &launch{extra: edgeArgs(o), edge: &edgeLaunch{proxy: p, secrets: []string{p.Credential(), p.Endpoint(), base64.StdEncoding.EncodeToString([]byte("edge:" + p.Credential())), o.Sandbox.Edge.ClaudeToken, o.Sandbox.Edge.GeminiAPIKey}}}
 	fail := func(err error) (*launch, error) {
 		l.closeEdge()
 		if l.host != nil {
@@ -304,13 +304,9 @@ func prepareEdge(ctx context.Context, o Options, lease *os.File) (*launch, error
 	if err = os.MkdirAll(filepath.Join(o.RuntimeHome, "tmp"), 0700); err != nil {
 		return fail(edgeFailure(o, CapabilityEdgeConfinementFailed))
 	}
-	if o.Provider.Engine == harness.Codex {
-		if err = prepareCodexSandbox(ctx, o, l); err != nil {
+	if prepare := edgeOf(o).prepare; prepare != nil {
+		if err = prepare(ctx, o, l); err != nil {
 			return fail(err)
-		}
-	} else {
-		if err = os.MkdirAll(filepath.Join(o.RuntimeHome, "claude"), 0700); err != nil {
-			return fail(edgeFailure(o, CapabilityEdgeConfinementFailed))
 		}
 	}
 	if o.Sandbox.Tools != nil {
@@ -320,7 +316,7 @@ func prepareEdge(ctx context.Context, o Options, lease *os.File) (*launch, error
 		}
 		l.host.edge = true
 		l.edge.secrets = append(l.edge.secrets, string(l.host.secret))
-		hosted, e := engines[o.Provider.Engine].sandbox.hostTools(l.host)
+		hosted, e := edgeOf(o).hostTools(l.host)
 		if e != nil {
 			return fail(e)
 		}

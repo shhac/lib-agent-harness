@@ -106,11 +106,15 @@ Claude requires a caller setup-token in `Edge.ClaudeToken`, uses private
 `Edge.BaseURL` optionally selects an HTTPS API endpoint and admits its authority.
 AllowHosts accepts exact DNS names and optional ports (default 443), not wildcards.
 
-| Platform | Codex/Claude Session SandboxEdge |
+| Platform | Codex/Claude/Antigravity Session SandboxEdge |
 | --- | --- |
 | macOS | Unknown; complete installed-binary pre-launch canary required |
 | Linux | Unsupported: edge_unavailable, bubblewrap edge is Part 2 |
 | Windows | Unsupported: restricted CLI hosting unavailable |
+
+fx is not offered the edge on any platform: fx 0.0.14 ignores `HTTP(S)_PROXY`
+and `ALL_PROXY` and dials its provider directly, so the edge's only egress
+never carries it (`harness.SandboxEdgeFxReason`).
 
 The harness Seatbelt edge disables the CLI internal sandbox and reuses command
 read, write and execution policies. Sandbox.Read explicitly admits installations
@@ -125,6 +129,24 @@ control directory outside RuntimeHome and WorkDir, plus a readable bridge instal
 Runtime credentials, login records and native configuration are read-only to descendants; workspace .claude and .mcp.json are protected too. Known runtime instruction loaders are write-protected: Claude agents/, commands/ and skills/ under CLAUDE_CONFIG_DIR, and Codex prompts/ and rules/ under CODEX_HOME. Codex imports owner login changes but never exports edge runtime credentials. Its refresh host auth.openai.com is blocked, including caller grants and BaseURL, so an expired access token cannot consume the owner's rotating refresh token. An authenticated refresh attempt fails the session with edge_login_refresh_blocked: refresh the selected native login outside the edge, then resume.
 
 Codex may read only its own com.openai.codex preference domain, which it needs to start. Claude's temporary directory is the runtime scratch. Provided skills are refused under the edge.
+
+Antigravity requires `Edge.GeminiAPIKey` and `Sandbox.Loopback`. agy keeps its
+Google-account login in the macOS Keychain, which the edge does not admit, so
+the session runs agy's Gemini API-key mode: the library writes
+`modelProvider: gemini` into `RuntimeHome/.gemini/antigravity-cli/settings.json`
+and passes the key as `GEMINI_API_KEY`; its only default host is
+generativelanguage.googleapis.com. agy starts a language server on random
+localhost ports, hence Loopback. It verifies TLS against the system
+`/etc/ssl/cert.pem` bundle through `SSL_CERT_FILE` rather than the keychain,
+which needs trustd. Its own `--sandbox` is never passed. agy runs commands in
+pseudo-terminals, so its profile admits only terminals created inside the
+sandbox; the canary proves a terminal opened outside stays unreachable. agy's
+settings, MCP list, hooks, rules, skills, plugins, workflows and sidecars
+under `RuntimeHome/.gemini` are write-protected. A standalone agy is granted
+as its one file, never the folder it sits in. An API-key login runs only in
+request-review, where agy denies commands that no `permissions.allow` rule
+grants; the library adds none outside its canary. Hosted tools are not
+offered for Antigravity under the edge.
 
 Production and canary environments disable automatic updates and telemetry and set MAX_RETRIES=0. An unavailable unsandboxed network/DNS witness refuses verification with edge_control_unavailable; it is not evidence of an escape.
 

@@ -29,6 +29,7 @@ import (
 
 	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/edgeproxy"
+	"github.com/shhac/lib-agent-harness/internal/nativecli"
 	"github.com/shhac/lib-agent-harness/internal/sandboxbridge"
 	"github.com/shhac/lib-agent-harness/internal/sandboxprobe"
 )
@@ -93,55 +94,7 @@ func verifyEdge(ctx context.Context, o Options, l *launch) error {
 // Inspect only the result of our exact native call, never strings in prompts,
 // tool descriptions or the command itself, which also contain canary markers.
 func edgeNativeResult(engine harness.Engine, data []byte) (string, bool) {
-	var body struct {
-		Input []struct {
-			Type, CallID string
-			Output       json.RawMessage `json:"output"`
-		} `json:"input"`
-		Messages []struct {
-			Content json.RawMessage `json:"content"`
-		} `json:"messages"`
-	}
-	// call_id needs its wire spelling rather than Go's default field matching.
-	var generic map[string]json.RawMessage
-	if json.Unmarshal(data, &generic) != nil {
-		return "", false
-	}
-	if engine == harness.Codex {
-		var input []struct {
-			Type   string          `json:"type"`
-			CallID string          `json:"call_id"`
-			Output json.RawMessage `json:"output"`
-		}
-		if json.Unmarshal(generic["input"], &input) != nil {
-			return "", false
-		}
-		for _, item := range input {
-			if item.Type == "function_call_output" && item.CallID == "call_edge" {
-				return edgeResultText(item.Output), true
-			}
-		}
-	} else {
-		if json.Unmarshal(data, &body) != nil {
-			return "", false
-		}
-		for _, message := range body.Messages {
-			var content []struct {
-				Type    string          `json:"type"`
-				ID      string          `json:"tool_use_id"`
-				Content json.RawMessage `json:"content"`
-			}
-			if json.Unmarshal(message.Content, &content) != nil {
-				continue
-			}
-			for _, item := range content {
-				if item.Type == "tool_result" && item.ID == "tool_edge" {
-					return edgeResultText(item.Content), true
-				}
-			}
-		}
-	}
-	return "", false
+	return engines[engine].edge.canary.result(data)
 }
 
 func edgeResultText(raw json.RawMessage) string {
@@ -164,76 +117,7 @@ func edgeResultText(raw json.RawMessage) string {
 }
 
 func edgeShellResponse(w http.ResponseWriter, o Options, data []byte, command string) bool {
-	var body struct {
-		Tools []struct {
-			Type, Name string
-			Tools      []struct{ Type, Name string } `json:"tools"`
-			Function   struct {
-				Name string `json:"name"`
-			} `json:"function"`
-		} `json:"tools"`
-	}
-	if json.Unmarshal(data, &body) != nil {
-		return false
-	}
-	name := ""
-	namespace := ""
-	for _, tool := range body.Tools {
-		if o.Provider.Engine == harness.Codex && tool.Type == "namespace" {
-			for _, nested := range tool.Tools {
-				if nested.Type == "function" && nested.Name == "exec_command" {
-					name, namespace = nested.Name, tool.Name
-					break
-				}
-			}
-			if name != "" {
-				break
-			}
-		}
-		n := tool.Name
-		if n == "" {
-			n = tool.Function.Name
-		}
-		if o.Provider.Engine == harness.Claude && n == "Bash" || o.Provider.Engine == harness.Codex && (n == "exec_command" || strings.HasSuffix(n, ".exec_command")) {
-			name = n
-			break
-		}
-	}
-	if name == "" {
-		return false
-	}
-	w.Header().Set("Content-Type", "text/event-stream")
-	if o.Provider.Engine == harness.Claude {
-		input, _ := json.Marshal(map[string]any{"command": command, "timeout": 15000, "description": "Disposable edge canary"})
-		fmt.Fprintf(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_shell\",\"type\":\"message\",\"role\":\"assistant\",\"model\":%q,\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n\n", o.Model)
-		io.WriteString(w, "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"tool_edge\",\"name\":\"Bash\",\"input\":{}}}\n\n")
-		delta, _ := json.Marshal(map[string]any{"type": "content_block_delta", "index": 0, "delta": map[string]any{"type": "input_json_delta", "partial_json": string(input)}})
-		fmt.Fprintf(w, "event: content_block_delta\ndata: %s\n\n", delta)
-		io.WriteString(w, "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":1}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
-	} else {
-		arguments, _ := json.Marshal(map[string]any{"cmd": command, "workdir": o.WorkDir, "yield_time_ms": 10000, "max_output_tokens": 8192})
-		item := map[string]any{"type": "function_call", "id": "fc_edge", "call_id": "call_edge", "name": name, "arguments": string(arguments), "status": "completed"}
-		if namespace != "" {
-			item["namespace"] = namespace
-		}
-		start := map[string]any{"type": "function_call", "id": "fc_edge", "call_id": "call_edge", "name": name, "arguments": "", "status": "in_progress"}
-		if namespace != "" {
-			start["namespace"] = namespace
-		}
-		response := map[string]any{"id": "resp_shell", "object": "response", "status": "completed", "model": o.Model, "output": []any{item}, "usage": map[string]int{"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}}
-		for _, event := range []map[string]any{
-			{"type": "response.created", "response": map[string]any{"id": "resp_shell", "status": "in_progress", "output": []any{}}},
-			{"type": "response.output_item.added", "output_index": 0, "item": start},
-			{"type": "response.function_call_arguments.delta", "item_id": "fc_edge", "output_index": 0, "delta": string(arguments)},
-			{"type": "response.function_call_arguments.done", "item_id": "fc_edge", "output_index": 0, "arguments": string(arguments)},
-			{"type": "response.output_item.done", "output_index": 0, "item": item},
-			{"type": "response.completed", "response": response},
-		} {
-			bytes, _ := json.Marshal(event)
-			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event["type"], bytes)
-		}
-	}
-	return true
+	return edgeOf(o).canary.shell(w, o, data, command)
 }
 
 const edgeCanaryHost = "edge-canary.invalid"
@@ -256,6 +140,7 @@ func probeEdge(ctx context.Context, o Options) error {
 	e.ClaudeToken = "sk-ant-oat01-dummy-edge-setup-token-not-a-login"
 	s.Edge = &e
 	probe.Sandbox = &s
+	canary := edgeOf(o).canary
 	// Keep the selected login deny selector identical to production. The child
 	// uses only the disposable runtime auth/config through the explicit env.
 	for _, dir := range []string{probe.WorkDir, probe.RuntimeHome, filepath.Join(probe.RuntimeHome, "tmp"), filepath.Join(probe.RuntimeHome, "claude"), filepath.Join(probe.WorkDir, ".git"), filepath.Join(root, "outside")} {
@@ -265,6 +150,11 @@ func probeEdge(ctx context.Context, o Options) error {
 	}
 	if err = os.WriteFile(filepath.Join(probe.RuntimeHome, "auth.json"), []byte(`{"OPENAI_API_KEY":"dummy-edge-key"}`), 0600); err != nil {
 		return edgeFailure(o, CapabilityEdgeConfinementFailed)
+	}
+	if canary.setup != nil {
+		if err = canary.setup(&probe); err != nil {
+			return edgeFailure(o, CapabilityEdgeConfinementFailed)
+		}
 	}
 	var host *toolHost
 	if s.Tools != nil {
@@ -315,9 +205,7 @@ func probeEdge(ctx context.Context, o Options) error {
 			http.Error(w, "invalid fake request", 400)
 			return
 		}
-		if o.Provider.Engine == harness.Claude && strings.HasSuffix(r.URL.Path, "/messages/count_tokens") {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"input_tokens":1}`))
+		if canary.auxiliary != nil && canary.auxiliary(w, r, probe, data) {
 			return
 		}
 		requested.Store(true)
@@ -347,28 +235,7 @@ func probeEdge(ctx context.Context, o Options) error {
 			}
 			return
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		if o.Provider.Engine == harness.Claude {
-			fmt.Fprintf(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_edge\",\"type\":\"message\",\"role\":\"assistant\",\"model\":%q,\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n\n", o.Model)
-			fmt.Fprintf(w, "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n")
-			fmt.Fprintf(w, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":%q}}\n\n", nonce)
-			io.WriteString(w, "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":1}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
-		} else {
-			message := map[string]any{"id": "msg_edge", "type": "message", "role": "assistant", "status": "completed", "content": []any{map[string]any{"type": "output_text", "text": nonce, "annotations": []any{}}}}
-			response := map[string]any{"id": "resp_edge", "object": "response", "created_at": 1, "status": "completed", "model": o.Model, "output": []any{message}, "usage": map[string]int{"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}}
-			for _, event := range []map[string]any{
-				{"type": "response.created", "response": map[string]any{"id": "resp_edge", "status": "in_progress", "output": []any{}}},
-				{"type": "response.output_item.added", "output_index": 0, "item": map[string]any{"id": "msg_edge", "type": "message", "role": "assistant", "status": "in_progress", "content": []any{}}},
-				{"type": "response.content_part.added", "item_id": "msg_edge", "output_index": 0, "content_index": 0, "part": map[string]any{"type": "output_text", "text": "", "annotations": []any{}}},
-				{"type": "response.output_text.delta", "item_id": "msg_edge", "output_index": 0, "content_index": 0, "delta": nonce},
-				{"type": "response.output_text.done", "item_id": "msg_edge", "output_index": 0, "content_index": 0, "text": nonce},
-				{"type": "response.output_item.done", "output_index": 0, "item": message},
-				{"type": "response.completed", "response": response},
-			} {
-				bytes, _ := json.Marshal(event)
-				fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event["type"], bytes)
-			}
-		}
+		canary.answer(w, probe, nonce)
 	}))
 	provider.TLS = &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12}
 	provider.StartTLS()
@@ -386,13 +253,16 @@ func probeEdge(ctx context.Context, o Options) error {
 	if err != nil {
 		return err
 	}
-	plan.Env = append(plan.Env, "SSL_CERT_FILE="+caPath, "NODE_EXTRA_CA_CERTS="+caPath, "CODEX_CA_CERTIFICATE="+caPath)
 	boundary, closeBoundary, err := prepareEdgeBoundary(ctx, probe, p, root)
 	if err != nil {
 		return err
 	}
 	defer closeBoundary()
 	plan.Env = append(plan.Env, boundary.Env...)
+	// Trust is set last, replacing rather than adding: the boundary's own
+	// copy of the production environment would otherwise restore an engine's
+	// production bundle, as Antigravity sets one.
+	plan.Env = nativecli.Override(plan.Env, "SSL_CERT_FILE="+caPath, "NODE_EXTRA_CA_CERTS="+caPath, "CODEX_CA_CERTIFICATE="+caPath)
 	// One dummy API-key login proves the boundary. A dummy ChatGPT login would
 	// run the same plan and script, and Codex 0.166 also requires ChatGPT's
 	// private account-routing replies before it sends a turn.
@@ -454,7 +324,7 @@ func edgeCertificate(names ...string) (tls.Certificate, []byte, error) {
 func driveEdgeInference(ctx context.Context, o Options, binary string, prefix, env []string, nonce string, host *toolHost) error {
 	l := &launch{extra: edgeArgs(o)}
 	if host != nil {
-		hosted, err := engines[o.Provider.Engine].sandbox.hostTools(host)
+		hosted, err := edgeOf(o).hostTools(host)
 		if err != nil {
 			return err
 		}
@@ -464,6 +334,7 @@ func driveEdgeInference(ctx context.Context, o Options, binary string, prefix, e
 	wrapped := o
 	wrapped.Provider.CLI.Binary = binary
 	wrapped.OnDiagnostic = nil
+	canary := edgeOf(o).canary
 	var observed atomic.Bool
 	completed := make(chan bool, 1)
 	w, err := newProcessWireArgs(ctx, wrapped, append(append([]string(nil), prefix...), args...), env, nil, func(m map[string]json.RawMessage) {
@@ -471,24 +342,9 @@ func driveEdgeInference(ctx context.Context, o Options, binary string, prefix, e
 		if strings.Contains(string(bytes), nonce) {
 			observed.Store(true)
 		}
-		if o.Provider.Engine == harness.Codex {
-			if string(m["method"]) == `"turn/completed"` {
-				var v struct {
-					Turn struct {
-						Status string `json:"status"`
-					} `json:"turn"`
-				}
-				_ = json.Unmarshal(m["params"], &v)
-				select {
-				case completed <- v.Turn.Status == "completed":
-				default:
-				}
-			}
-		} else if string(m["type"]) == `"result"` {
-			var failed bool
-			_ = json.Unmarshal(m["is_error"], &failed)
+		if success, done := canary.settled(m); done {
 			select {
-			case completed <- !failed && string(m["subtype"]) == `"success"`:
+			case completed <- success:
 			default:
 			}
 		}
@@ -497,33 +353,7 @@ func driveEdgeInference(ctx context.Context, o Options, binary string, prefix, e
 		return err
 	}
 	defer func() { w.close(); <-w.reaped }()
-	if o.Provider.Engine == harness.Codex {
-		if err = codexHandshake(ctx, w, true); err != nil {
-			return err
-		}
-		body, e := w.request(ctx, "thread/start", codexThreadParams(o, o.WorkDir, false, ""))
-		if e != nil {
-			return e
-		}
-		if err = checkCodexSandbox(o, body); err != nil {
-			return err
-		}
-		var r struct {
-			Thread struct {
-				ID string `json:"id"`
-			} `json:"thread"`
-		}
-		if json.Unmarshal(body, &r) != nil || r.Thread.ID == "" {
-			return ErrProtocol
-		}
-		_, err = w.request(ctx, "turn/start", codexTurnParams(r.Thread.ID, "Local capability canary only.", o.Effort))
-	} else {
-		_, err = w.request(ctx, "initialize", map[string]any{})
-		if err == nil {
-			err = w.send(ctx, claudeUserFrame(newID(), "Local capability canary only."))
-		}
-	}
-	if err != nil {
+	if err = canary.drive(ctx, o, w); err != nil {
 		return err
 	}
 	select {
@@ -603,7 +433,53 @@ func prepareEdgeBoundary(ctx context.Context, o Options, p *edgeproxy.Proxy, roo
 	plan.Env = append(plan.Env, "EDGE_OUTSIDE="+outside, "EDGE_CONTROL="+target.Addr, "EDGE_TCP443="+tcp443, "EDGE_WITNESS="+witness.Addr().String())
 	u, _ := url.Parse(p.Endpoint())
 	plan.Env = append(plan.Env, "EDGE_PROXY="+u.Host, "EDGE_PROXY_AUTH="+u.User.String(), fmt.Sprintf("EDGE_WRITE=%t", o.Sandbox.Write), fmt.Sprintf("EDGE_LOOPBACK=%t", o.Sandbox.Loopback))
-	return plan, func() { _ = witness.Close() }, nil
+	engine := edgeOf(o)
+	if protected, err := edgeProtectedFixtures(o, engine); err != nil {
+		return failure(CapabilityEdgeConfinementFailed)
+	} else if len(protected) > 0 {
+		plan.Env = append(plan.Env, "EDGE_PROTECTED="+strings.Join(protected, ":"))
+	}
+	closeTerminal := func() {}
+	if engine != nil && engine.terminals {
+		// A terminal opened outside the sandbox stands in for the owner's own.
+		terminal, closeIt, err := foreignTerminal()
+		if err != nil {
+			return failure(CapabilityEdgeControlUnavailable)
+		}
+		closeTerminal = closeIt
+		plan.Env = append(plan.Env, "EDGE_FOREIGN_TTY="+terminal)
+	}
+	return plan, func() { _ = witness.Close(); closeTerminal() }, nil
+}
+
+// edgeProtectedFixtures creates, in a disposable runtime, a file at or inside
+// each of the engine's own protected loaders, for the canary to fail to write.
+// A file the canary's setup already wrote is kept.
+func edgeProtectedFixtures(o Options, engine *edgeEngine) ([]string, error) {
+	if engine == nil {
+		return nil, nil
+	}
+	var out []string
+	for _, name := range engine.protectRuntime {
+		path := filepath.Join(o.RuntimeHome, name)
+		if filepath.Ext(name) == "" {
+			path = filepath.Join(path, "instruction.md")
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			return nil, err
+		}
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			content := "fixture instruction"
+			if filepath.Ext(path) == ".json" {
+				content = "{}"
+			}
+			if err = os.WriteFile(path, []byte(content), 0600); err != nil {
+				return nil, err
+			}
+		}
+		out = append(out, path)
+	}
+	return out, nil
 }
 
 const edgeBoundaryScript = `
@@ -652,6 +528,15 @@ if($ENV{EDGE_LOOPBACK} eq 'true'){
   my $client=IO::Socket::INET->new(PeerAddr=>'127.0.0.1',PeerPort=>$server->sockport,Proto=>'tcp',Timeout=>2) or die 'reach';
   my $accepted=$server->accept() or die 'accept';print $client 'self';my $buf='';read($accepted,$buf,4);mark('bind-reach') if $buf eq 'self';close $client;close $accepted;close $server;
 }
+if(defined $ENV{EDGE_PROTECTED}) {
+  my $all=1;
+  for my $path (split(/:/,$ENV{EDGE_PROTECTED})) { if(open(my $f,'>>',$path)){mark('escape-protected-state');$all=0;}elsif(!denied()){$all=0;} }
+  mark('engine-loaders-denied') if $all;
+}
+if(defined $ENV{EDGE_FOREIGN_TTY}) {
+  use Fcntl;
+  if(sysopen(my $t,$ENV{EDGE_FOREIGN_TTY},O_RDWR|O_NOCTTY|O_NONBLOCK)){mark('escape-foreign-terminal');close $t;}elsif(denied()){mark('foreign-terminal-denied');}
+}
 mark('finished');
 `
 
@@ -685,6 +570,11 @@ func judgeEdgeBoundary(o Options, out []byte, runErr error) error {
 	}
 	if runErr != nil {
 		return edgeFailure(o, CapabilityEdgeConfinementFailed)
+	}
+	if engine := engines[o.Provider.Engine].edge; engine != nil {
+		if len(engine.protectRuntime) > 0 && !lines["engine-loaders-denied"] || engine.terminals && !lines["foreign-terminal-denied"] {
+			return edgeFailure(o, CapabilityEdgeConfinementFailed)
+		}
 	}
 	if o.Sandbox.Write && !lines["write-inside"] || !o.Sandbox.Write && !lines["write-inside-denied"] {
 		return edgeFailure(o, CapabilityEdgeConfinementFailed)

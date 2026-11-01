@@ -32,6 +32,9 @@ func fakeEdgeSession(args []string) int {
 	if os.Getenv("HTTPS_PROXY") == "" || os.Getenv("HOME") == "" {
 		return 2
 	}
+	if len(args) > 0 && args[0] == "-p=" {
+		return fakeEdgeAntigravity(args)
+	}
 	if claude && (os.Getenv("CLAUDE_CONFIG_DIR") == "" || os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") == "") {
 		return 2
 	}
@@ -108,6 +111,48 @@ func fakeEdgeSession(args []string) int {
 		default:
 			out.Encode(map[string]any{"id": id, "result": map[string]any{}})
 		}
+	}
+	return 0
+}
+
+// fakeEdgeAntigravity is agy's stream-json under the edge: it requires the
+// API-key login the library prepares and never its own sandbox flag.
+func fakeEdgeAntigravity(args []string) int {
+	conversation := "edge-fixture-conversation"
+	for _, arg := range args {
+		if arg == "--sandbox" || strings.HasPrefix(arg, "--dangerously") {
+			return 2
+		}
+		if id, ok := strings.CutPrefix(arg, "--conversation="); ok {
+			conversation = id
+		}
+	}
+	settings, err := os.ReadFile(os.Getenv("HOME") + "/.gemini/antigravity-cli/settings.json")
+	var doc struct {
+		ModelProvider string          `json:"modelProvider"`
+		Permissions   json.RawMessage `json:"permissions"`
+	}
+	if err != nil || json.Unmarshal(settings, &doc) != nil || doc.ModelProvider != "gemini" || doc.Permissions != nil {
+		return 2
+	}
+	if os.Getenv("GEMINI_API_KEY") == "" || os.Getenv("SSL_CERT_FILE") != antigravityCABundle {
+		return 2
+	}
+	data, _ := json.Marshal(map[string]string{"proxy": os.Getenv("HTTPS_PROXY"), "home": os.Getenv("HOME"), "token": os.Getenv("GEMINI_API_KEY")})
+	if os.WriteFile(os.Getenv("HOME")+"/edge-fixture-env.json", data, 0600) != nil {
+		return 2
+	}
+	fmt.Fprintln(os.Stderr, os.Getenv("HTTPS_PROXY"), os.Getenv("GEMINI_API_KEY"))
+	out := json.NewEncoder(os.Stdout)
+	out.Encode(map[string]any{"event": "init", "conversation_id": conversation, "init": map[string]any{"model": "", "permission_mode": AntigravityRequestReview, "tools": []string{"run_command"}}})
+	input := bufio.NewScanner(os.Stdin)
+	for input.Scan() {
+		if strings.Contains(input.Text(), "edge-fixture-crash") {
+			return 3
+		}
+		leak := os.Getenv("HTTPS_PROXY") + " " + os.Getenv("GEMINI_API_KEY")
+		out.Encode(map[string]any{"event": "step_update", "step_update": map[string]any{"conversation_id": conversation, "step_index": 1, "state": "DONE", "step_type": "agent_response", "text_delta": leak, "usage": map[string]int{"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}}})
+		out.Encode(map[string]any{"event": "result", "result": map[string]any{"conversation_id": conversation, "status": "SUCCESS", "response": leak, "num_turns": 1, "usage": map[string]int{"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}}})
 	}
 	return 0
 }

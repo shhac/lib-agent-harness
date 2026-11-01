@@ -34,3 +34,29 @@ func TestSandboxEdgeSupportMatrix(t *testing.T) {
 		t.Fatal("feature spelling changed")
 	}
 }
+
+func TestSandboxEdgeSupportForAntigravityAndFx(t *testing.T) {
+	for _, platform := range []string{"darwin", "linux", "windows", "other"} {
+		for _, op := range Operations() {
+			agy, fx := sandboxEdgeSupport(Antigravity, op, platform), sandboxEdgeSupport(Fx, op, platform)
+			if fx.Availability != Unsupported || op == Session && fx.Reason != SandboxEdgeFxReason {
+				t.Fatalf("%s %s fx: %+v", platform, op, fx)
+			}
+			want := Unsupported
+			if platform == "darwin" && op == Session {
+				want = Unknown
+				for _, limit := range []string{"fake-provider CA", "/etc/ssl/cert.pem", "unproved", "API-key", "Loopback"} {
+					if !strings.Contains(agy.Reason, limit) {
+						t.Fatalf("Antigravity limit %q omitted: %s", limit, agy.Reason)
+					}
+				}
+			}
+			if agy.Availability != want || agy.Reason == "" {
+				t.Fatalf("%s %s Antigravity: %+v", platform, op, agy)
+			}
+			if platform == "linux" && op == Session && agy.Reason != SandboxEdgeLinuxReason {
+				t.Fatal("Antigravity Linux reason differs")
+			}
+		}
+	}
+}

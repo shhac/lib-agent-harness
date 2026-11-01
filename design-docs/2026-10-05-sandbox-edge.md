@@ -144,3 +144,74 @@ No credentialed provider turn was run; Support stays Unknown.
 A standalone Codex installed under the owner's ~/.codex (as here) overlaps the
 selected login home and is refused with edge_conflict; production needs a
 credential-free installation outside it.
+
+## Per-engine entries, Antigravity and fx (2026-11-01)
+
+The edge's engine switches moved into an `edge` entry in the session engine
+registry: provider hosts, the refresh host it refuses, preference domains,
+engine-owned variables, protected loaders, single-file reads, pseudo-terminal
+admission, arguments, environment, BaseURL variable, post-proof preparation,
+hosted tools, and the canary's fake-provider wire and drive. Support is still
+the static table, and a test holds it equal to the registry. Codex and Claude
+entries carry their previous behaviour unchanged: their profiles, plan keys,
+arguments, environments, references and edge revision are as before, and the
+pinned edge template digest still holds.
+
+Hosts were established by running each CLI through a CONNECT proxy that logged
+host:port only, with a disposable home and dummy or no credentials.
+
+Antigravity (agy 1.4.12): logged out, it reaches antigravity-unleash.goog,
+antigravity-cli-auto-updater-974169037036.us-central1.run.app,
+storage.googleapis.com and play.googleapis.com. Its Google-account login is
+held in the macOS Keychain ("Antigravity CLI"); a dummy
+`~/.gemini/oauth_creds.json` is ignored. That login cannot be imported one way
+into a file, and the edge admits no keychain, so the edge runs agy's
+documented Gemini API-key mode with a caller key (`Edge.GeminiAPIKey`):
+inference is `POST generativelanguage.googleapis.com/v1beta/models/<model>:streamGenerateContent?alt=sse`,
+the public Gemini API, which the canary fakes. agy completes a turn with
+every other host refused. Go's macOS verifier needs trustd (OSStatus -26276
+without it); with `SSL_CERT_FILE` it uses that bundle instead, so production
+names `/private/etc/ssl/cert.pem` (a literal read grant) and the canary its
+disposable CA. agy listens on random localhost ports for its language server,
+and a canary without Loopback does not complete, so Loopback is required. It
+runs commands in a pseudo-terminal: the profile admits `pseudo-tty`,
+`/dev/ptmx` and only `/dev/ttys*` carrying the `com.apple.sandbox.pty`
+extension, as Codex's own Seatbelt policy does. The canary opens a terminal
+outside the sandbox and requires the shell to fail to open it; with the
+extension requirement removed, the canary reports observed_escape. agy writes
+`settings.json` back on load by atomic rename and falls back to defaults if
+refused, so the library writes it in agy's own indented form; it creates an
+empty `mcp_config.json` if missing, so the library writes one. Both, and
+agy's hooks, rules, skills, plugins, workflows, sidecars and builtin tree,
+are write-protected, and the canary requires each to refuse a write. agy
+cannot install its builtin skills under that protection and logs it; the
+turn proceeds. The canary allows its one command with a
+`permissions.allow` rule, written only in the disposable runtime: API-key
+logins run only in request-review, where unruled commands are denied. The
+standalone binary is granted as one file, never `~/.local/bin`.
+
+`AGY_CLI_DISABLE_AUTO_UPDATE=1` did not stop agy's background updater: an
+unconfined observation run replaced the installed agy 1.4.2 with 1.4.12.
+Under the edge the updater's hosts are refused and the installation is not
+writable.
+
+fx (0.0.14): with every proxy variable naming the logging proxy and a dummy
+`AI_GATEWAY_API_KEY`, fx reported the gateway's HTTP 401 while the proxy saw
+no connection; with only loopback egress allowed it fails ("fx: Unexpected").
+fx does not use the proxy, so under the edge it cannot reach a provider, and
+SandboxEdge is Unsupported for it. An installed-binary test keeps that tied to
+the binary. From strings alone (unverified by observation): its providers use
+ai-gateway.vercel.sh and api.vercel.com, chatgpt.com/backend-api/codex with
+refresh at auth.openai.com, cli-chat-proxy.grok.com, api.x.ai and auth.x.ai;
+upgrades come from releases.fx.sh; `FX_DISABLE_KEYCHAIN` exists. Its state is
+file-backed under `~/.fx`.
+
+Evidence, outside any sandbox on macOS 27.0 (26A428), arm64, Go 1.27.3: the
+strict `./session -run TestEdge` and `./sandbox -run Edge` suites pass, and
+the installed-CLI canary passes for Codex 0.166.0, Claude Code 2.1.316 and
+agy 1.4.12 (binary SHA-256
+34423fc9b0af3841e7646aa72a2d40ffeab8218b22d1cb99eac7355f9eba31e3, edge
+identity a8dfd506eaea4fd17d352e250c482d82fd1b867083cb269dddc7eb5e723bf74f).
+Not verified: a real Gemini API key under the edge, production TLS through the
+system bundle, and agy's Google-account login (the owner's agy is not logged
+in). Support stays Unknown.

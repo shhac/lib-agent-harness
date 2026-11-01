@@ -164,12 +164,22 @@ func supportFor(goos string, e Engine, op Operation, f Feature) Capability {
 
 const SandboxEdgeLinuxReason = "edge_unavailable: Linux bubblewrap CLI edge and provider transport are not yet delivered (Part 2); native per-command loopback does not reach host development servers"
 
+// SandboxEdgeFxReason is why fx is not offered the edge: its only egress
+// would be the provider proxy, which it does not use.
+const SandboxEdgeFxReason = "fx 0.0.14 ignores HTTP(S)_PROXY and ALL_PROXY and dials its provider directly, so under the edge, whose only egress is the provider proxy, it cannot reach any provider; it needs proxy support before it can run inside"
+
 func sandboxEdgeSupport(e Engine, op Operation, platform string) Capability {
-	if op != Session || (e != Codex && e != Claude) {
-		return Capability{Unsupported, "sandbox edge is offered only for Codex and Claude sessions"}
+	if op == Session && e == Fx {
+		return Capability{Unsupported, SandboxEdgeFxReason}
+	}
+	if op != Session || (e != Codex && e != Claude && e != Antigravity) {
+		return Capability{Unsupported, "sandbox edge is offered only for Codex, Claude and Antigravity sessions"}
 	}
 	switch platform {
 	case "darwin":
+		if e == Antigravity {
+			return Capability{Unknown, "installed-binary inference through the proxy is proved before launch using fake-provider CA trust; production trusts the macOS /etc/ssl/cert.pem bundle through SSL_CERT_FILE, not the keychain, and is unproved; Gemini API-key login only, as agy keeps its Google-account login in the keychain; needs Loopback for its language server, and loopback binds and inbound cover all local interfaces"}
+		}
 		return Capability{Unknown, "installed-binary inference through the proxy is proved before launch using fake-provider CA trust; native TLS trust loading/evaluation is unproved and production TLS may fail; loopback binds and inbound cover all local interfaces"}
 	case "linux":
 		return Capability{Unsupported, SandboxEdgeLinuxReason}

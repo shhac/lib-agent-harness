@@ -124,7 +124,9 @@ func unsupportedMode(o Options) error {
 			return &UnsupportedError{Engine: engine, Operation: "restriction", Code: RefusedNotOffered, Capability: c}
 		}
 	}
-	if o.Sandbox != nil {
+	// An edge session was offered by SandboxEdge, which normalizeEdge checked;
+	// the engine's own sandbox is never used inside it.
+	if o.Sandbox != nil && o.Sandbox.Edge == nil {
 		if c := harness.Support(engine, harness.Session, harness.Sandbox); c.Availability == harness.Unsupported {
 			return &UnsupportedError{Engine: engine, Operation: "sandbox", Code: RefusedNotOffered, Capability: c}
 		}

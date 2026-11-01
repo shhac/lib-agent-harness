@@ -196,6 +196,11 @@ func normalizeSandbox(o Options) (Options, error) {
 		return o, refuse(o, "sandbox_edge", RefusedEdgeConflict, "edge tool control state must be outside RuntimeHome and WorkDir")
 	}
 	support := engines[o.Provider.Engine].sandbox
+	if o.Sandbox.Edge != nil && support == nil {
+		// An engine with no sandbox of its own runs contained by the edge
+		// alone, which normalizeEdge has already admitted.
+		return o, nil
+	}
 	if support == nil || support.normalize == nil {
 		c := harness.Support(o.Provider.Engine, harness.Session, harness.Sandbox)
 		return o, &UnsupportedError{Engine: o.Provider.Engine, Operation: "sandbox", Code: RefusedNotOffered, Capability: c}

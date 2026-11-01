@@ -74,9 +74,9 @@ func newProcessWire(ctx context.Context, o Options, nativeID string, resuming bo
 		wrapped.edgeCleanup = l.closeEdge
 		wrapped.OnDiagnostic = redactedDiagnostic(o.OnDiagnostic, l.edge.secrets)
 		var refreshBlocked <-chan struct{}
-		if o.Provider.Engine == harness.Codex {
+		if host := edgeOf(o).refreshHost; host != "" {
 			if p, ok := l.edge.proxy.(interface{ Refused(string) <-chan struct{} }); ok {
-				refreshBlocked = p.Refused("auth.openai.com")
+				refreshBlocked = p.Refused(host)
 			}
 		}
 		w, err := newProcessWireArgs(ctx, wrapped, args, l.edge.plan.Env, onStart, event, ended)
