@@ -50,21 +50,56 @@ func testNpmEdge(t *testing.T, native []string) {
 }
 
 func TestStandaloneEdgeInstallationIsTheFileAlone(t *testing.T) {
-	dir := t.TempDir()
-	native := filepath.Join(dir, "agy")
-	script := filepath.Join(dir, "fx")
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A versioned native file reached through an alias of another name, as
+	// ~/.local/bin/agy -> ~/.local/share/agy/1.4.12/agy-arm64.
+	versions := filepath.Join(dir, "share", "agy", "1.4.12")
+	if err := os.MkdirAll(versions, 0700); err != nil {
+		t.Fatal(err)
+	}
+	native := filepath.Join(versions, "agy-arm64")
 	if err := os.WriteFile(native, []byte("\xcf\xfa\xed\xfe native"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(script, []byte("#!/bin/sh\n"), 0700); err != nil {
+	alias := filepath.Join(dir, "agy")
+	if err := os.Symlink(native, alias); err != nil {
 		t.Fatal(err)
 	}
-	installation, err := DiscoverEdgeInstallation(native, "")
-	resolved, _ := filepath.EvalSymlinks(native)
-	if err != nil || !installation.Standalone || len(installation.Executables) != 1 || installation.Executables[0] != resolved {
-		t.Fatal("standalone binary not recognized alone", installation, err)
+	for _, binary := range []string{native, alias} {
+		installation, err := DiscoverStandaloneInstallation(binary)
+		if err != nil || !installation.Standalone || len(installation.Executables) != 1 || installation.Executables[0] != native {
+			t.Fatal("standalone binary not the file alone", binary, installation, err)
+		}
 	}
-	if installation, err = DiscoverEdgeInstallation(script, ""); err != nil || installation.Standalone {
-		t.Fatal("script launcher recognized as a standalone native binary", err)
+	first, err := EdgeIdentityFor(alias, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(native, []byte("\xcf\xfa\xed\xfe changed"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if second, err := EdgeIdentityFor(alias, "", true); err != nil || second == first {
+		t.Fatal("standalone identity not bound to the target file", err)
+	}
+	launcher := filepath.Join(dir, "launcher", "agy")
+	if err := os.MkdirAll(filepath.Dir(launcher), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(launcher, []byte("#!/bin/sh\nexec \"$(dirname \"$0\")/agy-arm64\" \"$@\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DiscoverStandaloneInstallation(launcher); !errors.Is(err, ErrEdgeStandalone) {
+		t.Fatal("launcher script admitted as a standalone installation", err)
+	}
+	if _, err := EdgeIdentityFor(launcher, "", true); !errors.Is(err, ErrEdgeStandalone) {
+		t.Fatal("launcher script identified", err)
+	}
+	// Name no longer decides: a native file named agy is not standalone for
+	// an engine that does not declare it.
+	if installation, err := DiscoverEdgeInstallation(alias, ""); err != nil || installation.Standalone {
+		t.Fatal("name decided standalone-ness", err)
 	}
 }

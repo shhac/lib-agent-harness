@@ -16,7 +16,15 @@ type EdgeConfig struct {
 	ProtectRuntime, ProtectWork, ReadFiles []string
 	// Terminals lets the CLI open pseudo-terminals for the commands it runs,
 	// reaching only terminals created inside the sandbox.
-	Terminals       bool
+	Terminals bool
+	// Standalone declares the engine ships as one native executable, granted
+	// as that file alone; anything else is refused, never a folder grant.
+	Standalone bool
+	// WritableRuntime are the state paths, relative to the runtime home, an
+	// engine must write inside a ProtectRuntime tree. A name ending in "/" is
+	// a directory; any other is a file together with the siblings that extend
+	// its name, such as a database's -wal or an atomic temporary.
+	WritableRuntime []string
 	Write, Loopback bool
 	ProxyPort       int
 }

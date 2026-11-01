@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -181,11 +182,14 @@ func TestEdgePreferencesNameOnlyTheirDomains(t *testing.T) {
 
 func TestEdgeEngineProfileAddsOnlyWhatTheEngineDeclares(t *testing.T) {
 	l := workbenchLayout{Work: "/work", Home: "/runtime", Tmp: "/runtime/tmp", System: workbenchSystemDirs()}
-	if got := edgeEngineProfile(l, sandboxbridge.EdgeConfig{}, nativecli.EdgeInstallation{Root: "/install"}, "/install/codex"); got != "" {
+	if got, ok := edgeEngineProfile(l, sandboxbridge.EdgeConfig{}, nativecli.EdgeInstallation{Root: "/install"}, "/install/codex"); !ok || got != "" {
 		t.Fatal("an engine declaring nothing changed its edge profile", got)
 	}
 	c := sandboxbridge.EdgeConfig{ProtectRuntime: []string{".gemini/config/skills"}, ProtectWork: []string{".gemini"}, ReadFiles: []string{"/private/etc/ssl/cert.pem"}, Terminals: true}
-	profile := edgeEngineProfile(l, c, nativecli.EdgeInstallation{Root: "/owner/.local/bin", Standalone: true}, "/owner/.local/bin/agy")
+	profile, ok := edgeEngineProfile(l, c, nativecli.EdgeInstallation{Root: "/owner/.local/bin", Standalone: true}, "/owner/.local/bin/agy")
+	if !ok {
+		t.Fatal("engine profile refused")
+	}
 	for _, want := range []string{
 		`(allow file-read* (literal "/owner/.local/bin/agy"))`,
 		`(allow process-exec (literal "/owner/.local/bin/agy"))`,
@@ -206,34 +210,120 @@ func TestEdgeEngineProfileAddsOnlyWhatTheEngineDeclares(t *testing.T) {
 	}
 }
 
-func TestEdgeStandaloneInstallationGrantsOnlyTheFile(t *testing.T) {
+// edgeInstallFixture is a private work and runtime pair beside a folder of
+// installed tools, under one resolved temporary root.
+func edgeInstallFixture(t *testing.T) (root, bin, work, home string) {
+	t.Helper()
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	bin := filepath.Join(root, "bin")
-	work, home := filepath.Join(root, "work"), filepath.Join(root, "runtime")
+	bin = filepath.Join(root, "bin")
+	work, home = filepath.Join(root, "work"), filepath.Join(root, "runtime")
 	for _, dir := range []string{bin, work, home} {
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			t.Fatal(err)
 		}
 	}
-	agy := filepath.Join(bin, "agy")
-	if err := os.WriteFile(agy, []byte("\xcf\xfa\xed\xfe native"), 0700); err != nil {
+	return root, bin, work, home
+}
+
+func writeNative(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(bin, "auth.json"), []byte("{}"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("\xcf\xfa\xed\xfe native"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	plan, err := buildEdge(sandboxbridge.EdgeConfig{Work: work, Runtime: home, Binary: agy, CLIHome: filepath.Join(root, "login"), ProxyPort: 1234})
+}
+
+func TestEdgeStandaloneInstallationGrantsOnlyTheFile(t *testing.T) {
+	root, bin, work, home := edgeInstallFixture(t)
+	// ~/.local/bin/agy -> ~/.local/share/agy/1.4.12/agy-arm64, beside other tools.
+	native := filepath.Join(root, "share", "agy", "1.4.12", "agy-arm64")
+	writeNative(t, native)
+	writeNative(t, filepath.Join(filepath.Dir(native), "unrelated-tool"))
+	alias := filepath.Join(bin, "agy")
+	if err := os.Symlink(native, alias); err != nil {
+		t.Fatal(err)
+	}
+	config := sandboxbridge.EdgeConfig{Work: work, Runtime: home, Binary: alias, CLIHome: filepath.Join(root, "login"), ProxyPort: 1234, Standalone: true}
+	plan, err := buildEdge(config)
 	if err != nil {
-		t.Fatal("standalone installation beside an unrelated file refused", err)
+		t.Fatal("standalone alias refused", err)
 	}
 	profile := plan.Args[1]
-	if strings.Contains(profile, "(subpath "+strconv.Quote(bin)+")") || !strings.Contains(profile, "(literal "+strconv.Quote(agy)+")") {
-		t.Fatal("standalone grant is not the file alone")
+	if !strings.Contains(profile, "(literal "+strconv.Quote(native)+")") || strings.Contains(profile, "(subpath "+strconv.Quote(filepath.Dir(native))+")") || strings.Contains(profile, "(subpath "+strconv.Quote(bin)+")") {
+		t.Fatal("symlinked standalone binary became a folder grant")
 	}
-	if _, err = buildEdge(sandboxbridge.EdgeConfig{Work: work, Runtime: home, Binary: agy, CLIHome: bin, ProxyPort: 1234}); err == nil || err.Error() != "edge_install_credentials" {
+	launcher := filepath.Join(root, "launcher", "agy")
+	if err := os.MkdirAll(filepath.Dir(launcher), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(launcher, []byte("#!/bin/sh\nexec agy-arm64 \"$@\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	config.Binary = launcher
+	if _, err = buildEdge(config); !errors.Is(err, nativecli.ErrEdgeStandalone) {
+		t.Fatal("launcher script granted rather than refused", err)
+	}
+	config.Binary, config.CLIHome = alias, filepath.Dir(native)
+	if _, err = buildEdge(config); err == nil || err.Error() != "edge_install_credentials" {
 		t.Fatal("standalone binary inside the login home admitted", err)
+	}
+}
+
+func TestEdgeRefusesAnExecutableTheSessionCanWrite(t *testing.T) {
+	_, bin, work, home := edgeInstallFixture(t)
+	writeNative(t, filepath.Join(bin, "agy"))
+	for name, binary := range map[string]string{
+		"workspace":       filepath.Join(work, "tools", "agy"),
+		"runtime home":    filepath.Join(home, "bin", "agy"),
+		"runtime scratch": filepath.Join(home, "tmp", "agy"),
+	} {
+		writeNative(t, binary)
+		alias := filepath.Join(bin, "alias-"+strings.ReplaceAll(name, " ", "-"))
+		if err := os.Symlink(binary, alias); err != nil {
+			t.Fatal(err)
+		}
+		for _, standalone := range []bool{true, false} {
+			for _, invoked := range []string{binary, alias} {
+				c := sandboxbridge.EdgeConfig{Work: work, Runtime: home, Binary: invoked, CLIHome: filepath.Join(bin, "login"), ProxyPort: 1234, Write: true, Standalone: standalone}
+				if _, err := buildEdge(c); err == nil || err.Error() != "edge_install_writable" {
+					t.Fatalf("%s (standalone %v, via %s): executable the session can replace admitted: %v", name, standalone, invoked, err)
+				}
+			}
+		}
+	}
+	c := sandboxbridge.EdgeConfig{Work: work, Runtime: home, Binary: filepath.Join(bin, "agy"), CLIHome: filepath.Join(bin, "login"), ProxyPort: 1234, Standalone: true, Bridge: filepath.Join(work, "bridge")}
+	writeNative(t, c.Bridge)
+	if _, err := buildEdge(c); err == nil || err.Error() != "edge_install_writable" {
+		t.Fatal("tool bridge inside the workspace admitted", err)
+	}
+	c.Bridge = ""
+	if _, err := buildEdge(c); err != nil {
+		t.Fatal("installation outside the writable roots refused", err)
+	}
+}
+
+func TestEdgeWritableRuntimeFollowsItsProtectedTree(t *testing.T) {
+	l := workbenchLayout{Work: "/work", Home: "/runtime", Tmp: "/runtime/tmp", System: workbenchSystemDirs()}
+	c := sandboxbridge.EdgeConfig{ProtectRuntime: []string{".gemini"}, WritableRuntime: []string{".gemini/state/", ".gemini/state.db"}}
+	profile, ok := edgeEngineProfile(l, c, nativecli.EdgeInstallation{}, "")
+	if !ok {
+		t.Fatal("refused")
+	}
+	deny := strings.Index(profile, `(deny file-write* (subpath "/runtime/.gemini"))`)
+	dir := strings.Index(profile, `(allow file-write* (subpath "/runtime/.gemini/state"))`)
+	file := strings.Index(profile, `(allow file-write* (regex #"^/runtime/[.]gemini/state[.]db[^/]*$"))`)
+	if deny < 0 || dir < deny || file < deny {
+		t.Fatal("state exceptions missing or before the protection they open", profile)
+	}
+	if strings.Contains(profile, "allow file-link") {
+		t.Fatal("links admitted inside the protected tree")
+	}
+	if _, ok = edgeEngineProfile(l, sandboxbridge.EdgeConfig{WritableRuntime: []string{`.gemini/odd"name`}}, nativecli.EdgeInstallation{}, ""); ok {
+		t.Fatal("unspellable path admitted")
 	}
 }

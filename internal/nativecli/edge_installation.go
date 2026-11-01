@@ -12,11 +12,15 @@ import (
 var ErrEdgeInterpreter = errors.New("edge_interpreter_unavailable")
 var ErrEdgeNative = errors.New("edge_native_unavailable")
 
+// ErrEdgeStandalone refuses an engine declared standalone whose installed
+// executable is not one native file, such as a launcher script.
+var ErrEdgeStandalone = errors.New("edge_standalone_unavailable")
+
 // EdgeInstallation follows fixed recognized npm layouts, including aliases.
 // Interpreter permission is literal, never a directory grant.
 // A Standalone installation is one self-contained native executable, such as
-// agy or fx in ~/.local/bin: only that file is granted, never the directory
-// that holds it beside unrelated tools.
+// agy in ~/.local/bin: only that file is granted, never the directory that
+// holds it beside unrelated tools.
 type EdgeInstallation struct {
 	Root         string
 	VendorRoots  []string
@@ -44,10 +48,6 @@ func DiscoverEdgeInstallation(binary, pathEnv string) (EdgeInstallation, error) 
 		}
 		result.Executables = append(result.Executables, real)
 		return true
-	}
-	if standaloneEngine(binary) {
-		result.Standalone = true
-		return result, nil
 	}
 	if filepath.Base(binary) == "codex" {
 		add(filepath.Join(result.Root, "codex-code-mode-host"))
@@ -133,21 +133,26 @@ func DiscoverEdgeInstallation(binary, pathEnv string) (EdgeInstallation, error) 
 	return result, nil
 }
 
-// standaloneEngines are the CLIs that ship as one native executable with no
-// package beside it. Their installation is that file alone.
-var standaloneEngines = []string{"agy", "fx"}
+// DiscoverStandaloneInstallation is the installation of an engine that ships
+// as one native executable. Its standalone-ness is the engine's declaration,
+// not the file's name, so a symlink alias such as agy -> agy-arm64 is the
+// target file alone; anything but a regular Mach-O or ELF executable, such as
+// a launcher script, is refused rather than granted as a folder.
+func DiscoverStandaloneInstallation(binary string) (EdgeInstallation, error) {
+	resolved, err := filepath.EvalSymlinks(binary)
+	if err != nil {
+		return EdgeInstallation{}, err
+	}
+	info, err := os.Stat(resolved)
+	if err != nil || !info.Mode().IsRegular() || !nativeExecutable(resolved) {
+		return EdgeInstallation{}, ErrEdgeStandalone
+	}
+	return EdgeInstallation{Root: filepath.Dir(resolved), Executables: []string{resolved}, Standalone: true}, nil
+}
 
-// standaloneEngine reports a recognized single-file native CLI: a known name
-// and a Mach-O or ELF executable rather than a script or launcher.
-func standaloneEngine(binary string) bool {
-	known := false
-	for _, name := range standaloneEngines {
-		known = known || filepath.Base(binary) == name
-	}
-	if !known {
-		return false
-	}
-	f, err := os.Open(binary)
+// nativeExecutable reports a Mach-O (thin or universal) or ELF file.
+func nativeExecutable(path string) bool {
+	f, err := os.Open(path)
 	if err != nil {
 		return false
 	}

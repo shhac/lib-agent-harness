@@ -14,7 +14,16 @@ func EdgeIdentity(binary string) (string, error) {
 	return EdgeIdentityWithPath(binary, os.Getenv("PATH"))
 }
 func EdgeIdentityWithPath(binary, pathEnv string) (string, error) {
+	return EdgeIdentityFor(binary, pathEnv, false)
+}
+
+// EdgeIdentityFor is EdgeIdentityWithPath for an engine that declares whether
+// it ships as one native executable.
+func EdgeIdentityFor(binary, pathEnv string, standalone bool) (string, error) {
 	installation, err := DiscoverEdgeInstallation(binary, pathEnv)
+	if standalone {
+		installation, err = DiscoverStandaloneInstallation(binary)
+	}
 	if err != nil {
 		return "", err
 	}

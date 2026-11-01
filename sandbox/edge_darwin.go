@@ -43,6 +43,11 @@ func buildEdge(c sandboxbridge.EdgeConfig) (sandboxbridge.EdgePlan, error) {
 		}
 	}
 	installation, err := nativecli.DiscoverEdgeInstallation(bin, pathEnv)
+	if c.Standalone {
+		// The engine declares one native executable: never a folder grant,
+		// whatever the file is named or however it is reached.
+		installation, err = nativecli.DiscoverStandaloneInstallation(bin)
+	}
 	if err != nil {
 		return sandboxbridge.EdgePlan{}, err
 	}
@@ -87,6 +92,28 @@ func buildEdge(c sandboxbridge.EdgeConfig) (sandboxbridge.EdgePlan, error) {
 			}
 		}
 	}
+	// The session writes its runtime home and may write its workspace. An
+	// executable launched or granted from either could be replaced there, and
+	// the next proof would then run and admit the replacement.
+	launched := append(append([]string(nil), installation.Executables...), granted...)
+	if c.Bridge != "" {
+		bridge, e := filepath.EvalSymlinks(c.Bridge)
+		if e != nil {
+			return refused()
+		}
+		launched = append(launched, bridge)
+	}
+	for _, root := range []string{c.Work, c.Runtime} {
+		resolved, e := filepath.EvalSymlinks(root)
+		if e != nil {
+			return refused()
+		}
+		for _, path := range launched {
+			if Within(resolved, path) || Nested(resolved, path) {
+				return sandboxbridge.EdgePlan{}, errors.New("edge_install_writable")
+			}
+		}
+	}
 	o := Options{WorkDir: c.Work, RuntimeHome: c.Runtime, Read: read, Write: c.Write, Loopback: c.Loopback}
 	// Shared normalization validates private homes, workspace separation,
 	// system and caller grants without preparing writable state.
@@ -101,7 +128,10 @@ func buildEdge(c sandboxbridge.EdgeConfig) (sandboxbridge.EdgePlan, error) {
 			return refused()
 		}
 	}
-	engine := edgeEngineProfile(l, c, installation, bin)
+	engine, ok := edgeEngineProfile(l, c, installation, bin)
+	if !ok {
+		return refused()
+	}
 	profile := edgeProfile(l, c.ProxyPort, c.Socket) + edgeInterpreterProfile(installation.Interpreter) + edgePreferenceProfile(c.Preferences) + engine
 	if c.ToolState != "" {
 		if Nested(l.Home, c.ToolState) || Nested(l.Work, c.ToolState) {
@@ -208,7 +238,7 @@ func edgePreferenceProfile(domains []string) string {
 // configuration and instruction loaders, which descendants cannot plant.
 // Engines that add nothing get the empty string, so their profile is the
 // shared edge's.
-func edgeEngineProfile(l workbenchLayout, c sandboxbridge.EdgeConfig, installation nativecli.EdgeInstallation, bin string) string {
+func edgeEngineProfile(l workbenchLayout, c sandboxbridge.EdgeConfig, installation nativecli.EdgeInstallation, bin string) (string, bool) {
 	var b strings.Builder
 	if installation.Standalone {
 		b.WriteString("; The engine's standalone executable, not the folder it sits in.\n")
@@ -239,5 +269,36 @@ func edgeEngineProfile(l workbenchLayout, c sandboxbridge.EdgeConfig, installati
 			fmt.Fprintf(&b, "(deny file-write* (subpath %s))\n(deny file-link (subpath %s))\n", path, path)
 		}
 	}
-	return b.String()
+	// After the protected trees, so these state paths alone are writable in
+	// them. Links stay denied: a hard link would alias a protected file.
+	for _, name := range c.WritableRuntime {
+		path := filepath.Join(l.Home, name)
+		if strings.HasSuffix(name, "/") {
+			fmt.Fprintf(&b, "; Engine state the protected tree must still let it write.\n(allow file-write* (subpath %s))\n", strconv.Quote(path))
+			continue
+		}
+		pattern, ok := seatbeltLiteralPattern(path)
+		if !ok {
+			return "", false
+		}
+		fmt.Fprintf(&b, "; Engine state file and the siblings extending its name.\n(allow file-write* (regex #\"^%s[^/]*$\"))\n", pattern)
+	}
+	return b.String(), true
+}
+
+// seatbeltLiteralPattern spells path as a Seatbelt regular expression that
+// matches only itself, or refuses a character it cannot spell safely.
+func seatbeltLiteralPattern(path string) (string, bool) {
+	var b strings.Builder
+	for _, r := range path {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '/', r == '_', r == '-':
+			b.WriteRune(r)
+		case r == '.' || r == ' ' || r == '+' || r == '@' || r == ',' || r == '~':
+			b.WriteString("[" + string(r) + "]")
+		default:
+			return "", false
+		}
+	}
+	return b.String(), true
 }
