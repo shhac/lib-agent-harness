@@ -52,3 +52,56 @@ func TestReadDirs(t *testing.T) {
 		}
 	}
 }
+
+func TestReadDirsRejectMissingPrivateAndPatternRoots(t *testing.T) {
+	root := t.TempDir()
+	for name, rel := range map[string]string{"private": ".ssh/keys", "pattern": "reference[1]", "git": ".git/objects", "config": ".config/tokens"} {
+		dir := filepath.Join(root, rel)
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if _, refusal := ReadDirs([]string{dir}); refusal == "" {
+			t.Errorf("accepted %s root", name)
+		}
+	}
+	file := filepath.Join(root, "file")
+	if err := os.WriteFile(file, []byte("data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{filepath.Join(root, "missing"), file} {
+		if _, refusal := ReadDirs([]string{dir}); refusal == "" {
+			t.Errorf("accepted nonexistent/non-directory root %s", dir)
+		}
+	}
+	for _, dir := range []string{"/tmp", "/usr", "/etc"} {
+		if _, err := os.Stat(dir); err == nil {
+			if _, refusal := ReadDirs([]string{dir}); refusal == "" {
+				t.Errorf("accepted broad system root %s", dir)
+			}
+		}
+	}
+	private := filepath.Join(root, ".ssh", "keys")
+	link := filepath.Join(root, "alias")
+	if err := os.Symlink(private, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, refusal := ReadDirs([]string{link}); refusal == "" {
+		t.Fatal("accepted alias to private root")
+	}
+}
+
+func TestReadDirsKeepExplicitInstructionSkillLeaves(t *testing.T) {
+	root := t.TempDir()
+	for _, config := range []string{".claude", ".codex"} {
+		leaf := filepath.Join(root, config, "skills", "demo")
+		if err := os.MkdirAll(leaf, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if _, refusal := ReadDirs([]string{leaf}); refusal != "" {
+			t.Fatalf("explicit skill leaf refused: %s", refusal)
+		}
+		if _, refusal := ReadDirs([]string{filepath.Join(root, config)}); refusal == "" {
+			t.Fatal("native credential root admitted")
+		}
+	}
+}
