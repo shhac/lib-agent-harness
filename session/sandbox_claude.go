@@ -32,8 +32,24 @@ func claudeSandboxSettings(o Options) string {
 	}
 	if reads := append(slices.Clone(o.Sandbox.Read), sandboxSkillReads(o)...); len(reads) > 0 {
 		filesystem["allowRead"] = reads
+		// Read's allow rule does not lift the native working-directory gate.
+		// Settings admission avoids loading configuration from --add-dir roots.
 		for _, dir := range reads {
 			allow = append(allow, "Read(/"+dir+"/**)")
+			// The command edge keeps its existing native admission policy.
+			if o.Sandbox.Edge != nil {
+				continue
+			}
+			// Edit rules govern Write too; Write(path) rules never match.
+			deny = append(deny, "Edit(/"+dir+")", "Edit(/"+dir+"/**)")
+			filesystem["denyWrite"] = append(filesystem["denyWrite"].([]string), dir)
+			for _, name := range claudeReferencePrivateNames {
+				for _, pattern := range []string{dir + "/" + name, dir + "/" + name + "/**", dir + "/**/" + name, dir + "/**/" + name + "/**"} {
+					deny = append(deny, "Read(/"+pattern+")")
+					paths, _ := filesystem["denyRead"].([]string)
+					filesystem["denyRead"] = append(paths, pattern)
+				}
+			}
 		}
 	}
 	if o.Sandbox.Web {
@@ -66,6 +82,12 @@ func claudeSandboxSettings(o Options) string {
 	if len(allow) > 0 {
 		permissions["allow"] = allow
 	}
+	if o.Sandbox.Edge == nil {
+		permissions["blockWritesOutsideWorkingDirectories"] = true
+		if reads := append(slices.Clone(o.Sandbox.Read), sandboxSkillReads(o)...); len(reads) > 0 {
+			permissions["additionalDirectories"] = reads
+		}
+	}
 	network := map[string]any{"allowedDomains": []string{}, "strictAllowlist": true}
 	if o.Sandbox.Loopback {
 		// No domain is added: a loopback domain rule would route through the
@@ -94,6 +116,9 @@ func claudeSandboxSettings(o Options) string {
 	raw, _ := json.Marshal(document)
 	return string(raw)
 }
+
+// Reference roots are data, never a source of credentials or Git configuration.
+var claudeReferencePrivateNames = []string{".git", ".env", ".env.*", ".ssh", ".aws", ".claude", ".codex", ".config"}
 
 // claudeInstructionExcludes names the operator's own instruction files: their
 // user-level CLAUDE.md and rules, and any in a directory above the workspace.

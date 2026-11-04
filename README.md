@@ -1253,9 +1253,28 @@ the result is cached per resolved binary and sandbox:
     to `WorkDir`.
   - Its shell cannot read the home directory outside `WorkDir`
     (`blockReadsOutsideWorkingDirectories`). `Sandbox.Read` reopens named
-    directories read-only, such as a Go module cache a build needs. A read
-    path must be absolute, and none may contain the home directory. Codex
-    already reads everything, so `Read` changes nothing there.
+    directories read-only, such as a Go module cache a build needs.
+    References must exist and contain no credentials. Private configuration
+    roots, Git roots, home ancestors and permission-pattern paths are refused.
+    With the built-in Claude sandbox (not `Sandbox.Edge`), Claude admits references through `permissions.additionalDirectories`, keeps
+    both native outside-working-directory blocks on, and denies `Edit` (which
+    also governs `Write`) and sandbox writes to the reference roots. Git and
+    known credential/configuration names inside references remain unreadable.
+    A built-in-sandbox reference session additionally proves native Read/Glob/Grep and
+    Write/Edit boundaries using disposable sentinels and a local scripted
+    provider before any credentialed launch. No inference or real references
+    enter this proof. If Bash is exposed, its separate subprocess proof uses
+    Perl (as the macOS interface canary does); missing Perl refuses that profile
+    with `claude_reference_shell_requires_perl`. File-tools-only profiles need
+    no additional interpreter. To qualify the installed Claude CLI manually, run
+    `go test ./session -run '^TestClaudeReferenceFilesRealProof$' -count=1 -v`.
+    The test is opt-in and fails if the installed runtime cannot prove the
+    contract. See [native file rules](https://code.claude.com/docs/en/permissions#read-and-edit)
+    and [working-directory admission](https://code.claude.com/docs/en/settings-reference#permissions-additionaldirectories).
+    The Edge retains its previous native admission behavior; this proof does not
+    qualify native reference access through Edge. Read paths must be absolute.
+    Codex already reads everything, so `Read`
+    changes nothing there.
   - No instruction files load, not even the workspace's own: with every
     settings source dropped, Claude Code 2.1.280 loads none, and the
     operator's user and ancestor files are also excluded by name as a second
@@ -1263,8 +1282,8 @@ the result is cached per resolved binary and sandbox:
     its prompt if it should follow them. Skills and auto-memory are off.
   - `claude sandbox status` with the same settings, asked from a throwaway
     home, must report the sandbox supported, enabled and strict, with no
-    unavailable reason. This is the CLI's own report, not a canary: Claude
-    offers no way to run a sandboxed command without inference.
+    unavailable reason. This status check is the CLI's own report. The separate
+    reference proof executes native file tools through a local scripted provider.
 
 A sandboxed session inherits only an allowlisted environment from its
 caller (`PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TERM`, `LANG`, `LC_*`,

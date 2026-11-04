@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 
 	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/jsonschema"
@@ -86,7 +87,19 @@ func normalize(o Options) (Options, error) {
 			return o, err
 		}
 	}
-	return normalizeSkills(o)
+	o, err = normalizeSkills(o)
+	if err != nil {
+		return o, err
+	}
+	if o.Sandbox != nil && o.Provider.Engine == harness.Claude && o.Sandbox.Edge == nil {
+		for _, dir := range sandboxSkillReads(o) {
+			rel, err := filepath.Rel(dir, o.WorkDir)
+			if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				return o, refuse(o, "skills", RefusedSandboxRead, "a read-only skill reference must not contain the workspace")
+			}
+		}
+	}
+	return o, nil
 }
 
 // supported refuses an engine the library offers no session for, and a

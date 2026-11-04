@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	harness "github.com/shhac/lib-agent-harness"
 	"github.com/shhac/lib-agent-harness/internal/nativecli"
@@ -32,8 +33,8 @@ type Sandbox struct {
 	// command sandbox edge. The installed binary must pass the edge canary.
 	Edge  *Edge
 	Write bool
-	// Read names directories outside the workspace that the session's shell
-	// may also read, such as a shared build-module cache. Claude Code blocks its
+	// Read names existing directories outside the workspace that the session's
+	// native file tools and shell may also read, such as a shared build-module cache. Claude Code blocks its
 	// shell from reading the home directory otherwise; Codex already reads
 	// everything the account can. Each must be an absolute directory that holds
 	// no credentials. None may contain the home directory, which would reopen
@@ -179,6 +180,14 @@ func normalizeSandbox(o Options) (Options, error) {
 		return o, refuse(o, "sandbox", RefusedSandboxRead, problem)
 	}
 	o.Sandbox.Read = read
+	if o.Provider.Engine == harness.Claude && o.Sandbox.Edge == nil {
+		for _, dir := range append(slices.Clone(read), sandboxSkillReads(o)...) {
+			rel, err := filepath.Rel(dir, o.WorkDir)
+			if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				return o, refuse(o, "sandbox", RefusedSandboxRead, "a read-only reference must not contain the workspace")
+			}
+		}
+	}
 	if o.Sandbox.Loopback && o.Sandbox.Edge == nil {
 		if c := harness.Support(o.Provider.Engine, harness.Session, harness.Loopback); !c.Usable() {
 			return o, &UnsupportedError{Engine: o.Provider.Engine, Operation: "loopback", Code: RefusedNotOffered, Capability: c}
@@ -372,8 +381,16 @@ var (
 		normalize: normalizeClaudeSandbox,
 		args:      claudeSandboxArgs,
 		probe: func(ctx context.Context, o Options, l *launch) (loopbackEvidence, error) {
-			if err := probeClaudeSandbox(ctx, o); err != nil || !o.Sandbox.Loopback {
+			if err := probeClaudeSandbox(ctx, o); err != nil {
 				return loopbackEvidence{}, err
+			}
+			if len(o.Sandbox.Read) > 0 || len(sandboxSkillReads(o)) > 0 {
+				if _, err := probeClaudeReferenceFiles(ctx, o); err != nil {
+					return loopbackEvidence{}, err
+				}
+			}
+			if !o.Sandbox.Loopback {
+				return loopbackEvidence{}, nil
 			}
 			return probeClaudeLoopback(ctx, o, l)
 		},

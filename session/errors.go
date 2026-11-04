@@ -310,6 +310,10 @@ func (e *CapabilityError) Error() string {
 // sandbox proof step, then the code alone.
 func capabilityMessage(e *CapabilityError) string {
 	switch {
+	case e.Code == CapabilitySandboxUnavailable && e.Reason == ClaudeReferenceShellRequiresPerl:
+		return ClaudeReferenceShellRequiresPerl + ": native reference verification with Bash requires Perl on PATH"
+	case e.Code == CapabilitySandboxNotEnforced && strings.HasPrefix(e.Reason, "claude_reference_"):
+		return "the installed harness did not prove read-only reference access"
 	case e.Code == CapabilitySandboxNotEnforced && e.Reason == claudeLinuxWiderScopeReason:
 		return ClaudeLinuxLoopbackScopeWiderThanClaimed + ": Claude Linux must not reach the host's localhost under the per-command contract"
 	case e.Code == CapabilitySandboxUnavailable && e.Reason == ClaudeLinuxSandboxRequiresSocat:

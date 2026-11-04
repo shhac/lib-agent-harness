@@ -93,6 +93,7 @@ func sandboxKey(o Options, l *launch) (string, error) {
 		Modified     time.Time
 		Write        bool
 		Read         []string
+		ClaudeTools  []string
 		Args         []string
 		TempDir      string
 		Browser      string
@@ -103,7 +104,7 @@ func sandboxKey(o Options, l *launch) (string, error) {
 		Model        string
 		Effort       string
 		Instructions Instructions
-	}{kind, o.Provider.Engine, binary, info.Size(), info.ModTime(), o.Sandbox.Write, o.Sandbox.Read, l.extra, sessionTempDir(), bridge, bridgeHome, o.WorkDir, o.RuntimeHome, o.Env, o.Model, o.Effort, effectiveInstructions(o)})
+	}{kind, o.Provider.Engine, binary, info.Size(), info.ModTime(), o.Sandbox.Write, o.Sandbox.Read, o.Policy.ClaudeTools, l.extra, sessionTempDir(), bridge, bridgeHome, o.WorkDir, o.RuntimeHome, o.Env, o.Model, o.Effort, effectiveInstructions(o)})
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:]), nil
 }
