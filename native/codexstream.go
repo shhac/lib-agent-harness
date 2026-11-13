@@ -164,16 +164,20 @@ func (t *codexTranscoder) consume(line []byte) {
 		return
 	}
 	if ev.Type == "turn.failed" || ev.Type == "error" {
-		t.sawUsage = false
-		t.failure = ev.Message
-		if t.failure == "" {
-			t.failure = decodeResultText(ev.Error)
+		message := ev.Message
+		if message == "" {
+			message = decodeResultText(ev.Error)
 		}
-		if t.failure == "" {
-			t.failure = "harness turn failed"
+		if message == "" {
+			message = "harness error"
 		}
-		t.event(Event{Kind: "error", Text: t.failure})
-		t.emit("error", t.failure)
+		// Codex also emits error events during reconnects.
+		if ev.Type == "turn.failed" {
+			t.sawUsage = false
+			t.failure = message
+		}
+		t.event(Event{Kind: "error", Text: message})
+		t.emit("error", message)
 		return
 	}
 	if ev.Type == "turn.completed" {

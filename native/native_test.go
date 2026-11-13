@@ -283,6 +283,7 @@ func TestRunRejectsMissingAndFailedTerminalResults(t *testing.T) {
 		code   string
 	}{
 		{harness.Codex, "", harness.FailureProcess, CodeNoTerminalResult},
+		{harness.Codex, `{"type":"error","message":"reconnecting"}`, harness.FailureProcess, CodeNoTerminalResult},
 		{harness.Codex, `{"type":"item.started","item":{"type":"agent_message","text":"unfinished"}}`, harness.FailureProcess, CodeNoTerminalResult},
 		{harness.Codex, `{"type":"turn.failed","error":{"message":"provider failed"}}`, harness.FailureTurn, CodeTurnFailed},
 		{harness.Codex, `{"type":"turn.completed"}`, harness.FailureTurn, CodeNoResponse},
@@ -304,6 +305,35 @@ func TestRunRejectsMissingAndFailedTerminalResults(t *testing.T) {
 				t.Fatalf("provider text in error: %v", err)
 			}
 		})
+	}
+}
+
+func TestCodexRunRecoversAfterStreamError(t *testing.T) {
+	const reconnect = "Reconnecting... 1/5"
+	wire := `{"type":"thread.started","thread_id":"test-session"}` + "\n" +
+		`{"type":"error","message":"` + reconnect + `"}` + "\n" +
+		`{"type":"item.completed","item":{"type":"agent_message","text":"hello"}}` + "\n" +
+		`{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":2}}`
+	var transcript strings.Builder
+	var diagnostics []string
+	stream, err := NewStream(harness.Codex, &transcript, StreamOptions{OnEvent: func(event Event) {
+		if event.Kind == "error" {
+			diagnostics = append(diagnostics, event.Text)
+		}
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := Config{Provider: harness.Provider{Engine: harness.Codex}, RunCommand: func(_ context.Context, _ []string, _ string, out, _ io.Writer) error {
+		_, err := io.WriteString(out, wire)
+		return err
+	}}
+	result, err := Run(context.Background(), c, Request{Prompt: "hello"}, stream)
+	if err != nil || result.Failure != "" || string(result.Report) != `"hello"` || !result.Usage.Known || result.Usage.Total() != 12 {
+		t.Fatalf("recovered turn: result=%+v err=%v", result, err)
+	}
+	if !slices.Equal(diagnostics, []string{reconnect}) || !strings.Contains(transcript.String(), reconnect) {
+		t.Fatalf("lost reconnect diagnostic: events=%v transcript=%q", diagnostics, transcript.String())
 	}
 }
 

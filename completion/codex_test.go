@@ -184,6 +184,7 @@ func TestCodexRejectsUnsafeOrPartialOutput(t *testing.T) {
 	for _, events := range []string{
 		`{"type":"item.completed","item":{"type":"command_execution"}}`,
 		`{"type":"turn.failed"}`,
+		`{"type":"error","message":"reconnecting"}`,
 		`{"type":"item.completed","item":{"type":"agent_message","text":"{}"}}`,
 		`{"type":"item.completed","item":{"type":"agent_message","text":"{\"content\":\"\",\"tool_calls\":[{\"name\":\"shell\",\"arguments\":\"{}\"}]}"}}` + "\n" + `{"type":"turn.completed"}`,
 	} {

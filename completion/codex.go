@@ -288,7 +288,8 @@ func parseCodex(data []byte, tools []Tool) (Result, error) {
 			return Result{}, &RequestError{Cause: harness.CauseUnknown, Engine: harness.Codex, Phase: PhaseResponse, Code: "malformed_event_json"}
 		}
 		switch event.Type {
-		case "turn.failed", "error":
+		// Codex can emit error events while reconnecting. Require turn.completed below.
+		case "turn.failed":
 			return terminalAccounting(harness.Codex, data), &RequestError{Cause: harness.CauseUnknown, Engine: harness.Codex, Phase: PhaseResponse, Code: event.Type}
 		case "item.started", "item.completed":
 			if event.Item.Type != "agent_message" && event.Item.Type != "reasoning" && event.Item.Type != "error" {

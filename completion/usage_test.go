@@ -360,7 +360,10 @@ func TestCodexContextWindowIsUnknown(t *testing.T) {
 		`{"type":"error","message":"reconnecting"}` + "\n" +
 		`{"type":"item.completed","item":{"type":"agent_message","text":"{\"content\":\"done\",\"tool_calls\":[]}"}}` + "\n" +
 		`{"type":"turn.completed","usage":{"input_tokens":30,"cached_input_tokens":20,"output_tokens":5,"reasoning_output_tokens":2},"modelUsage":{"gpt-5":{"contextWindow":272000}}}`
-	got := terminalAccounting(harness.Codex, []byte(stream))
+	got, err := parseCodex([]byte(stream), nil)
+	if err != nil || got.Message.Content != "done" {
+		t.Fatalf("recovered completion: got %+v err=%v", got, err)
+	}
 	if got.Usage != (harness.Usage{Known: true, Input: 30, Output: 5, CacheRead: 20, Reasoning: 2, CacheKnown: true, ReasoningKnown: true}) || got.ContextWindow != 0 || got.Cost.Known {
 		t.Fatalf("got %+v", got)
 	}
